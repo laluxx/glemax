@@ -1,12 +1,9 @@
-# Glemax
-
 <div align="center">
 
 <div style="float: right">
 <img src="assets/uwu.png" width="200" align="right" />
 </div>
 
-![Glemax Logo](assets/logo.png)
 
 *A modern, hardware-accelerated rewrite of Emacs in C and OpenGL*
 
