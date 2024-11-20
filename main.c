@@ -13,7 +13,6 @@
 #include "history.h"
 #include "syntax.h"
 
-
 // FIXME many functions calculate the same exact data
 // so the same stuff is recalculated like 6 or more times per frame
 // i hate it, but i hate refactoring more

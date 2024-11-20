@@ -14,11 +14,8 @@
 [Installation](#installation) •
 [Features](#features) •
 [Documentation](#documentation) •
-[Contributing](#contributing)
 
 </div>
-
-## Overview
 
 ![Screenshot](assets/screenshot.png)
 
@@ -49,7 +46,6 @@
   - Flexible window management
 
 ## Key Bindings
-Glemax maintains familiar Emacs keybindings
 
 ### File Operations
 - `C-x C-f` - Find file
@@ -94,7 +90,7 @@ Glemax maintains familiar Emacs keybindings
 - `C-=` - Increase font size
 - `C--` - Decrease font size
 
-For the complete list of keybindings, see the `keyCallback()` function in `main.c`.
+For the complete list of keybindings, start reading the `keyCallback()` function in `main.c`.
 
 ## Installation
 
