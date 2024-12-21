@@ -1,4 +1,5 @@
 #include "edit.h"
+#include "commands.h"
 #include "keychords.h"
 #include "faces.h"
 #include "syntax.h"
@@ -997,6 +998,14 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
         prompt->content = strdup("");
         ctrl_x_pressed = false; // NOTE this is hardcoded because we cant reset ctrl_x_pressed
         // inside the key callback (for now) TODO
+    } else if (strcmp(prompt->content, "M-x ") == 0) {
+        add_to_history(nh, prompt->content, minibuffer->content);
+        executeCommand(minibuffer->content);
+        // TODO M-x
+        minibuffer->size = 0;
+        minibuffer->point = 0;
+        minibuffer->content[0] = '\0';
+        prompt->content = strdup("");
     } else if (strcmp(prompt->content, "Goto line: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
         goto_line(bm, wm, sw, sh);
@@ -1225,6 +1234,33 @@ void shell_command(BufferManager *bm) {
     switchToBuffer(bm, bm->lastBuffer->name);
 }
 
+void execute_extended_command(BufferManager *bm) {
+    Buffer *minibuffer = getBuffer(bm, "minibuffer");
+    Buffer *prompt = getBuffer(bm, "prompt");
+
+    // TODO IMPORTANT Recursive minibuffer
+    /* if (minibuffer->size == 0) { */
+    if (bm->lastBuffer && bm->lastBuffer->name) {
+        minibuffer->size = 0;
+        minibuffer->point = 0;
+        minibuffer->content[0] = '\0';
+        free(prompt->content);
+        prompt->content = strdup("M-x ");
+        switchToBuffer(bm, "minibuffer");
+    } else {
+        message(bm, "No last buffer to go to.");
+    }
+    return;
+    /* } */
+
+
+    // Clear minibuffer after operation
+    minibuffer->size = 0;
+    minibuffer->point = 0;
+    minibuffer->content[0] = '\0';
+    prompt->content = strdup("");
+    switchToBuffer(bm, bm->lastBuffer->name);
+}
 
 
 

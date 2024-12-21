@@ -12,6 +12,7 @@
 #include "keychords.h"
 #include "history.h"
 #include "syntax.h"
+#include "commands.h"
 
 // FIXME many functions calculate the same exact data
 // so the same stuff is recalculated like 6 or more times per frame
@@ -224,6 +225,7 @@ int main() {
     initGlobalParser();
     initKillRing(&kr, kill_ring_max);
     initBufferManager(&bm);
+    initCommands();
     newBuffer(&bm, &wm, "minibuffer", "~/", fontname, sw, sh);
     newBuffer(&bm, &wm, "prompt",     "~/", fontname, sw, sh);
     newBuffer(&bm, &wm, "message",    "~/", fontname, sw, sh);
@@ -489,6 +491,8 @@ void keyCallback(int key, int action, int mods) {
             if (ctrlPressed) {
                 ctrl_x_pressed = true;
                 printActiveWindowDetails(&wm);
+            } else if (altPressed) {
+                execute_extended_command(&bm);
             }
             break;
 
