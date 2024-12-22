@@ -17,7 +17,7 @@ typedef struct {
 
 void initKillRing(KillRing* kr, int capacity);
 void freeKillRing(KillRing* kr);
-void kill(KillRing* kr, const char* text);
+void kr_kill(KillRing* kr, const char* text);
 void kill_region(Buffer *buffer, KillRing *kr);
 /* void yank(Buffer *buffer, KillRing *kr); */
 void yank(Buffer *buffer, KillRing *kr, int arg);
@@ -82,6 +82,11 @@ void save_buffer(BufferManager *bm, Buffer *buffer);
 void execute_shell_command(BufferManager *bm, char *command);
 void shell_command(BufferManager *bm);
 void execute_extended_command(BufferManager *bm);
+
+// GUILE
+char* evaluate_scheme(const char* expr);
+void eval_expression(BufferManager *bm);
+void eval_last_sexp(BufferManager *bm);
 
 void recenter(Window *window);
 extern int recenterState; // 0: Initial, 1: Top, 2: Center, 3: Bottom

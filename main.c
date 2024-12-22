@@ -1,18 +1,20 @@
-#include <lume.h>
-#include "theme.h"
 #include "buffer.h"
-#include "wm.h"
+#include "commands.h"
+#include "completion.h"
 #include "edit.h"
+#include "faces.h"
+#include "history.h"
+#include "isearch.h"
+#include "keychords.h"
+#include "syntax.h"
+#include "theme.h"
+#include "wm.h"
+#include <ctype.h>
+#include <input.h>
+#include <libguile.h>
+#include <lume.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <ctype.h>
-#include "completion.h"
-#include "isearch.h"
-#include "faces.h"
-#include "keychords.h"
-#include "history.h"
-#include "syntax.h"
-#include "commands.h"
 
 // FIXME many functions calculate the same exact data
 // so the same stuff is recalculated like 6 or more times per frame
@@ -210,7 +212,81 @@ void drawMiniCursor(Buffer *buffer, Font *font, float x, float y, Color color) {
 int sw = 1920;
 int sh = 1080;
 
-int main() {
+SCM scm_new_buffer(SCM name, SCM path, SCM fontname) {
+  char *c_name = scm_to_locale_string(name);
+  char *c_path = scm_to_locale_string(path);
+  char *c_fontname = scm_to_locale_string(fontname);
+
+  newBuffer(&bm, &wm, c_name, c_path, c_fontname, sw, sh);
+
+  free(c_name);
+  free(c_path);
+  free(c_fontname);
+
+  return SCM_UNSPECIFIED;
+}
+
+SCM scm_switch_to_buffer(SCM name) {
+  char *c_name = scm_to_locale_string(name);
+  switchToBuffer(&bm, c_name);
+  free(c_name);
+  return SCM_UNSPECIFIED;
+}
+
+SCM scm_get_buffer_content(SCM name) {
+  char *c_name = scm_to_locale_string(name);
+  Buffer *buffer = getBuffer(&bm, c_name);
+  free(c_name);
+
+  if (buffer) {
+    return scm_from_locale_string(buffer->content);
+  } else {
+    return SCM_BOOL_F;
+  }
+}
+
+SCM scm_set_buffer_content(SCM name, SCM content) {
+  char *c_name = scm_to_locale_string(name);
+  char *c_content = scm_to_locale_string(content);
+
+  Buffer *buffer = getBuffer(&bm, c_name);
+  if (buffer) {
+    setBufferContent(buffer, c_content);
+  }
+
+  free(c_name);
+  free(c_content);
+
+  return SCM_UNSPECIFIED;
+}
+
+SCM scm_message(SCM msg) {
+  char *c_msg = scm_to_locale_string(msg);
+  message(&bm, c_msg);
+  free(c_msg);
+  return SCM_UNSPECIFIED;
+}
+
+static void init_glemax_module(void *data) {
+  // Expose C functions to Scheme
+  scm_c_define_gsubr("glemax-new-buffer", 3, 0, 0, scm_new_buffer);
+  scm_c_define_gsubr("glemax-switch-to-buffer", 1, 0, 0, scm_switch_to_buffer);
+  scm_c_define_gsubr("glemax-get-buffer-content", 1, 0, 0,
+                     scm_get_buffer_content);
+  scm_c_define_gsubr("glemax-set-buffer-content", 2, 0, 0,
+                     scm_set_buffer_content);
+  scm_c_define_gsubr("glemax-message", 1, 0, 0, scm_message);
+
+  // You can add more functions here as needed
+}
+
+
+static void inner_main(void *closure, int argc, char **argv) {
+    // Guile-specific initialization
+    scm_c_define_module("glemax", init_glemax_module, NULL);
+    scm_c_use_module("glemax");
+
+    // Your existing main function code starts here
     initThemes();
     initWindow(sw, sh, "*scratch* - Glemax");
     registerTextCallback(textCallback);
@@ -219,7 +295,6 @@ int main() {
     registerCursorPosCallback(cursorPosCallback);
     registerMouseButtonCallback(mouseButtonCallback);
 
-    
     font = loadFont(fontname, fontsize);
 
     initGlobalParser();
@@ -252,7 +327,6 @@ int main() {
         Buffer *minibuffer = getBuffer(&bm, "minibuffer");
         Buffer *message = getBuffer(&bm, "message");
         
-
         Window *win = wm.head;
         Window *activeWindow = wm.activeWindow;
         Buffer *currentBuffer = activeWindow->buffer;
@@ -267,7 +341,6 @@ int main() {
             promptWidth += getCharacterWidth(minibuffer->font, prompt->content[i]);
         }
 
-
         int lineCount = 1; // Start with 1 to account for content without any newlines
         for (int i = 0; i < strlen(minibuffer->content); i++) {
             if (minibuffer->content[i] == '\n') {
@@ -280,7 +353,6 @@ int main() {
         // Set the height based on the number of lines found
         float minibufferHeight = lineHeight * lineCount;
 
-
         // PROMPT TEXT
         drawTextEx(minibuffer->font, prompt->content,
                    0, minibufferHeight - (minibuffer->font->ascent - minibuffer->font->descent),
@@ -290,7 +362,6 @@ int main() {
         if (isCurrentBuffer(&bm, "minibuffer")) {
             drawMiniCursor(minibuffer, minibuffer->font, promptWidth, minibufferHeight - minibuffer->font->ascent, CT.cursor);
         }
-
 
         drawModelines(&wm, font, minibufferHeight, CT.modeline);
 
@@ -302,7 +373,6 @@ int main() {
             if (bottom) {
                 scissorHeight += minibufferHeight;
             }
-
 
             beginScissorMode((Vec2f){win->x, scissorStartY}, (Vec2f){win->width, scissorHeight});
 
@@ -333,7 +403,6 @@ int main() {
             endScissorMode();
         }
         
-
         float minibufferWidth = promptWidth;
 
         for (size_t i = 0; i < strlen(minibuffer->content); i++) {
@@ -359,7 +428,6 @@ int main() {
                    1.0, 1.0, CT.message, CT.bg, message->point, cursorVisible,
                    "text");
         
-
         endDrawing();
     }
 
@@ -369,8 +437,11 @@ int main() {
     freeBufferManager(&bm);
     freeWindowManager(&wm);
     closeWindow();
+}
 
-    return 0;
+int main(int argc, char **argv) {
+    scm_boot_guile(argc, argv, inner_main, 0);
+    return 0; // This line is never reached
 }
 
 
@@ -478,6 +549,12 @@ void keyCallback(int key, int action, int mods) {
         case KEY_Y:
             if (ctrlPressed) yank(buffer, &kr, arg);
             break;
+        case KEY_SEMICOLON:
+            if (altPressed && shiftPressed) {
+                eval_expression(&bm);
+            }
+            break;
+
         case KEY_Z:
             /* printfSyntaxTree() */
             /* moveTo(buffer, 10, 300); */
@@ -777,6 +854,7 @@ void keyCallback(int key, int action, int mods) {
                 other_window(&wm, 1);
             } else if (ctrlPressed) {
                 enter(buffer, &bm, &wm, minibuffer, prompt, indentation, electric_indent_mode, sw, sh, &nh, arg);
+                eval_last_sexp(&bm);
             }
             break;
         case KEY_H:

@@ -8,9 +8,10 @@
 #include <ctype.h>
 #include <string.h>
 #include <math.h>
+#include <libguile.h>
 
 // TODO kill_line() should delete the entire line if is composed of only whitespaces
-// TODO kill_line() should kill the entire line if its at the beginning of it
+// TODO kill_line() should kr_kill the entire line if its at the beginning of it
 
 // FIXME why arg doesn't work ? 
 /* void insertChar(Buffer *buffer, char c, int arg) { */
@@ -287,7 +288,7 @@ void kill_line(Buffer *buffer, KillRing *kr) {
         if (cut_text) {
             memcpy(cut_text, buffer->content + startOfLine, numToDelete);
             cut_text[numToDelete] = '\0';
-            kill(kr, cut_text); // Add to kill ring
+            kr_kill(kr, cut_text); // Add to kr_kill ring
             free(cut_text); // Free temporary text buffer
         }
 
@@ -422,7 +423,7 @@ void copy_to_clipboard(const char* text) {
     }
 }
 
-void kill(KillRing* kr, const char* text) {
+void kr_kill(KillRing* kr, const char* text) {
     if (kr->size >= kr->capacity) {
         // Free the oldest entry if the ring is full
         free(kr->entries[kr->index]);
@@ -441,8 +442,8 @@ void kill(KillRing* kr, const char* text) {
 
 void kill_region(Buffer *buffer, KillRing *kr) {
     if (!buffer->region.active) {
-        printf("No active region to kill.\n");
-        return;  // No region active, nothing to kill
+        printf("No active region to kr_kill.\n");
+        return;  // No region active, nothing to kr_kill
     }
 
     size_t start = buffer->region.start;
@@ -459,16 +460,16 @@ void kill_region(Buffer *buffer, KillRing *kr) {
 
     size_t region_length = end - start;
     if (region_length == 0) {
-        printf("Empty region, nothing to kill.\n");
-        return;  // Empty region, nothing to kill
+        printf("Empty region, nothing to kr_kill.\n");
+        return;  // Empty region, nothing to kr_kill
     }
 
-    // Allocate and copy the region to kill
+    // Allocate and copy the region to kr_kill
     char *cut_text = malloc(region_length + 1);
     if (cut_text) {
         memcpy(cut_text, buffer->content + start, region_length);
         cut_text[region_length] = '\0';
-        kill(kr, cut_text);  // Add to kill ring
+        kr_kill(kr, cut_text);  // Add to kr_kill ring
         free(cut_text);  // Free temporary text buffer
     }
 
@@ -524,7 +525,7 @@ void yank(Buffer *buffer, KillRing *kr, int arg) {
             insertChar(buffer, textToYank[i]);
         }
 
-        // Add the yanked text to the kill ring
+        // Add the yanked text to the kr_kill ring
         if (kr->size >= kr->capacity) {
             free(kr->entries[kr->index]);  // Free the oldest entry if the ring is full
         } else {
@@ -537,7 +538,6 @@ void yank(Buffer *buffer, KillRing *kr, int arg) {
         free(textToYank);
     }
 }
-
 
 /* void yank(Buffer *buffer, KillRing *kr) { */
 /*     if (kr->size == 0) return; */
@@ -574,10 +574,10 @@ void kill_ring_save(Buffer *buffer, KillRing *kr) {
     if (text_to_save) {
         memcpy(text_to_save, buffer->content + start, region_length);
         text_to_save[region_length] = '\0';
-        kill(kr, text_to_save);
+        kr_kill(kr, text_to_save);
         free(text_to_save);
     } else {
-        fprintf(stderr, "Failed to allocate memory for kill ring save.\n");
+        fprintf(stderr, "Failed to allocate memory for kr_kill ring save.\n");
     }
     buffer->region.active = false;
 }
@@ -747,8 +747,8 @@ void backward_kill_word(Buffer *buffer, KillRing *kr) {
         memcpy(killed_text, buffer->content + start, lengthToDelete);
         killed_text[lengthToDelete] = '\0';
 
-        // Add the killed text to the kill ring
-        kill(kr, killed_text); // Assume this function handles the addition to the kill ring
+        // Add the killed text to the kr_kill ring
+        kr_kill(kr, killed_text); // Assume this function handles the addition to the kr_kill ring
 
         // Free the allocated memory for killed text
         free(killed_text);
@@ -1001,11 +1001,13 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
     } else if (strcmp(prompt->content, "M-x ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
         executeCommand(minibuffer->content);
-        // TODO M-x
-        minibuffer->size = 0;
-        minibuffer->point = 0;
-        minibuffer->content[0] = '\0';
-        prompt->content = strdup("");
+        /* minibuffer->size = 0; */
+        /* minibuffer->point = 0; */
+        /* minibuffer->content[0] = '\0'; */
+        /* prompt->content = strdup(""); */
+    } else if (strcmp(prompt->content, "Eval: ") == 0) {
+        add_to_history(nh, prompt->content, minibuffer->content);
+        eval_expression(bm); // Let eval_expression handle everything
     } else if (strcmp(prompt->content, "Goto line: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
         goto_line(bm, wm, sw, sh);
@@ -1206,6 +1208,7 @@ void execute_shell_command(BufferManager *bm, char *command) {
     pclose(pipe);
 }
 
+
 void shell_command(BufferManager *bm) {
     Buffer *minibuffer = getBuffer(bm, "minibuffer");
     Buffer *prompt = getBuffer(bm, "prompt");
@@ -1238,31 +1241,159 @@ void execute_extended_command(BufferManager *bm) {
     Buffer *minibuffer = getBuffer(bm, "minibuffer");
     Buffer *prompt = getBuffer(bm, "prompt");
 
-    // TODO IMPORTANT Recursive minibuffer
-    /* if (minibuffer->size == 0) { */
     if (bm->lastBuffer && bm->lastBuffer->name) {
-        minibuffer->size = 0;
-        minibuffer->point = 0;
-        minibuffer->content[0] = '\0';
-        free(prompt->content);
-        prompt->content = strdup("M-x ");
-        switchToBuffer(bm, "minibuffer");
+        if (minibuffer->size == 0) {
+            // Initial setup when entering M-x mode
+            minibuffer->size = 0;
+            minibuffer->point = 0;
+            minibuffer->content[0] = '\0';
+            free(prompt->content);
+            prompt->content = strdup("M-x ");
+            switchToBuffer(bm, "minibuffer");
+        } else {
+            // Execute the command and handle cleanup
+            executeCommand(minibuffer->content);
+
+            // Reset state of the last buffer
+            bm->lastBuffer->region.active = false;
+            bm->lastBuffer->region.marked = false;
+
+            // Clean up
+            cleanBuffer(bm, "minibuffer");
+            cleanBuffer(bm, "prompt");
+            switchToBuffer(bm, bm->lastBuffer->name);
+            cleanBuffer(bm, "message");
+        }
     } else {
         message(bm, "No last buffer to go to.");
     }
-    return;
-    /* } */
-
-
-    // Clear minibuffer after operation
-    minibuffer->size = 0;
-    minibuffer->point = 0;
-    minibuffer->content[0] = '\0';
-    prompt->content = strdup("");
-    switchToBuffer(bm, bm->lastBuffer->name);
 }
 
 
+
+static size_t find_last_sexp_start(const char* content, size_t point) {
+    int paren_count = 0;
+    size_t i = point;
+
+    // Move backwards until we find the start of the S-expression
+    while (i > 0) {
+        if (content[i] == ')') paren_count++;
+        else if (content[i] == '(') {
+            paren_count--;
+            if (paren_count < 0) return i;
+        }
+        else if (paren_count == 0 && !isspace((unsigned char)content[i]) && content[i] != '\'') {
+            // We've found the start of a symbol or literal
+            while (i > 0 && !isspace((unsigned char)content[i-1]) && content[i-1] != '(' && content[i-1] != '\'') {
+                i--;
+            }
+            return i;
+        }
+        i--;
+    }
+    return 0; // Default to the beginning of the buffer if no start found
+}
+
+void eval_last_sexp(BufferManager *bm) {
+    Buffer *buffer = getActiveBuffer(bm);
+    if (!buffer || !buffer->content) {
+        message(bm, "No buffer to evaluate.");
+        return;
+    }
+
+    // Rest of the function remains the same
+    size_t sexp_start = find_last_sexp_start(buffer->content, buffer->point);
+    size_t sexp_end = buffer->point;
+
+    // Extract the S-expression
+    size_t sexp_length = sexp_end - sexp_start;
+    char *sexp = malloc(sexp_length + 1);
+    if (!sexp) {
+        message(bm, "Memory allocation failed.");
+        return;
+    }
+    strncpy(sexp, buffer->content + sexp_start, sexp_length);
+    sexp[sexp_length] = '\0';
+
+    // Evaluate the S-expression
+    char *result = evaluate_scheme(sexp);
+    free(sexp);
+
+    if (result) {
+        message(bm, result);
+        free(result);
+    } else {
+        message(bm, "Evaluation failed or returned nil.");
+    }
+}
+
+
+char* evaluate_scheme(const char* expr) {
+    char* result = NULL;
+    SCM output_port = scm_open_output_string();
+    SCM old_output_port = scm_current_output_port();
+    
+    scm_set_current_output_port(output_port);
+    
+    SCM eval_result = scm_c_catch(SCM_BOOL_T,
+                                  (scm_t_catch_body) scm_c_eval_string, (void*) expr,
+                                  (scm_t_catch_handler) scm_handle_by_message_noexit, NULL,
+                                  (scm_t_catch_handler) scm_handle_by_message_noexit, NULL);
+    
+    scm_set_current_output_port(old_output_port);
+    
+    SCM output_str_scm = scm_get_output_string(output_port);
+    char* output_str = scm_to_locale_string(output_str_scm);
+    
+    if (output_str && strlen(output_str) > 0) {
+        // There was an error or printed output
+        result = strdup(output_str);
+    } else if (!SCM_FALSEP(eval_result)) {
+        // No error, get the result
+        SCM str_scm = scm_object_to_string(eval_result, SCM_UNDEFINED);
+        result = scm_to_locale_string(str_scm);
+        scm_remember_upto_here_1(str_scm);
+    } else {
+        result = strdup("Evaluation returned #f");
+    }
+    
+    scm_close_port(output_port);
+    free(output_str);
+    scm_remember_upto_here_2(output_port, eval_result);
+    
+    return result;
+}
+
+void eval_expression(BufferManager *bm) {
+    Buffer *minibuffer = getBuffer(bm, "minibuffer");
+    Buffer *prompt = getBuffer(bm, "prompt");
+
+    if (bm->lastBuffer && bm->lastBuffer->name) {
+        if (minibuffer->size == 0) {
+            minibuffer->size = 0;
+            minibuffer->point = 0;
+            minibuffer->content[0] = '\0';
+            free(prompt->content);
+            prompt->content = strdup("Eval: ");
+            switchToBuffer(bm, "minibuffer");
+        } else {
+            // Evaluate the expression
+            char *result = evaluate_scheme(minibuffer->content);
+            message(bm, result);
+            free(result);
+
+            // Reset region on the lastBuffer
+            bm->lastBuffer->region.active = false;
+            bm->lastBuffer->region.marked = false;
+
+            cleanBuffer(bm, "minibuffer");
+            cleanBuffer(bm, "prompt");
+            switchToBuffer(bm, bm->lastBuffer->name);
+        }
+    } else {
+        message(bm, "No last buffer to go to.");
+    }
+}
 
 void goto_line(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     Buffer *minibuffer = getBuffer(bm, "minibuffer");
