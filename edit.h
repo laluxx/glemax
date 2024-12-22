@@ -84,9 +84,9 @@ void shell_command(BufferManager *bm);
 void execute_extended_command(BufferManager *bm);
 
 // GUILE
-char* evaluate_scheme(const char* expr);
 void eval_expression(BufferManager *bm);
 void eval_last_sexp(BufferManager *bm);
+void eval_region(BufferManager *bm);
 
 void recenter(Window *window);
 extern int recenterState; // 0: Initial, 1: Top, 2: Center, 3: Bottom

@@ -6,6 +6,8 @@
 // TODO savehist_mode
 // TODO when we close glemax save all the named histories
 // into ~/.config/glemax/named_histories file
+// or ~/.glemax.d/named_histories
+// or .named_histories
 
 static History* get_history(NamedHistories *nh, const char *name) {
     for (int i = 0; i < nh->count; ++i) {

@@ -99,6 +99,10 @@ typedef struct {
     int count;            // Number of windows
 } WindowManager;
 
+
+extern WindowManager wm;
+extern BufferManager bm;
+
 extern double mouseX;
 extern double mouseY;
 

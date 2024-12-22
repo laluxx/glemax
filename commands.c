@@ -3,6 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+// [ ] TODO Change this file at compile time
+// collect all the void functions that are not
+// from ./main.c and insert a call to addCommand() for each one
+// scheme already has this power but C don't this is a powerful idea
+
 #define INITIAL_CAPACITY 10
 
 Commands commands = {0};

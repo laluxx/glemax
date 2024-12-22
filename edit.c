@@ -1,4 +1,5 @@
 #include "edit.h"
+#include "extension.h"
 #include "commands.h"
 #include "keychords.h"
 #include "faces.h"
@@ -972,8 +973,6 @@ void indent_region(Buffer *buffer, BufferManager *bm, int indentation, int arg) 
     buffer->point = cursor_new_position;
 }
 
-
-
 void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
            Buffer *minibuffer, Buffer *prompt,
            int indentation, bool electric_indent_mode,
@@ -1000,11 +999,7 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
         // inside the key callback (for now) TODO
     } else if (strcmp(prompt->content, "M-x ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
-        executeCommand(minibuffer->content);
-        /* minibuffer->size = 0; */
-        /* minibuffer->point = 0; */
-        /* minibuffer->content[0] = '\0'; */
-        /* prompt->content = strdup(""); */
+        execute_extended_command(bm);
     } else if (strcmp(prompt->content, "Eval: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
         eval_expression(bm); // Let eval_expression handle everything
@@ -1271,27 +1266,29 @@ void execute_extended_command(BufferManager *bm) {
 
 
 
-static size_t find_last_sexp_start(const char* content, size_t point) {
-    int paren_count = 0;
+static size_t find_enclosing_sexp_start(const char* content, size_t point) {
+    int paren_level = 0;
+    bool in_string = false;
     size_t i = point;
 
-    // Move backwards until we find the start of the S-expression
+    // First, move back to the start of the current or previous sexp
+    while (i > 0 && (isspace((unsigned char)content[i-1]) || content[i-1] == ')')) i--;
+
+    // Now find the start of the enclosing sexp
     while (i > 0) {
-        if (content[i] == ')') paren_count++;
-        else if (content[i] == '(') {
-            paren_count--;
-            if (paren_count < 0) return i;
+        if (content[i] == '"' && (i == 0 || content[i-1] != '\\')) {
+            in_string = !in_string;
         }
-        else if (paren_count == 0 && !isspace((unsigned char)content[i]) && content[i] != '\'') {
-            // We've found the start of a symbol or literal
-            while (i > 0 && !isspace((unsigned char)content[i-1]) && content[i-1] != '(' && content[i-1] != '\'') {
-                i--;
+        if (!in_string) {
+            if (content[i] == ')') paren_level++;
+            else if (content[i] == '(') {
+                if (paren_level == 0) return i;
+                paren_level--;
             }
-            return i;
         }
         i--;
     }
-    return 0; // Default to the beginning of the buffer if no start found
+    return 0; // Return the start of the buffer if no start found
 }
 
 void eval_last_sexp(BufferManager *bm) {
@@ -1301,9 +1298,30 @@ void eval_last_sexp(BufferManager *bm) {
         return;
     }
 
-    // Rest of the function remains the same
-    size_t sexp_start = find_last_sexp_start(buffer->content, buffer->point);
-    size_t sexp_end = buffer->point;
+    size_t point = buffer->point;
+    size_t content_length = strlen(buffer->content);
+
+    size_t sexp_start = find_enclosing_sexp_start(buffer->content, point);
+    size_t sexp_end = point;
+
+    // Find the end of the sexp if we're inside it
+    if (buffer->content[sexp_start] == '(' && sexp_end < content_length) {
+        int paren_level = 1;
+        size_t i = sexp_start + 1;
+        while (i < content_length && paren_level > 0) {
+            if (buffer->content[i] == '(') paren_level++;
+            else if (buffer->content[i] == ')') {
+                paren_level--;
+                if (paren_level == 0) sexp_end = i + 1;
+            }
+            i++;
+        }
+    } else {
+        // For non-list expressions, find the end
+        while (sexp_end < content_length && !isspace((unsigned char)buffer->content[sexp_end]) && buffer->content[sexp_end] != '(') {
+            sexp_end++;
+        }
+    }
 
     // Extract the S-expression
     size_t sexp_length = sexp_end - sexp_start;
@@ -1316,53 +1334,75 @@ void eval_last_sexp(BufferManager *bm) {
     sexp[sexp_length] = '\0';
 
     // Evaluate the S-expression
-    char *result = evaluate_scheme(sexp);
+    char *result = eval_scheme_string(sexp);
     free(sexp);
 
     if (result) {
         message(bm, result);
         free(result);
     } else {
-        message(bm, "Evaluation failed or returned nil.");
+        message(bm, "Evaluation returned #f");
     }
 }
 
 
-char* evaluate_scheme(const char* expr) {
-    char* result = NULL;
-    SCM output_port = scm_open_output_string();
-    SCM old_output_port = scm_current_output_port();
-    
-    scm_set_current_output_port(output_port);
-    
-    SCM eval_result = scm_c_catch(SCM_BOOL_T,
-                                  (scm_t_catch_body) scm_c_eval_string, (void*) expr,
-                                  (scm_t_catch_handler) scm_handle_by_message_noexit, NULL,
-                                  (scm_t_catch_handler) scm_handle_by_message_noexit, NULL);
-    
-    scm_set_current_output_port(old_output_port);
-    
-    SCM output_str_scm = scm_get_output_string(output_port);
-    char* output_str = scm_to_locale_string(output_str_scm);
-    
-    if (output_str && strlen(output_str) > 0) {
-        // There was an error or printed output
-        result = strdup(output_str);
-    } else if (!SCM_FALSEP(eval_result)) {
-        // No error, get the result
-        SCM str_scm = scm_object_to_string(eval_result, SCM_UNDEFINED);
-        result = scm_to_locale_string(str_scm);
-        scm_remember_upto_here_1(str_scm);
-    } else {
-        result = strdup("Evaluation returned #f");
-    }
-    
-    scm_close_port(output_port);
-    free(output_str);
-    scm_remember_upto_here_2(output_port, eval_result);
-    
-    return result;
-}
+
+
+/* static size_t find_last_sexp_start(const char* content, size_t point) { */
+/*     int paren_count = 0; */
+/*     size_t i = point; */
+
+/*     // Move backwards until we find the start of the S-expression */
+/*     while (i > 0) { */
+/*         if (content[i] == ')') paren_count++; */
+/*         else if (content[i] == '(') { */
+/*             paren_count--; */
+/*             if (paren_count < 0) return i; */
+/*         } */
+/*         else if (paren_count == 0 && !isspace((unsigned char)content[i]) && content[i] != '\'') { */
+/*             // We've found the start of a symbol or literal */
+/*             while (i > 0 && !isspace((unsigned char)content[i-1]) && content[i-1] != '(' && content[i-1] != '\'') { */
+/*                 i--; */
+/*             } */
+/*             return i; */
+/*         } */
+/*         i--; */
+/*     } */
+/*     return 0; // Default to the beginning of the buffer if no start found */
+/* } */
+
+/* void eval_last_sexp(BufferManager *bm) { */
+/*     Buffer *buffer = getActiveBuffer(bm); */
+/*     if (!buffer || !buffer->content) { */
+/*         message(bm, "No buffer to evaluate."); */
+/*         return; */
+/*     } */
+
+/*     size_t sexp_start = find_last_sexp_start(buffer->content, buffer->point); */
+/*     size_t sexp_end = buffer->point; */
+
+/*     // Extract the S-expression */
+/*     size_t sexp_length = sexp_end - sexp_start; */
+/*     char *sexp = malloc(sexp_length + 1); */
+/*     if (!sexp) { */
+/*         message(bm, "Memory allocation failed."); */
+/*         return; */
+/*     } */
+/*     strncpy(sexp, buffer->content + sexp_start, sexp_length); */
+/*     sexp[sexp_length] = '\0'; */
+
+/*     // Evaluate the S-expression */
+/*     char *result = evaluate_scheme(sexp); */
+/*     free(sexp); */
+
+/*     if (result) { */
+/*         message(bm, result); */
+/*         free(result); */
+/*     } else { */
+/*         message(bm, "Evaluation failed or returned nil."); */
+/*     } */
+/* } */
+
 
 void eval_expression(BufferManager *bm) {
     Buffer *minibuffer = getBuffer(bm, "minibuffer");
@@ -1378,7 +1418,7 @@ void eval_expression(BufferManager *bm) {
             switchToBuffer(bm, "minibuffer");
         } else {
             // Evaluate the expression
-            char *result = evaluate_scheme(minibuffer->content);
+            char *result = eval_scheme_string(minibuffer->content);
             message(bm, result);
             free(result);
 
@@ -1392,6 +1432,41 @@ void eval_expression(BufferManager *bm) {
         }
     } else {
         message(bm, "No last buffer to go to.");
+    }
+}
+
+void eval_region(BufferManager *bm) {
+    Buffer *buffer = getActiveBuffer(bm);
+    if (!buffer || !buffer->content || !buffer->region.active) {
+        message(bm, "No active region to evaluate.");
+        return;
+    }
+
+    size_t start = buffer->region.start;
+    size_t end = buffer->region.end;
+    if (start > end) {
+        size_t temp = start;
+        start = end;
+        end = temp;
+    }
+
+    size_t region_length = end - start;
+    char *region_text = malloc(region_length + 1);
+    if (!region_text) {
+        message(bm, "Memory allocation failed.");
+        return;
+    }
+    strncpy(region_text, buffer->content + start, region_length);
+    region_text[region_length] = '\0';
+
+    char *result = eval_scheme_string(region_text);
+    free(region_text);
+
+    if (result) {
+        message(bm, result);
+        free(result);
+    } else {
+        message(bm, "Evaluation failed or returned nil.");
     }
 }
 
