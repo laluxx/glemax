@@ -18,6 +18,9 @@ void load_init_file(void);
 SCM eval_in_scheme(const char *expr);
 char* eval_scheme_string(const char* expr);
 
+char* safe_scm_to_string(SCM str);
+SCM scm_register_command(SCM name, SCM description, SCM expr);
+
 // Scheme interface functions
 // These should not be called directly from C code
 // Buffer operations
@@ -40,5 +43,10 @@ SCM scm_theme_previous(void);
 // Version function
 SCM scm_glemax_version(void);
 
+void eval_last_sexp(BufferManager *bm);
+void eval_region(BufferManager *bm);
+
+
+SCM scm_interactive(void);
 
 #endif // EXTENSION_H

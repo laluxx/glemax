@@ -1,4 +1,5 @@
 #include "extension.h"
+#include "commands.h"
 #include "buffer.h"
 #include "screen.h"
 #include "wm.h"
@@ -8,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <ctype.h>
 
 // Configuration paths
 static const char* INIT_FILE_PATHS[] = {
@@ -41,7 +43,7 @@ void init_scheme_environment(void) {
 }
 
 // Helper to safely convert SCM strings to C strings
-static char* safe_scm_to_string(SCM str) {
+char* safe_scm_to_string(SCM str) {
     if (!scm_is_string(str)) return NULL;
     return scm_to_locale_string(str);
 }
@@ -196,6 +198,8 @@ static void init_glemax_primitives(void* data) {
     DEFSUBR("theme-next", scm_theme_next, 0, 0, 0);
     DEFSUBR("theme-previous", scm_theme_previous, 0, 0, 0);
     
+    DEFSUBR("register-command", scm_register_command, 3, 0, 0);
+    
     // Version
     DEFSUBR("glemax-version", scm_glemax_version, 0, 0, 0);
     
@@ -312,3 +316,257 @@ char* eval_scheme_string(const char* expr) {
     
     return output;
 }
+
+SCM scm_interactive(void) {
+    // Get the current stack frame
+    SCM stack = scm_make_stack(SCM_BOOL_T, SCM_EOL);
+    
+    // Get the current function name from the stack
+    SCM frame = scm_stack_ref(stack, scm_from_int(1));
+    SCM source = scm_frame_source(frame);
+    
+    if (scm_is_true(source)) {
+        SCM name = scm_source_property(source, scm_from_utf8_symbol("name"));
+        if (scm_is_true(name)) {
+            char* c_name = safe_scm_to_string(scm_symbol_to_string(name));
+            if (c_name) {
+                char* c_expr = malloc(strlen(c_name) + 3);
+                sprintf(c_expr, "(%s)", c_name);
+
+                addSchemeCommand(&commands, c_name,
+                                 "Interactive function", c_expr);
+                
+                free(c_name);
+                free(c_expr);
+            }
+        }
+    }
+    
+    return SCM_BOOL_T;
+}
+
+// FROM EDIT MODULE
+
+static size_t find_enclosing_sexp_start(const char* content, size_t point) {
+    int paren_level = 0;
+    bool in_string = false;
+    size_t i = point;
+
+    // First, move back to the start of the current or previous sexp
+    while (i > 0 && (isspace((unsigned char)content[i-1]) || content[i-1] == ')')) i--;
+
+    // Now find the start of the enclosing sexp
+    while (i > 0) {
+        if (content[i] == '"' && (i == 0 || content[i-1] != '\\')) {
+            in_string = !in_string;
+        }
+        if (!in_string) {
+            if (content[i] == ')') paren_level++;
+            else if (content[i] == '(') {
+                if (paren_level == 0) return i;
+                paren_level--;
+            }
+        }
+        i--;
+    }
+    return 0; // Return the start of the buffer if no start found
+}
+
+void eval_last_sexp(BufferManager *bm) {
+    Buffer *buffer = getActiveBuffer(bm);
+    if (!buffer || !buffer->content) {
+        message(bm, "No buffer to evaluate.");
+        return;
+    }
+
+    // Find the last complete sexp before or at point
+    size_t point = buffer->point;
+    size_t sexp_start = 0;
+    size_t sexp_end = point;
+    int paren_level = 0;
+    bool found = false;
+
+    // First find the closing parenthesis
+    while (sexp_end > 0) {
+        if (buffer->content[sexp_end - 1] == ')') {
+            found = true;
+            break;
+        }
+        sexp_end--;
+    }
+
+    if (!found) {
+        message(bm, "No S-expression found before point.");
+        return;
+    }
+
+    // Now find the matching opening parenthesis
+    sexp_start = sexp_end - 1;
+    paren_level = 1; // We start after finding a closing paren
+
+    while (sexp_start > 0) {
+        if (buffer->content[sexp_start - 1] == ')') {
+            paren_level++;
+        } else if (buffer->content[sexp_start - 1] == '(') {
+            paren_level--;
+            if (paren_level == 0) {
+                break;
+            }
+        }
+        sexp_start--;
+    }
+
+    if (paren_level != 0) {
+        message(bm, "Unmatched parentheses.");
+        return;
+    }
+
+    // Extract the s-expression
+    sexp_start--; // Include the opening parenthesis
+    size_t sexp_length = sexp_end - sexp_start;
+    char *sexp = malloc(sexp_length + 1);
+    if (!sexp) {
+        message(bm, "Memory allocation failed.");
+        return;
+    }
+
+    strncpy(sexp, buffer->content + sexp_start, sexp_length);
+    sexp[sexp_length] = '\0';
+
+    char *result = eval_scheme_string(sexp);
+    free(sexp);
+
+    message(bm, result ? result : "Evaluation returned #f");
+    free(result);
+}
+
+void eval_buffer(BufferManager *bm) {
+    Buffer *buffer = getActiveBuffer(bm);
+    if (!buffer || !buffer->content) { message(bm, "No buffer to evaluate."); return; }
+
+    char *result = eval_scheme_string(buffer->content);
+    if (result) {
+        message(bm, result);
+        free(result);
+    } else {
+        message(bm, "Buffer evaluation returned #f");
+    }
+}
+
+void eval_region(BufferManager *bm) {
+    Buffer *buffer = getActiveBuffer(bm);
+    if (!buffer || !buffer->content || !buffer->region.active) {
+        message(bm, "No active region to evaluate.");
+        return;
+    }
+
+    size_t start = buffer->region.start;
+    size_t end = buffer->region.end;
+    if (start > end) {
+        size_t temp = start;
+        start = end;
+        end = temp;
+    }
+
+    // Get the region text
+    size_t region_length = end - start;
+    char *region_text = malloc(region_length + 1);
+    if (!region_text) {
+        message(bm, "Memory allocation failed.");
+        return;
+    }
+    strncpy(region_text, buffer->content + start, region_length);
+    region_text[region_length] = '\0';
+
+    // Process each expression in the region
+    size_t expr_start = 0;
+    size_t pos = 0;
+    int paren_level = 0;
+    char *last_result = NULL;
+
+    while (pos < region_length) {
+        char c = region_text[pos];
+
+        // Skip whitespace between expressions
+        if (expr_start == pos && isspace(c)) {
+            expr_start++;
+            pos++;
+            continue;
+        }
+
+        // Track parentheses
+        if (c == '(') {
+            paren_level++;
+        } else if (c == ')') {
+            paren_level--;
+            
+            // Found a complete expression
+            if (paren_level == 0) {
+                pos++; // Include the closing paren
+                
+                // Extract and evaluate this expression
+                size_t expr_len = pos - expr_start;
+                char *expr = malloc(expr_len + 1);
+                if (expr) {
+                    strncpy(expr, region_text + expr_start, expr_len);
+                    expr[expr_len] = '\0';
+
+                    // Free the previous result before getting new one
+                    free(last_result);
+                    last_result = eval_scheme_string(expr);
+                    free(expr);
+                }
+                
+                // Move to next expression
+                expr_start = pos;
+            }
+        }
+        
+        pos++;
+    }
+
+    // Display the last result
+    if (last_result) {
+        message(bm, last_result);
+        free(last_result);
+    } else {
+        message(bm, "No complete expressions found in region");
+    }
+
+    free(region_text);
+}
+
+/* void eval_region(BufferManager *bm) { */
+/*     Buffer *buffer = getActiveBuffer(bm); */
+/*     if (!buffer || !buffer->content || !buffer->region.active) { */
+/*         message(bm, "No active region to evaluate."); */
+/*         return; */
+/*     } */
+
+/*     size_t start = buffer->region.start; */
+/*     size_t end = buffer->region.end; */
+/*     if (start > end) { */
+/*         size_t temp = start; */
+/*         start = end; */
+/*         end = temp; */
+/*     } */
+
+/*     size_t region_length = end - start; */
+/*     char *region_text = malloc(region_length + 1); */
+/*     if (!region_text) { */
+/*         message(bm, "Memory allocation failed."); */
+/*         return; */
+/*     } */
+/*     strncpy(region_text, buffer->content + start, region_length); */
+/*     region_text[region_length] = '\0'; */
+
+/*     char *result = eval_scheme_string(region_text); */
+/*     free(region_text); */
+
+/*     if (result) { */
+/*         message(bm, result); */
+/*         free(result); */
+/*     } else { */
+/*         message(bm, "Evaluation failed or returned nil."); */
+/*     } */
+/* } */

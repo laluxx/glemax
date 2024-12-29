@@ -28,7 +28,7 @@ typedef struct {
 typedef struct {
     size_t start;   // Start position of the region
     size_t end;     // End position of the region
-    size_t mark;    // NOTE Could become an array of marks
+    size_t mark;    // NOTE Could become a dynamic array of marks
     bool active;    // Whether the region is currently active
     bool marked;    // Whether the region was activated by pressing C-SPC
 } Region;
@@ -46,6 +46,7 @@ typedef struct {
     Font *font;      // NOTE Each buffer has its fonts
     TSTree *tree;    // Tree sitter tree
     SyntaxArray syntaxArray; // Array of syntax highlighting ranges
+    char *major_mode;
 } Buffer;
 
 typedef struct {
@@ -135,6 +136,8 @@ void cleanBuffer(BufferManager *bm, char *name);
 
 
 Buffer *getBufferUnderCursor(WindowManager *wm);
+
+void setMajorMode(Buffer *buffer);
 
 
 // MODELINE

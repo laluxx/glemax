@@ -4,6 +4,7 @@
 #include "buffer.h"
 #include "isearch.h"
 #include "history.h"
+#include "extension.h"
 
 #define KILL_RING_SIZE 60
 
@@ -22,9 +23,9 @@ void kill_region(Buffer *buffer, KillRing *kr);
 /* void yank(Buffer *buffer, KillRing *kr); */
 void yank(Buffer *buffer, KillRing *kr, int arg);
 void kill_ring_save(Buffer *buffer, KillRing *kr);
-void insertChar(Buffer *buffer, char c);
-/* void insertChar(Buffer *buffer, char c, int arg); */
-
+/* void insertChar(Buffer *buffer, char c); */
+void insertChar(Buffer *buffer, unsigned int codepoint);
+void buffer_insert_char(Buffer *buffer, char c);
 
 /* void right_char(Buffer *buffer, bool shift, BufferManager *bm); */
 /* void left_char(Buffer *buffer, bool shift, BufferManager *bm); */
@@ -79,17 +80,22 @@ void moveTo(Buffer *buffer, int ln, int col);
 void delete_blank_lines(Buffer *buffer, int arg);
 void save_buffer(BufferManager *bm, Buffer *buffer);
 
+// MINIBUFFER FUNCTIONS
 void execute_shell_command(BufferManager *bm, char *command);
 void shell_command(BufferManager *bm);
 void execute_extended_command(BufferManager *bm);
-
-// GUILE
 void eval_expression(BufferManager *bm);
-void eval_last_sexp(BufferManager *bm);
-void eval_region(BufferManager *bm);
+void keep_lines(BufferManager *bm, WindowManager *wm);
 
 void recenter(Window *window);
 extern int recenterState; // 0: Initial, 1: Top, 2: Center, 3: Bottom
 void recenter_top_bottom(Window *window);
+
+// EXTENSION
+static SCM symbol_error_handler(void *data, SCM key, SCM args);
+static SCM collect_symbols_helper(void *data);
+void insert_guile_symbols(Buffer *buffer, BufferManager *bm);
+
+
 
 #endif

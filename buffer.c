@@ -30,6 +30,8 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
     buffer->region.active = false;
     buffer->scale.index = 0;
 
+    buffer->major_mode = strdup("fundamental");
+
     // Initialize syntax tree
     buffer->tree = ts_parser_parse_string(parser, NULL, buffer->content, buffer->size);
     initSyntaxArray(&buffer->syntaxArray, 10);
@@ -46,6 +48,7 @@ void newBuffer(BufferManager *manager, WindowManager *wm,
     }
     
     initBuffer(buffer, name, path);
+    setMajorMode(buffer);
     initScale(&buffer->scale); // Ensure this sets the default index properly
     buffer->font = loadFont(fontname, buffer->scale.fontSizes[buffer->scale.index]); // Make sure this loads the font metrics
 
@@ -78,6 +81,7 @@ void newBuffer(BufferManager *manager, WindowManager *wm,
 void freeBuffer(Buffer *buffer) {
     free(buffer->content);
     free(buffer->name);
+    free(buffer->major_mode);
     buffer->content = NULL;
     buffer->name = NULL;
     buffer->size = 0;
@@ -254,6 +258,19 @@ Buffer *getBufferUnderCursor(WindowManager *wm) {
     }
 }
 
+void setMajorMode(Buffer *buffer) {
+    const char *extension = strrchr(buffer->name, '.');
+    if (extension) {
+        if (strcmp(extension, ".c") == 0 || strcmp(extension, ".h") == 0) {
+            free(buffer->major_mode);
+            buffer->major_mode = strdup("c");
+        }
+        // Add more major-modes...
+    } else {
+        // we could also check the buffer->content here for modes that can't be determined by file extension alone
+    }
+}
+
 
 // MODELINE
 
@@ -272,6 +289,7 @@ void initSegments(Segments *segments) {
     addSegment(segments, "name",        "NAME");
     addSegment(segments, "line-number", "LINE-NUMBER");
     addSegment(segments, "scroll",      "Top");
+    addSegment(segments, "mode",        "Maybe");
 }
 
 
@@ -280,19 +298,32 @@ void updateSegments(Modeline *modeline, Buffer *buffer) {
         Segment *segment = &modeline->segments.segment[i];
 
         if (strcmp(segment->name, "line-number") == 0) {
-            // Update the line number segment with the current line number
             int lineNumber = getLineNumber(buffer);
-            free(segment->content);  // Free the old content
-            char lineNumStr[32];     // Sufficiently large buffer to hold the line number string
+            free(segment->content);
+            char lineNumStr[32];
             snprintf(lineNumStr, sizeof(lineNumStr), "L%d", lineNumber);
-            segment->content = strdup(lineNumStr); // Update with new line number
+            segment->content = strdup(lineNumStr);
         }
-        if (strcmp(segment->name, "name") == 0) {
+        else if (strcmp(segment->name, "name") == 0) {
+            free(segment->content);
             segment->content = strdup(buffer->name);
+        }
+        else if (strcmp(segment->name, "mode") == 0) {
+            free(segment->content);
+            segment->content = strdup(buffer->major_mode);
+        }
+        else if (strcmp(segment->name, "logo") == 0) {
+            free(segment->content);
+            if (strcmp(buffer->major_mode, "c") == 0) {
+                segment->content = strdup("C");
+            } else if (strcmp(buffer->major_mode, "h") == 0) {
+                segment->content = strdup("H");
+            } else {
+                segment->content = strdup("F");
+            }
         }
     }
 }
-
 
 
 int getLineNumber(Buffer *buffer) {

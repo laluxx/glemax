@@ -109,8 +109,6 @@ void mouseButtonCallback(int button, int action, int mods);
 
 void keyCallback(int key, int action, int mods);
 void textCallback(unsigned int codepoint);
-void insertUnicodeCharacter(Buffer * buffer, unsigned int codepoint, int arg);
-int encodeUTF8(char *out, unsigned int codepoint);
 
 
 static double lastBlinkTime = 0.0;  // Last time the cursor state changed
@@ -216,13 +214,8 @@ void drawMiniCursor(Buffer *buffer, Font *font, float x, float y, Color color) {
 
 
 static void inner_main(void *closure, int argc, char **argv) {
-    /* init_global_environment(); // Guile env initialization */
-
-
-    // At program start
     init_scheme_environment();  // Initialize Guile
     init_glemax_bindings();    // Set up our module
-
 
     initThemes();
 
@@ -252,8 +245,7 @@ static void inner_main(void *closure, int argc, char **argv) {
     bm.lastBuffer = getBuffer(&bm, "*scratch*");
 
     
-    
-    sw = getScreenWidth();  // NOTE Currently get scren dimentions
+    sw = getScreenWidth();  // NOTE Currently get screen dimentions
     sh = getScreenHeight(); // only once at startup
 
     initWindowManager(&wm, &bm, font, sw, sh);
@@ -269,8 +261,9 @@ static void inner_main(void *closure, int argc, char **argv) {
         sw = getScreenWidth();
         sh = getScreenHeight();
 
-        /* updateWindows(&wm, font, sw, sh); */
-        /* reloadShaders(); */
+        /* updateWindows(&wm, font, sw, sh); */ 
+        /* reloadShaders(); // NOTE Reload the shaders each frame */
+
         Buffer *prompt = getBuffer(&bm, "prompt");
         Buffer *minibuffer = getBuffer(&bm, "minibuffer");
         Buffer *message = getBuffer(&bm, "message");
@@ -349,7 +342,7 @@ static void inner_main(void *closure, int argc, char **argv) {
                     drawBuffer(win, buffer, cursorVisible, false);
                 } else {
                     drawBuffer(win, buffer, cursorVisible, true);
-                    /* drawMinimap(&wm, win, buffer); */
+                    drawMinimap(&wm, win, buffer);
                 }
 
             } else {
@@ -539,6 +532,9 @@ void keyCallback(int key, int action, int mods) {
             /* printSyntaxInfo(buffer); */
             if (ctrlPressed) {
                 printf("Buffer under cursor: %s\n", getBufferUnderCursor(&wm)->name);
+                (insert_guile_symbols(buffer, &bm));
+            } else if (altPressed) {
+                keep_lines(&bm, &wm);
             }
             break;
 
@@ -804,14 +800,14 @@ void keyCallback(int key, int action, int mods) {
             if (altPressed) {
                 nextTheme();
             } else if (ctrlPressed) {
-                increaseFontSize(&bm, fontname, &wm, sh, arg);                    
+                text_scale_increase(&bm, fontname, &wm, sh, arg);                    
             }
             break;
         case KEY_MINUS:
             if (altPressed) {
                 previousTheme();
             } else if (ctrlPressed) {
-                decreaseFontSize(&bm, fontname, &wm, sh, arg);                    
+                text_scale_decrease(&bm, fontname, &wm, sh, arg);                    
             }
             break;
 
@@ -975,35 +971,6 @@ void textCallback(unsigned int codepoint) {
     }
 }
 
-void insertUnicodeCharacter(Buffer * buffer, unsigned int codepoint, int arg) {
-    char utf8[5]; // Buffer to hold UTF-8 encoded character
-    int bytes = encodeUTF8(utf8, codepoint); // Function to convert codepoint to UTF-8
-    for (int i = 0; i < bytes; i++) {
-        insertChar(buffer, utf8[i]);
-    }
-}
-
-int encodeUTF8(char *out, unsigned int codepoint) {
-    if (codepoint <= 0x7F) {
-        out[0] = codepoint;
-        return 1;
-    } else if (codepoint <= 0x7FF) {
-        out[0] = 192 + (codepoint >> 6);
-        out[1] = 128 + (codepoint & 63);
-        return 2;
-    } else if (codepoint <= 0xFFFF) {
-        out[0] = 224 + (codepoint >> 12);
-        out[1] = 128 + ((codepoint >> 6) & 63);
-        out[2] = 128 + (codepoint & 63);
-        return 3;
-    } else {
-        out[0] = 240 + (codepoint >> 18);
-        out[1] = 128 + ((codepoint >> 12) & 63);
-        out[2] = 128 + ((codepoint >> 6) & 63);
-        out[3] = 128 + (codepoint & 63);
-        return 4;
-    }
-}
 
 
 
@@ -1474,9 +1441,9 @@ void scrollCallback(double xOffset, double yOffset) {
         if (isKeyDown(KEY_LEFT_CONTROL)) {
             int arg = (yOffset > 0) ? -1 : 1;
             if (arg > 0) {
-                increaseFontSize(&bm, fontname, &wm, sh, arg);
+                text_scale_increase(&bm, fontname, &wm, sh, arg);
             } else {
-                decreaseFontSize(&bm, fontname, &wm, sh, -arg);
+                text_scale_decrease(&bm, fontname, &wm, sh, -arg);
             }
             updateScroll(win);
              if (blink_cursor_mode) {

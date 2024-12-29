@@ -1,5 +1,4 @@
 #include "edit.h"
-#include "extension.h"
 #include "commands.h"
 #include "keychords.h"
 #include "faces.h"
@@ -41,22 +40,97 @@
 
 
 #include "syntax.h"
+void insertChar(Buffer *buffer, unsigned int codepoint) {
+    // Handle negative values that came from signed chars
+    if (codepoint > 0x10FFFF) {
+        // Convert wrapped negative value back to control character range
+        codepoint = (signed char)(codepoint & 0xFF);
+        if (codepoint < 0) {
+            codepoint = (unsigned char)codepoint;
+        }
+    }
 
-void insertChar(Buffer *buffer, char c) {
-    if (buffer->size + 1 >= buffer->capacity) {
+    // First ensure we have enough capacity
+    if (buffer->size + 4 >= buffer->capacity) {
         buffer->capacity *= 2;
-        buffer->content = realloc(buffer->content, buffer->capacity * sizeof(char));
-        if (!buffer->content) {
+        char *newContent = realloc(buffer->content, buffer->capacity * sizeof(char));
+        if (!newContent) {
             fprintf(stderr, "Failed to reallocate memory for buffer.\n");
             return;
         }
+        buffer->content = newContent;
     }
-    memmove(buffer->content + buffer->point + 1, buffer->content + buffer->point, buffer->size - buffer->point);
-    buffer->content[buffer->point] = c;
-    buffer->point++;
-    buffer->size++;
+
+    // Handle control characters and ASCII directly
+    if (codepoint <= 0x7F) {
+        // Make space for the new character
+        memmove(buffer->content + buffer->point + 1,
+                buffer->content + buffer->point,
+                buffer->size - buffer->point);
+        
+        // Insert the character
+        buffer->content[buffer->point] = codepoint;
+        buffer->point++;
+        buffer->size++;
+        buffer->content[buffer->size] = '\0';
+        return;
+    }
+
+    // For Unicode characters, encode as UTF-8
+    char utf8[5];
+    int bytes;
+
+    if (codepoint <= 0x7FF) {
+        utf8[0] = 192 + (codepoint >> 6);
+        utf8[1] = 128 + (codepoint & 63);
+        bytes = 2;
+    } else if (codepoint <= 0xFFFF) {
+        utf8[0] = 224 + (codepoint >> 12);
+        utf8[1] = 128 + ((codepoint >> 6) & 63);
+        utf8[2] = 128 + (codepoint & 63);
+        bytes = 3;
+    } else if (codepoint <= 0x10FFFF) {
+        utf8[0] = 240 + (codepoint >> 18);
+        utf8[1] = 128 + ((codepoint >> 12) & 63);
+        utf8[2] = 128 + ((codepoint >> 6) & 63);
+        utf8[3] = 128 + (codepoint & 63);
+        bytes = 4;
+    } else {
+        // This shouldn't happen due to initial check, but handle just in case
+        fprintf(stderr, "Invalid Unicode codepoint after conversion: %u\n", codepoint);
+        return;
+    }
+
+    // Make space for the UTF-8 sequence
+    memmove(buffer->content + buffer->point + bytes,
+            buffer->content + buffer->point,
+            buffer->size - buffer->point);
+
+    // Insert the UTF-8 sequence
+    for (int i = 0; i < bytes; i++) {
+        buffer->content[buffer->point + i] = utf8[i];
+    }
+
+    buffer->point += bytes;
+    buffer->size += bytes;
     buffer->content[buffer->size] = '\0';
 }
+
+/* void insertChar(Buffer *buffer, char c) { */
+/*     if (buffer->size + 1 >= buffer->capacity) { */
+/*         buffer->capacity *= 2; */
+/*         buffer->content = realloc(buffer->content, buffer->capacity * sizeof(char)); */
+/*         if (!buffer->content) { */
+/*             fprintf(stderr, "Failed to reallocate memory for buffer.\n"); */
+/*             return; */
+/*         } */
+/*     } */
+/*     memmove(buffer->content + buffer->point + 1, buffer->content + buffer->point, buffer->size - buffer->point); */
+/*     buffer->content[buffer->point] = c; */
+/*     buffer->point++; */
+/*     buffer->size++; */
+/*     buffer->content[buffer->size] = '\0'; */
+/* } */
 
 void beginning_of_buffer(Buffer *buffer) {
     if (buffer != NULL && buffer->content != NULL) {
@@ -519,39 +593,17 @@ char* paste_from_clipboard() {
 // could be helpful with relative line numbers,
 // emacs doesn't seem to use the universal argument for yank
 void yank(Buffer *buffer, KillRing *kr, int arg) {
-    char* textToYank = paste_from_clipboard();
-    if (textToYank) {
-        // Insert text into the buffer
+    if (kr->size == 0) return;
+
+    int yankIndex = (kr->index - 1 + kr->capacity) % kr->capacity;
+    char *textToYank = kr->entries[yankIndex];
+
+    if (textToYank != NULL) {
         for (int i = 0; textToYank[i] != '\0'; ++i) {
             insertChar(buffer, textToYank[i]);
         }
-
-        // Add the yanked text to the kr_kill ring
-        if (kr->size >= kr->capacity) {
-            free(kr->entries[kr->index]);  // Free the oldest entry if the ring is full
-        } else {
-            kr->size++;
-        }
-
-        kr->entries[kr->index] = strdup(textToYank);
-        kr->index = (kr->index + 1) % kr->capacity;
-
-        free(textToYank);
     }
 }
-
-/* void yank(Buffer *buffer, KillRing *kr) { */
-/*     if (kr->size == 0) return; */
-
-/*     int yankIndex = (kr->index - 1 + kr->capacity) % kr->capacity; */
-/*     char *textToYank = kr->entries[yankIndex]; */
-
-/*     if (textToYank != NULL) { */
-/*         for (int i = 0; textToYank[i] != '\0'; ++i) { */
-/*             insertChar(buffer, textToYank[i]); */
-/*         } */
-/*     } */
-/* } */
 
 void kill_ring_save(Buffer *buffer, KillRing *kr) {
     if (!buffer->region.active) return;
@@ -1003,6 +1055,9 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
     } else if (strcmp(prompt->content, "Eval: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
         eval_expression(bm); // Let eval_expression handle everything
+    } else if (strcmp(prompt->content, "Keep lines containing match for regexp: ") == 0) {
+        add_to_history(nh, prompt->content, minibuffer->content);
+        keep_lines(bm, wm);
     } else if (strcmp(prompt->content, "Goto line: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
         goto_line(bm, wm, sw, sh);
@@ -1265,143 +1320,98 @@ void execute_extended_command(BufferManager *bm) {
 }
 
 
+void keep_lines(BufferManager *bm, WindowManager *wm) {
+    Buffer *minibuffer = getBuffer(bm, "minibuffer");
+    Buffer *prompt = getBuffer(bm, "prompt");
 
-static size_t find_enclosing_sexp_start(const char* content, size_t point) {
-    int paren_level = 0;
-    bool in_string = false;
-    size_t i = point;
-
-    // First, move back to the start of the current or previous sexp
-    while (i > 0 && (isspace((unsigned char)content[i-1]) || content[i-1] == ')')) i--;
-
-    // Now find the start of the enclosing sexp
-    while (i > 0) {
-        if (content[i] == '"' && (i == 0 || content[i-1] != '\\')) {
-            in_string = !in_string;
+    // Initial minibuffer setup
+    if (minibuffer->size == 0) {
+        if (bm->lastBuffer && bm->lastBuffer->name) {
+            minibuffer->size = 0;
+            minibuffer->point = 0;
+            minibuffer->content[0] = '\0';
+            free(prompt->content);
+            prompt->content = strdup("Keep lines containing match for regexp: ");
+            switchToBuffer(bm, "minibuffer");
+        } else {
+            message(bm, "No last buffer to go to.");
         }
-        if (!in_string) {
-            if (content[i] == ')') paren_level++;
-            else if (content[i] == '(') {
-                if (paren_level == 0) return i;
-                paren_level--;
-            }
-        }
-        i--;
-    }
-    return 0; // Return the start of the buffer if no start found
-}
-
-void eval_last_sexp(BufferManager *bm) {
-    Buffer *buffer = getActiveBuffer(bm);
-    if (!buffer || !buffer->content) {
-        message(bm, "No buffer to evaluate.");
         return;
     }
 
-    size_t point = buffer->point;
-    size_t content_length = strlen(buffer->content);
+    // Get the pattern from minibuffer
+    const char *pattern = minibuffer->content;
+    Buffer *buffer = bm->lastBuffer;
 
-    size_t sexp_start = find_enclosing_sexp_start(buffer->content, point);
-    size_t sexp_end = point;
-
-    // Find the end of the sexp if we're inside it
-    if (buffer->content[sexp_start] == '(' && sexp_end < content_length) {
-        int paren_level = 1;
-        size_t i = sexp_start + 1;
-        while (i < content_length && paren_level > 0) {
-            if (buffer->content[i] == '(') paren_level++;
-            else if (buffer->content[i] == ')') {
-                paren_level--;
-                if (paren_level == 0) sexp_end = i + 1;
-            }
-            i++;
-        }
-    } else {
-        // For non-list expressions, find the end
-        while (sexp_end < content_length && !isspace((unsigned char)buffer->content[sexp_end]) && buffer->content[sexp_end] != '(') {
-            sexp_end++;
-        }
-    }
-
-    // Extract the S-expression
-    size_t sexp_length = sexp_end - sexp_start;
-    char *sexp = malloc(sexp_length + 1);
-    if (!sexp) {
-        message(bm, "Memory allocation failed.");
+    if (!buffer || !pattern || !buffer->content || buffer->size == 0) {
+        message(bm, "Invalid buffer or pattern");
         return;
     }
-    strncpy(sexp, buffer->content + sexp_start, sexp_length);
-    sexp[sexp_length] = '\0';
 
-    // Evaluate the S-expression
-    char *result = eval_scheme_string(sexp);
-    free(sexp);
+    // Remember original point
+    size_t original_point = buffer->point;
+    size_t read_pos = 0;
+    size_t write_pos = 0;
+    size_t line_start = 0;
+    bool keep_line = false;
+    size_t lines_kept = 0;
+    size_t lines_total = 0;
 
-    if (result) {
-        message(bm, result);
-        free(result);
-    } else {
-        message(bm, "Evaluation returned #f");
+    while (read_pos <= buffer->size) {
+        if (read_pos == buffer->size || buffer->content[read_pos] == '\n') {
+            lines_total++;
+            
+            size_t line_length = read_pos - line_start;
+            char *line = malloc(line_length + 1);
+            if (!line) {
+                message(bm, "Memory allocation failed");
+                return;
+            }
+            
+            strncpy(line, buffer->content + line_start, line_length);
+            line[line_length] = '\0';
+
+            keep_line = (strstr(line, pattern) != NULL);
+            free(line);
+
+            if (keep_line) {
+                lines_kept++;
+                if (write_pos != line_start) {
+                    memmove(buffer->content + write_pos, 
+                            buffer->content + line_start, 
+                            read_pos - line_start + 1);
+                }
+                write_pos += (read_pos - line_start + 1);
+            }
+
+            read_pos++;
+            line_start = read_pos;
+        } else {
+            read_pos++;
+        }
     }
+
+    // Update buffer size and null terminate
+    buffer->size = write_pos;
+    buffer->content[buffer->size] = '\0';
+    
+    // Adjust cursor position if necessary
+    if (original_point > buffer->size) {
+        buffer->point = buffer->size;
+    }
+
+    // Display results message
+    char msg[100];
+    snprintf(msg, sizeof(msg), "Kept %zu out of %zu total lines", lines_kept, lines_total);
+    message(bm, msg);
+
+    // Clean up minibuffer
+    minibuffer->size = 0;
+    minibuffer->point = 0;
+    minibuffer->content[0] = '\0';
+    prompt->content = strdup("");
+    switchToBuffer(bm, buffer->name);
 }
-
-
-
-
-/* static size_t find_last_sexp_start(const char* content, size_t point) { */
-/*     int paren_count = 0; */
-/*     size_t i = point; */
-
-/*     // Move backwards until we find the start of the S-expression */
-/*     while (i > 0) { */
-/*         if (content[i] == ')') paren_count++; */
-/*         else if (content[i] == '(') { */
-/*             paren_count--; */
-/*             if (paren_count < 0) return i; */
-/*         } */
-/*         else if (paren_count == 0 && !isspace((unsigned char)content[i]) && content[i] != '\'') { */
-/*             // We've found the start of a symbol or literal */
-/*             while (i > 0 && !isspace((unsigned char)content[i-1]) && content[i-1] != '(' && content[i-1] != '\'') { */
-/*                 i--; */
-/*             } */
-/*             return i; */
-/*         } */
-/*         i--; */
-/*     } */
-/*     return 0; // Default to the beginning of the buffer if no start found */
-/* } */
-
-/* void eval_last_sexp(BufferManager *bm) { */
-/*     Buffer *buffer = getActiveBuffer(bm); */
-/*     if (!buffer || !buffer->content) { */
-/*         message(bm, "No buffer to evaluate."); */
-/*         return; */
-/*     } */
-
-/*     size_t sexp_start = find_last_sexp_start(buffer->content, buffer->point); */
-/*     size_t sexp_end = buffer->point; */
-
-/*     // Extract the S-expression */
-/*     size_t sexp_length = sexp_end - sexp_start; */
-/*     char *sexp = malloc(sexp_length + 1); */
-/*     if (!sexp) { */
-/*         message(bm, "Memory allocation failed."); */
-/*         return; */
-/*     } */
-/*     strncpy(sexp, buffer->content + sexp_start, sexp_length); */
-/*     sexp[sexp_length] = '\0'; */
-
-/*     // Evaluate the S-expression */
-/*     char *result = evaluate_scheme(sexp); */
-/*     free(sexp); */
-
-/*     if (result) { */
-/*         message(bm, result); */
-/*         free(result); */
-/*     } else { */
-/*         message(bm, "Evaluation failed or returned nil."); */
-/*     } */
-/* } */
 
 
 void eval_expression(BufferManager *bm) {
@@ -1432,41 +1442,6 @@ void eval_expression(BufferManager *bm) {
         }
     } else {
         message(bm, "No last buffer to go to.");
-    }
-}
-
-void eval_region(BufferManager *bm) {
-    Buffer *buffer = getActiveBuffer(bm);
-    if (!buffer || !buffer->content || !buffer->region.active) {
-        message(bm, "No active region to evaluate.");
-        return;
-    }
-
-    size_t start = buffer->region.start;
-    size_t end = buffer->region.end;
-    if (start > end) {
-        size_t temp = start;
-        start = end;
-        end = temp;
-    }
-
-    size_t region_length = end - start;
-    char *region_text = malloc(region_length + 1);
-    if (!region_text) {
-        message(bm, "Memory allocation failed.");
-        return;
-    }
-    strncpy(region_text, buffer->content + start, region_length);
-    region_text[region_length] = '\0';
-
-    char *result = eval_scheme_string(region_text);
-    free(region_text);
-
-    if (result) {
-        message(bm, result);
-        free(result);
-    } else {
-        message(bm, "Evaluation failed or returned nil.");
     }
 }
 
@@ -1794,4 +1769,268 @@ void recenter_top_bottom(Window *window) {
     recenterState = (recenterState + 1) % 3;
 }
 
+// EXTENSION
 
+// Collect and insert Guile symbols into the current buffer
+
+static SCM
+symbol_error_handler (void *data, SCM key, SCM args)
+{
+    (void)data;
+    scm_display_error (SCM_BOOL_F, scm_current_error_port(),
+                       key,
+                       scm_from_locale_string ("Error collecting symbols"),
+                       args,
+                       SCM_EOL);
+    return SCM_BOOL_F;
+}
+
+
+
+
+// SECOND
+static SCM collect_symbol_info(void *data) {
+    (void)data;
+    return scm_eval_string(scm_from_locale_string(
+                                                  "(use-modules (ice-9 documentation) "
+                                                  "             (oop goops) "  // For introspection
+                                                  "             (system vm program)) " // For arities
+                                                  "(let ((symbols '())) "
+                                                  "  (define (get-procedure-info proc sym) "
+                                                  "    (let* ((doc (procedure-documentation proc)) "
+                                                  "           (arity (procedure-minimum-arity proc)) "
+                                                  "           (req (car arity)) "     // Required args
+                                                  "           (opt (cadr arity)) "    // Optional args
+                                                  "           (rest? (caddr arity))) " // Rest args?
+                                                  "      (list (symbol->string sym) "
+                                                  "            (cond ((= req 0) "
+                                                  "                   (if (> opt 0) \"[arg...]\" \"\")) "
+                                                  "                  (else "
+                                                  "                    (string-join "
+                                                  "                      (append "
+                                                  "                        (map (lambda (n) (string-append \"arg\" (number->string n))) "
+                                                  "                             (iota req)) "
+                                                  "                        (if (> opt 0) '(\"[opt-args...]\") '()) "
+                                                  "                        (if rest? '(\"rest...\") '())) "
+                                                  "                      \" \"))) "
+                                                  "            doc))) "
+                                                  "  (define (collect-from-module module) "
+                                                  "    (module-for-each "
+                                                  "      (lambda (sym var) "
+                                                  "        (false-if-exception "  // Handle errors gracefully
+                                                  "          (let ((value (variable-ref var))) "
+                                                  "            (when (procedure? value) "
+                                                  "              (set! symbols (cons "
+                                                  "                (get-procedure-info value sym) "
+                                                  "                symbols)))))) "
+                                                  "      module)) "
+                                                  "  (collect-from-module (current-module)) "
+                                                  "  (collect-from-module (resolve-interface '(guile))) "
+                                                  "  (sort symbols "
+                                                  "        (lambda (a b) "
+                                                  "          (string<? (car a) (car b)))))"));
+}
+
+void insert_guile_symbols(Buffer *buffer, BufferManager *bm) {
+    if (!buffer) {
+        message(bm, "No buffer to insert symbols into.");
+        return;
+    }
+
+    SCM result = scm_c_catch(SCM_BOOL_T,
+                             collect_symbol_info,
+                             NULL,
+                             symbol_error_handler,
+                             NULL,
+                             NULL,
+                             NULL);
+
+    if (scm_is_false(result)) {
+        message(bm, "Failed to collect Guile symbols.");
+        return;
+    }
+
+    /* Insert header with usage instructions */
+    const char *header =
+        "\n;; Guile Interactive Function Reference\n"
+        ";; ================================\n"
+        ";; Usage:\n"
+        ";;  - Each function is shown with its name and arguments\n"
+        ";;  - The line below shows example usage you can copy and modify\n"
+        ";;  - Full documentation follows\n"
+        ";;  - Required arguments are shown as arg0, arg1, etc.\n"
+        ";;  - Optional arguments are shown in [brackets]\n"
+        ";;  - Rest arguments are shown as rest...\n\n";
+
+    for (const char *p = header; *p; p++) {
+        insertChar(buffer, *p);
+    }
+
+    size_t count = 0;
+
+    for (SCM lst = result; scm_is_pair(lst); lst = scm_cdr(lst)) {
+        SCM info = scm_car(lst);
+        char *name = scm_to_locale_string(scm_car(info));
+        char *args = scm_to_locale_string(scm_cadr(info));
+        char *doc = NULL;
+        if (scm_is_string(scm_caddr(info))) {
+            doc = scm_to_locale_string(scm_caddr(info));
+        }
+
+        if (name) {
+            // Function signature
+            insertChar(buffer, '(');
+            for (char *p = name; *p; p++) {
+                insertChar(buffer, *p);
+            }
+            if (args && *args) {
+                insertChar(buffer, ' ');
+                for (char *p = args; *p; p++) {
+                    insertChar(buffer, *p);
+                }
+            }
+            insertChar(buffer, ')');
+            insertChar(buffer, '\n');
+
+            // Example usage line (ready to modify)
+            const char *indent = "    ";
+            for (const char *p = indent; *p; p++) {
+                insertChar(buffer, *p);
+            }
+            insertChar(buffer, '(');
+            for (char *p = name; *p; p++) {
+                insertChar(buffer, *p);
+            }
+            if (args && *args) {
+                insertChar(buffer, ' ');
+                // Replace arg0, arg1 etc with ... as placeholder
+                for (char *p = args; *p; p++) {
+                    if (strncmp(p, "arg", 3) == 0) {
+                        insertChar(buffer, '.');
+                        insertChar(buffer, '.');
+                        insertChar(buffer, '.');
+                        while (*p && *p != ' ') p++;
+                        p--; // Compensate for loop increment
+                    } else {
+                        insertChar(buffer, *p);
+                    }
+                }
+            }
+            insertChar(buffer, ')');
+            insertChar(buffer, '\n');
+
+            // Documentation
+            if (doc && *doc) {
+                const char *doc_indent = "    ;; ";
+                for (const char *p = doc_indent; *p; p++) {
+                    insertChar(buffer, *p);
+                }
+
+                // Word wrap the documentation
+                int col = strlen(doc_indent);
+                const int wrap_at = 70;
+                const char *doc_ptr = doc;
+
+                while (*doc_ptr) {
+                    if (col > wrap_at && *doc_ptr == ' ') {
+                        insertChar(buffer, '\n');
+                        for (const char *p = doc_indent; *p; p++) {
+                            insertChar(buffer, *p);
+                        }
+                        col = strlen(doc_indent);
+                        doc_ptr++;
+                        continue;
+                    }
+                    insertChar(buffer, *doc_ptr);
+                    col++;
+                    doc_ptr++;
+                }
+                insertChar(buffer, '\n');
+            }
+
+            insertChar(buffer, '\n');
+            count++;
+        }
+
+        if (name) free(name);
+        if (args) free(args);
+        if (doc) free(doc);
+    }
+
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Inserted documentation for %zu Guile functions.", count);
+    message(bm, msg);
+}
+
+
+// BASE
+/* static SCM */
+/* collect_symbols (void *data) */
+/* { */
+/*     (void)data; */
+/*     return scm_eval_string (scm_from_locale_string ( */
+/*                                                     "(sort (map (lambda (s) (symbol->string s)) \ */
+/*            (append (module-map (lambda (sym var) sym) \ */
+/*                              (current-module)) \ */
+/*                   (module-map (lambda (sym var) sym) \ */
+/*                              (resolve-interface '(guile))))) \ */
+/*           string<?)")); */
+/* } */
+
+/* void */
+/* insert_guile_symbols (Buffer *buffer, BufferManager *bm) */
+/* { */
+/*     if (!buffer) */
+/*         { */
+/*             message (bm, "No buffer to insert symbols into."); */
+/*             return; */
+/*         } */
+
+/*     SCM result = scm_c_catch (SCM_BOOL_T, */
+/*                               collect_symbols, */
+/*                               NULL, */
+/*                               symbol_error_handler, */
+/*                               NULL, */
+/*                               NULL, */
+/*                               NULL); */
+
+/*     if (scm_is_false (result)) */
+/*         { */
+/*             message (bm, "Failed to collect Guile symbols."); */
+/*             return; */
+/*         } */
+
+/*     /\* Insert header *\/ */
+/*     const char *header = "\n;; Available Guile Symbols:\n\n"; */
+/*     for (const char *p = header; *p; p++) */
+/*         insertChar (buffer, *p); */
+
+/*     size_t count = 0; */
+
+/*     /\* Process each symbol *\/ */
+/*     for (SCM lst = result; scm_is_pair (lst); lst = scm_cdr (lst)) */
+/*         { */
+/*             SCM str = scm_car (lst); */
+/*             char *symbol_name = scm_to_locale_string (str); */
+
+/*             if (symbol_name) */
+/*                 { */
+/*                     /\* Insert with prefix *\/ */
+/*                     const char *prefix = ";; "; */
+/*                     for (const char *p = prefix; *p; p++) */
+/*                         insertChar (buffer, *p); */
+
+/*                     for (char *p = symbol_name; *p; p++) */
+/*                         insertChar (buffer, *p); */
+          
+/*                     insertChar (buffer, '\n'); */
+/*                     free (symbol_name); */
+/*                     count++; */
+/*                 } */
+/*         } */
+
+/*     /\* Report completion *\/ */
+/*     char msg[128]; */
+/*     snprintf (msg, sizeof(msg), "Inserted %zu Guile symbols into buffer.", count); */
+/*     message (bm, msg); */
+/* } */

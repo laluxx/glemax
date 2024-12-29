@@ -35,7 +35,7 @@ Font* updateFont(Scale *scale, int newIndex, char *fontname) {
 
 // TODO it shoudl take a bool, true if increased by the scrollCallback, if so it shoudl scroll the buffer(s)
 // under the cursor
-void increaseFontSize(BufferManager *bm, char *fontname, WindowManager *wm, int sh, int arg) {
+void text_scale_increase(BufferManager *bm, char *fontname, WindowManager *wm, int sh, int arg) {
     Window *win = wm->activeWindow;
     Buffer *buffer = isCurrentBuffer(bm, "minibuffer") ? getBuffer(bm, "minibuffer") : win->buffer;
     /* Buffer *buffer = isCurrentBuffer(bm, "minibuffer") ? getBuffer(bm, "minibuffer") : getBufferUnderCursor(wm); */
@@ -66,7 +66,7 @@ void increaseFontSize(BufferManager *bm, char *fontname, WindowManager *wm, int 
     }
 }
 
-void decreaseFontSize(BufferManager *bm, char *fontname, WindowManager *wm, int sh, int arg) {
+void text_scale_decrease(BufferManager *bm, char *fontname, WindowManager *wm, int sh, int arg) {
     Window *win = wm->activeWindow;
     Buffer *buffer = isCurrentBuffer(bm, "minibuffer") ? getBuffer(bm, "minibuffer") : win->buffer;
     /* Buffer *buffer = isCurrentBuffer(bm, "minibuffer") ? getBuffer(bm, "minibuffer") : getBufferUnderCursor(wm); */
@@ -105,7 +105,7 @@ void decreaseFontSize(BufferManager *bm, char *fontname, WindowManager *wm, int 
 
 
 // TODO use the win->height instead of the sh
-/* void increaseFontSize(Buffer *buffer, char *fontname, WindowManager *wm, int sh, int arg) { */
+/* void text_scale_increase(Buffer *buffer, char *fontname, WindowManager *wm, int sh, int arg) { */
 /*     Scale *scale = &buffer->scale; */
 /*     int nextIndex = scale->index + 1; */
 /*     if (nextIndex <= SCALE_ZERO_INDEX + MAX_FONT_SCALE) { */
@@ -127,7 +127,7 @@ void decreaseFontSize(BufferManager *bm, char *fontname, WindowManager *wm, int 
 /* } */
 
 /* // TODO use the win->height instead of the sh */
-/* void decreaseFontSize(Buffer *buffer, char *fontname, WindowManager *wm, int sh) { */
+/* void text_scale_decrease(Buffer *buffer, char *fontname, WindowManager *wm, int sh) { */
 /*     Scale *scale = &buffer->scale; */
 /*     int nextIndex = scale->index - 1; */
 /*     if (nextIndex >= SCALE_ZERO_INDEX + MIN_FONT_SCALE) { */
