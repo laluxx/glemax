@@ -297,3 +297,45 @@ TSPoint byteToPoint(const char* text, uint32_t byte) {
 }
 
 
+
+// INCREMENTAL PARSING
+TSInputEdit createInputEdit(Buffer *buffer, size_t start_byte, size_t old_end_byte, size_t new_end_byte) {
+    TSInputEdit edit;
+    edit.start_byte = start_byte;
+    edit.old_end_byte = old_end_byte;
+    edit.new_end_byte = new_end_byte;
+    edit.start_point = byteToPoint(buffer->content, start_byte);
+    edit.old_end_point = byteToPoint(buffer->content, old_end_byte);
+    edit.new_end_point = byteToPoint(buffer->content, new_end_byte);
+    return edit;
+}
+
+void updateSyntaxIncremental(Buffer *buffer, TSInputEdit *edit) {
+    if (!buffer->tree) {
+        // If there's no existing tree, parse the entire buffer
+        parseSyntax(buffer);
+        return;
+    }
+
+    ts_tree_edit(buffer->tree, edit);
+
+    TSTree *new_tree = ts_parser_parse_string(
+                                              parser,
+                                              buffer->tree,
+                                              buffer->content,
+                                              buffer->size
+                                              );
+
+    if (new_tree) {
+        ts_tree_delete(buffer->tree);
+        buffer->tree = new_tree;
+
+        // Clear existing syntax array
+        buffer->syntaxArray.used = 0;
+
+        // Process the new tree to update syntax highlighting
+        TSNode root_node = ts_tree_root_node(buffer->tree);
+        processNode(root_node, buffer->content, &buffer->syntaxArray);
+    }
+}
+

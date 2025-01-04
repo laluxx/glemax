@@ -15,7 +15,7 @@
 Commands commands = {0};
 
 void testCommand() {
-    printf("Sample command executed!\n");
+    printf("Hello from C!\n");
 }
 
 void initCommands() {
@@ -23,7 +23,7 @@ void initCommands() {
     commands.size = 0;
     commands.capacity = INITIAL_CAPACITY;
 
-    addCommand(&commands, "test", "A test command", testCommand);
+    addCommand(&commands, "c-command", "A test C command", testCommand);
     /* addCommand(&commands, "keep-lines", "A test command", keep_lines); // TODO SEGFAULT */
 }
 

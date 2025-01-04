@@ -253,6 +253,7 @@ void printActiveWindowDetails(WindowManager *wm) {
     if (buf) {
         printf("  Buffer: {\n");
         printf("    Name: %s,\n", buf->name);
+        printf("    Scale: %i,\n", buf->scale.index);
         printf("    Path: %s,\n", buf->path);
         printf("    Size: %zu,\n", buf->size);
         printf("    Capacity: %zu,\n", buf->capacity);

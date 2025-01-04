@@ -10,23 +10,23 @@
 
 (define-syntax-rule (interactive)
   (let ((proc-name (procedure-name (current-procedure))))
-    (when proc-name  ; Only if we can get the name
+    (when proc-name; Only if we can get the name
       (register-command 
        (symbol->string proc-name)
        "Interactive function"
        (string-append "(" (symbol->string proc-name) ")")))))
 
-(define (my-command)
+(define (scheme-command)
   ;; (interactive)
   (display "Hello from Scheme command!"))
 
-(register-command "my-command" 
+(register-command "scheme-command" 
                   "A custom command defined in Scheme"
-                  "(my-command)")
+                  "(scheme-command)")
 
 
 
 
 
 ;; Show messages
-(message "Glemax IS initialized!")
+(message "Loaded init.scm")

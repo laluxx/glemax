@@ -76,6 +76,7 @@ double dragThreshold = 5; // Threshold in pixels to start dragging
 
 
 bool electric_pair_mode = true; // TODO Wrap selection for () [] {} '' ""
+bool auto_scale_mode = true;
 bool blink_cursor_mode = true;
 float blink_cursor_delay = 0.5; // Seconds of idle time before the first blink of the cursor.
 float blink_cursor_interval = 0.5; // Lenght of cursor blink interval in seconds.
@@ -882,8 +883,15 @@ void keyCallback(int key, int action, int mods) {
         lastBlinkTime = getTime();
         cursorVisible = true;
     }
-    
+
+    // Update syntax for all key presses
+    if (!isCurrentBuffer(&bm, "minibuffer") && buffer->tree != NULL) {
+        TSInputEdit edit = createInputEdit(buffer, 0, buffer->size, buffer->size);
+        updateSyntaxIncremental(buffer, &edit);
+    }
+   
 }
+
 
 void textCallback(unsigned int codepoint) {
     // TODO it shoudl take all those variables as parameters
@@ -905,7 +913,7 @@ void textCallback(unsigned int codepoint) {
     
     if (buffer != NULL) {
         if (!isearch.searching) {
-            buffer->region.active = false;            
+            buffer->region.active = false;
         }
 
         if (isearch.searching) {
@@ -920,7 +928,10 @@ void textCallback(unsigned int codepoint) {
             }
         } else {
             // Normal behavior when not in search mode
-            if ((codepoint == ')' || codepoint == ']' || codepoint == '}' || 
+            size_t old_size = buffer->size;
+            size_t insert_position = buffer->point;
+
+            if ((codepoint == ')' || codepoint == ']' || codepoint == '}' ||
                  codepoint == '\'' || codepoint == '\"') &&
                 buffer->point < buffer->size && buffer->content[buffer->point] == codepoint) {
                 right_char(buffer, false, &bm, arg);
@@ -930,6 +941,10 @@ void textCallback(unsigned int codepoint) {
                     insertChar(minibuffer, codepoint);
                 } else {
                     insertChar(buffer, codepoint);
+                    // Update syntax incrementally
+                    size_t inserted_length = buffer->size - old_size;
+                    TSInputEdit edit = createInputEdit(buffer, insert_position, insert_position, insert_position + inserted_length);
+                    updateSyntaxIncremental(buffer, &edit);
                 }
 
 
@@ -970,8 +985,6 @@ void textCallback(unsigned int codepoint) {
         updateScroll(win);
     }
 }
-
-
 
 
 
@@ -1336,10 +1349,6 @@ int getGlobalArg(Buffer *argBuffer) {
 #include <math.h>
 
 
-
-// TODO if the frame is not selected don't render the cursor or
-// render an hollow one, 
-
 void updateScroll(Window *window) {
     Buffer *buffer = window->buffer;
     Font *font = buffer->font;
@@ -1376,9 +1385,13 @@ void updateScroll(Window *window) {
 
     // Horizontal scrolling logic
     if (cursorX < viewLeft || cursorRightEdge > viewRight) {
-        float newScrollX = cursorX - window->width / 2;
-        newScrollX = fmax(0, fmin(newScrollX, buffer->size * lineHeight - window->width)); // Ensure the new scroll is within the width of the longest line
-        window->scroll.x = newScrollX;
+        if (auto_scale_mode && buffer->scale.index > 8) {
+            text_scale_decrease(&bm, fontname, &wm, sh, 1);
+        } else {
+            float newScrollX = cursorX - window->width / 2;
+            newScrollX = fmax(0, fmin(newScrollX, buffer->size * lineHeight - window->width)); // Ensure the new scroll is within the width of the longest line
+            window->scroll.x = newScrollX;
+        }
     }
 }
 

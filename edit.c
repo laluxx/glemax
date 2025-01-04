@@ -182,7 +182,6 @@ void left_char(Buffer *buffer, bool shift, BufferManager *bm, int arg) {
     }
 }
 
-
 void previous_line(Buffer *buffer, bool shift, BufferManager *bm) {
     if (shift) {
         if (!buffer->region.active) {
