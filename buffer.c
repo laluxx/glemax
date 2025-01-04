@@ -290,6 +290,7 @@ void initSegments(Segments *segments) {
     addSegment(segments, "line-number", "LINE-NUMBER");
     addSegment(segments, "scroll",      "Top");
     addSegment(segments, "mode",        "Maybe");
+    addSegment(segments, "scale",       "Nan");
 }
 
 
@@ -312,15 +313,21 @@ void updateSegments(Modeline *modeline, Buffer *buffer) {
             free(segment->content);
             segment->content = strdup(buffer->major_mode);
         }
+        else if (strcmp(segment->name, "scale") == 0) {
+          free(segment->content);
+          char scaleStr[32];
+          snprintf(scaleStr, sizeof(scaleStr), "%d", buffer->scale.index);
+          segment->content = strdup(scaleStr);
+        }
         else if (strcmp(segment->name, "logo") == 0) {
-            free(segment->content);
-            if (strcmp(buffer->major_mode, "c") == 0) {
-                segment->content = strdup("C");
-            } else if (strcmp(buffer->major_mode, "h") == 0) {
-                segment->content = strdup("H");
-            } else {
-                segment->content = strdup("F");
-            }
+          free(segment->content);
+          if (strcmp(buffer->major_mode, "c") == 0) {
+            segment->content = strdup("C");
+          } else if (strcmp(buffer->major_mode, "h") == 0) {
+            segment->content = strdup("H");
+          } else {
+            segment->content = strdup("F");
+          }
         }
     }
 }

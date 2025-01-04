@@ -144,14 +144,71 @@ SCM scm_window_delete(void) {
 }
 
 // UI Functions
-SCM scm_message_show(SCM msg) {
-    char *c_msg = safe_scm_to_string(msg);
-    if (!c_msg) return SCM_BOOL_F;
+
+SCM scm_message(SCM fmt, SCM rest) {
+    char *format_str = safe_scm_to_string(fmt);
+    if (!format_str) return SCM_BOOL_F;
     
-    message(&bm, c_msg);
-    free(c_msg);
-    return SCM_BOOL_T;
+    // If we have additional arguments
+    if (scm_is_true(rest)) {
+        // Calculate needed buffer size first
+        SCM args = rest;
+        int arg_count = scm_to_int(scm_length(rest));
+        if (arg_count > 10) {  // Reasonable limit
+            free(format_str);
+            return SCM_BOOL_F;
+        }
+        
+        // Convert SCM arguments to C values
+        long c_args[10];  // Max 10 arguments
+        int i = 0;
+        while (!scm_is_null(args) && i < 10) {
+            SCM arg = scm_car(args);
+            if (scm_is_integer(arg)) {
+                c_args[i] = scm_to_long(arg);
+            } else if (scm_is_string(arg)) {
+                c_args[i] = (long)safe_scm_to_string(arg);
+            }
+            args = scm_cdr(args);
+            i++;
+        }
+        
+        // Format the string using the arguments
+        char buffer[1024];  // Adjust size as needed
+        snprintf(buffer, sizeof(buffer), format_str,
+                 c_args[0], c_args[1], c_args[2], c_args[3], c_args[4],
+                 c_args[5], c_args[6], c_args[7], c_args[8], c_args[9]);
+        
+        // Clean up any string arguments
+        for (int j = 0; j < i; j++) {
+            if (!scm_is_integer(scm_list_ref(rest, scm_from_int(j)))) {
+                free((char*)c_args[j]);
+            }
+        }
+        
+        message(&bm, buffer);
+        SCM result = scm_from_locale_string(buffer);
+        free(format_str);
+        return result;
+    }
+    
+    // Simple case - just the format string
+    message(&bm, format_str);
+    SCM result = scm_from_locale_string(format_str);
+    free(format_str);
+    return result;
 }
+
+/* SCM scm_message(SCM msg) { */
+/*     char *c_msg = safe_scm_to_string(msg); */
+/*     if (!c_msg) return SCM_BOOL_F; */
+    
+/*     message(&bm, c_msg); */
+/*     SCM result = scm_from_locale_string(c_msg);  // Convert the message back to SCM */
+/*     free(c_msg); */
+/*     return result;  // Return the message itself */
+/* } */
+
 
 SCM scm_theme_next(void) {
     nextTheme();
@@ -194,7 +251,8 @@ static void init_glemax_primitives(void* data) {
     DEFSUBR("window-delete", scm_window_delete, 0, 0, 0);
     
     // UI operations
-    DEFSUBR("message", scm_message_show, 1, 0, 0);
+    /* DEFSUBR("message", scm_message, 1, 0, 0); */
+    DEFSUBR("message", scm_message, 1, 0, 1);  // 1 required arg, variable rest args
     DEFSUBR("theme-next", scm_theme_next, 0, 0, 0);
     DEFSUBR("theme-previous", scm_theme_previous, 0, 0, 0);
     
@@ -229,7 +287,7 @@ static void init_glemax_primitives(void* data) {
 /*     DEFSUBR("window-delete", scm_window_delete, 0, 0, 0); */
     
 /*     // UI operations */
-/*     DEFSUBR("message", scm_message_show, 1, 0, 0); */
+/*     DEFSUBR("message", scm_message, 1, 0, 0); */
 /*     DEFSUBR("theme-next", scm_theme_next, 0, 0, 0); */
 /*     DEFSUBR("theme-previous", scm_theme_previous, 0, 0, 0); */
     

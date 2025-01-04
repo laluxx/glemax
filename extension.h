@@ -36,7 +36,8 @@ SCM scm_window_focus_next(SCM count);
 SCM scm_window_delete(void);
 
 // UI operations
-SCM scm_message_show(SCM msg);
+/* SCM scm_message(SCM msg); */
+SCM scm_message(SCM fmt, SCM rest);
 SCM scm_theme_next(void);
 SCM scm_theme_previous(void);
 

@@ -8,6 +8,7 @@
 ;; (window-split-horizontal)
 ;; (window-focus-next 1)
 
+
 (define-syntax-rule (interactive)
   (let ((proc-name (procedure-name (current-procedure))))
     (when proc-name; Only if we can get the name

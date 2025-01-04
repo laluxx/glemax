@@ -50,13 +50,13 @@
 // Do this when we implement the minibuffer as a window
 // NOTE I-searrch for "if (isCurrentBuffer(&bm, "minibuffer")"
 
-// TODO color unmatched characters in isearch and fix is behaviour like pressing backspaces etc..
+// TODO color unmatched characters in isearch
 // TODO unhardcode the keybinds
 // TODO check if the lastmatchindex changes and stop search (like for moving)
 // TODO M-x
 // TODO undo system
 
-// TODO ) inside () shoudl jumpt to the closing one not move right once
+// TODO ) inside () shoudl jump to the closing one not simply move right once
 // FIXME use setBufferContent() to set the prompt aswell
 
 // TODO IMPORTANT Don't fetch for the same buffer multiple times per frame,
@@ -67,8 +67,8 @@ BufferManager bm = {0};
 KillRing kr = {0};
 WindowManager wm = {0};
 NamedHistories nh = {0};
-/* double mouseX; */
-/* double mouseY; */
+/* double mouseX; // Moved */
+/* double mouseY; // Moved */
 bool dragging = false;
 double initialMouseX = 0;
 double initialMouseY = 0;
@@ -90,6 +90,7 @@ bool electric_indent_mode = true;
 bool rainbow_mode = true;
 bool crystal_cursor_mode = true; // Make the cursor crystal clear
 float mouse_wheel_scroll_amount = 2; // TODO make it a vec2f for vertical and horizontal scrolling
+bool minimap_mode = true;
 
 
 void drawMiniCursor(Buffer *buffer, Font *font, float x, float y, Color color);
@@ -114,7 +115,7 @@ void textCallback(unsigned int codepoint);
 
 static double lastBlinkTime = 0.0;  // Last time the cursor state changed
 static bool cursorVisible = true;  // Initial state of the cursor visibility
-static int blinkCount = 0;  // Counter for number of blinks
+static int blinkCount = 0;        // Counter for number of blinks
 
 
 void drawCursor(Buffer *buffer, Window *win, Color defaultColor) {
@@ -259,11 +260,11 @@ static void inner_main(void *closure, int argc, char **argv) {
     load_init_file();  // Load user config
 
     while (!windowShouldClose()) {
-        sw = getScreenWidth();
-        sh = getScreenHeight();
+        sw = getScreenWidth();  // TODO Update in
+        sh = getScreenHeight(); // the resize callback
 
         /* updateWindows(&wm, font, sw, sh); */ 
-        /* reloadShaders(); // NOTE Reload the shaders each frame */
+        reloadShaders(); // NOTE Reload the shaders each frame
 
         Buffer *prompt = getBuffer(&bm, "prompt");
         Buffer *minibuffer = getBuffer(&bm, "minibuffer");
@@ -343,7 +344,9 @@ static void inner_main(void *closure, int argc, char **argv) {
                     drawBuffer(win, buffer, cursorVisible, false);
                 } else {
                     drawBuffer(win, buffer, cursorVisible, true);
-                    drawMinimap(&wm, win, buffer);
+                    if (minimap_mode) {
+                        drawMinimap(&wm, win, buffer);
+                    }
                 }
 
             } else {
@@ -394,9 +397,10 @@ static void inner_main(void *closure, int argc, char **argv) {
     closeWindow();
 }
 
+// Is here where early-init.scm should be evaluated ?
 int main(int argc, char **argv) {
     scm_boot_guile(argc, argv, inner_main, 0);
-    return 0; // This line is never reached
+    return 0; // NOTE This line is never reached
 }
 
 
@@ -497,7 +501,8 @@ void keyCallback(int key, int action, int mods) {
             enter(buffer, &bm, &wm, minibuffer, prompt, indentation, electric_indent_mode, sw, sh, &nh, arg);
             break;
         case KEY_Y:
-            if (ctrlPressed) yank(buffer, &kr, arg);
+            if (ctrlPressed)
+                yank(buffer, &kr, arg);
             break;
         case KEY_SEMICOLON:
             if (altPressed && shiftPressed) {
@@ -607,6 +612,12 @@ void keyCallback(int key, int action, int mods) {
                 kill_ring_save(buffer, &kr);                
             }
             break;
+        case KEY_M:
+            if (ctrlPressed) {
+                minimap_mode != minimap_mode;
+            }
+            break;
+
         case KEY_G:
             if (ctrlPressed){
                 ctrl_x_pressed = false;

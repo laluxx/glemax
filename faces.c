@@ -9,7 +9,12 @@ Font *font;
 Font *minifont;
 int fontsize = 15;
 int minifontsize = 15;
-char *fontname = "jetb.ttf";
+/* char *fontname = "jetb.ttf"; */
+/* char *fontname = "radon.otf"; */
+/* char *fontname = "comic.ttf"; */
+char *fontname = "fan.otf"; 
+
+
 Font *globalFontCache[MAX_FONT_SCALE_INDEX] = {NULL};
 
 void initScale(Scale *scale) {

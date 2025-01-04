@@ -591,16 +591,14 @@ char* paste_from_clipboard() {
 // or yank at n lines from the cursor line positive or negative
 // could be helpful with relative line numbers,
 // emacs doesn't seem to use the universal argument for yank
+
 void yank(Buffer *buffer, KillRing *kr, int arg) {
-    if (kr->size == 0) return;
-
-    int yankIndex = (kr->index - 1 + kr->capacity) % kr->capacity;
-    char *textToYank = kr->entries[yankIndex];
-
-    if (textToYank != NULL) {
-        for (int i = 0; textToYank[i] != '\0'; ++i) {
-            insertChar(buffer, textToYank[i]);
+    char *clipboard_text = paste_from_clipboard();
+    if (clipboard_text) {
+        for (char *p = clipboard_text; *p; p++) {
+            insertChar(buffer, *p);
         }
+        free(clipboard_text);
     }
 }
 

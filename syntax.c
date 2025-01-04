@@ -47,16 +47,13 @@ bool isHexColor(const char *text) {
 
 
 // TODO Reorder them based on whats most found in a typucal c buffer
-// for free performance boost
+// for a free performance boost
 Color getNodeColor(TSNode node) {
+
     const char *nodeType = ts_node_type(node);
-
     printf(ts_node_string(node));
+    printf("\n\n\n");
 
-
-
-    
-    
     if (strcmp(nodeType, "return") == 0
         || strcmp(nodeType, "if") == 0
         || strcmp(nodeType, "while") == 0
@@ -69,6 +66,7 @@ Color getNodeColor(TSNode node) {
         || strcmp(nodeType, "extern") == 0
         || strcmp(nodeType, "else") == 0
         || strcmp(nodeType, "struct") == 0
+        || strcmp(nodeType, "for") == 0
         ){
         return CT.keyword;
     }
@@ -96,7 +94,6 @@ Color getNodeColor(TSNode node) {
              ){
         return CT.string;
     }
-
     else if (strcmp(nodeType, "number_literal") == 0) {
         return CT.number;
     }
@@ -130,9 +127,11 @@ Color getNodeColor(TSNode node) {
             return CT.function;
         }
         else if (strcmp(parentType, "declaration") == 0
-                 || strcmp(parentType, "assignment_expression") == 0) {
+                 || strcmp(parentType, "assignment_expression") == 0
+                 || strcmp(parentType, "init_declarator") == 0) {
             return CT.variable;
         }
+        
         else {
             return CT.text;
         }
