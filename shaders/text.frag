@@ -26,6 +26,7 @@ void main() {
     FragColor = ourColor * sampled;  // Apply vertex color to texture
 }
 
+
 // NOTE RAINY
 // #version 330 core
 // in vec2 TexCoord;

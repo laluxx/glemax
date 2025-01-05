@@ -132,7 +132,7 @@ SCM scm_window_split_horizontal(void) {
     return SCM_BOOL_T;
 }
 
-SCM scm_window_focus_next(SCM count) {
+SCM scm_other_window(SCM count) {
     int c_count = scm_to_int(count);
     other_window(&wm, c_count);
     return SCM_BOOL_T;
@@ -142,8 +142,6 @@ SCM scm_window_delete(void) {
     delete_window(&wm);
     return SCM_BOOL_T;
 }
-
-// UI Functions
 
 SCM scm_message(SCM fmt, SCM rest) {
     char *format_str = safe_scm_to_string(fmt);
@@ -199,23 +197,13 @@ SCM scm_message(SCM fmt, SCM rest) {
     return result;
 }
 
-/* SCM scm_message(SCM msg) { */
-/*     char *c_msg = safe_scm_to_string(msg); */
-/*     if (!c_msg) return SCM_BOOL_F; */
-    
-/*     message(&bm, c_msg); */
-/*     SCM result = scm_from_locale_string(c_msg);  // Convert the message back to SCM */
-/*     free(c_msg); */
-/*     return result;  // Return the message itself */
-/* } */
 
-
-SCM scm_theme_next(void) {
+SCM scm_next_theme(void) {
     nextTheme();
     return SCM_BOOL_T;
 }
 
-SCM scm_theme_previous(void) {
+SCM scm_previous_theme(void) {
     previousTheme();
     return SCM_BOOL_T;
 }
@@ -247,14 +235,14 @@ static void init_glemax_primitives(void* data) {
     // Window operations
     DEFSUBR("window-split-vertical", scm_window_split_vertical, 0, 0, 0);
     DEFSUBR("window-split-horizontal", scm_window_split_horizontal, 0, 0, 0);
-    DEFSUBR("window-focus-next", scm_window_focus_next, 1, 0, 0);
+    DEFSUBR("other-window", scm_other_window, 1, 0, 0);
     DEFSUBR("window-delete", scm_window_delete, 0, 0, 0);
     
     // UI operations
     /* DEFSUBR("message", scm_message, 1, 0, 0); */
     DEFSUBR("message", scm_message, 1, 0, 1);  // 1 required arg, variable rest args
-    DEFSUBR("theme-next", scm_theme_next, 0, 0, 0);
-    DEFSUBR("theme-previous", scm_theme_previous, 0, 0, 0);
+    DEFSUBR("next-theme", scm_next_theme, 0, 0, 0);
+    DEFSUBR("previous-theme", scm_previous_theme, 0, 0, 0);
     
     DEFSUBR("register-command", scm_register_command, 3, 0, 0);
     
@@ -265,38 +253,6 @@ static void init_glemax_primitives(void* data) {
 
     // Instead of module-export-all, we explicitly exported each symbol above
 }
-
-/* static void init_glemax_primitives(void* data) { */
-/*     (void)data; // Unused parameter */
-    
-/*     // Define primitives */
-/* #define DEFSUBR(name, func, req, opt, rst)          \ */
-/*     scm_c_define_gsubr(name, req, opt, rst, func);  \ */
-/*     scm_c_export(name, NULL); */
-    
-/*     // Buffer operations */
-/*     DEFSUBR("buffer-new", scm_buffer_new, 3, 0, 0); */
-/*     DEFSUBR("buffer-switch", scm_buffer_switch, 1, 0, 0); */
-/*     DEFSUBR("buffer-get-content", scm_buffer_get_content, 1, 0, 0); */
-/*     DEFSUBR("buffer-set-content", scm_buffer_set_content, 2, 0, 0); */
-    
-/*     // Window operations */
-/*     DEFSUBR("window-split-vertical", scm_window_split_vertical, 0, 0, 0); */
-/*     DEFSUBR("window-split-horizontal", scm_window_split_horizontal, 0, 0, 0); */
-/*     DEFSUBR("window-focus-next", scm_window_focus_next, 1, 0, 0); */
-/*     DEFSUBR("window-delete", scm_window_delete, 0, 0, 0); */
-    
-/*     // UI operations */
-/*     DEFSUBR("message", scm_message, 1, 0, 0); */
-/*     DEFSUBR("theme-next", scm_theme_next, 0, 0, 0); */
-/*     DEFSUBR("theme-previous", scm_theme_previous, 0, 0, 0); */
-    
-/* #undef DEFSUBR */
-    
-/*     // Define version in the module */
-/*     scm_c_define_gsubr("glemax-version", 0, 0, 0, */
-/*                        SCM_FUNC(scm_from_locale_string("0.1.0"))); */
-/* } */
 
 void init_glemax_bindings(void) {
     // Make sure Scheme is initialized
@@ -311,7 +267,6 @@ void init_glemax_bindings(void) {
     scm_c_use_module("glemax");
 }
 
-// Configuration loading
 void load_init_file(void) {
     for (size_t i = 0; i < sizeof(INIT_FILE_PATHS)/sizeof(INIT_FILE_PATHS[0]); i++) {
         char expanded_path[1024];
@@ -536,95 +491,33 @@ void eval_region(BufferManager *bm) {
     strncpy(region_text, buffer->content + start, region_length);
     region_text[region_length] = '\0';
 
-    // Process each expression in the region
-    size_t expr_start = 0;
-    size_t pos = 0;
-    int paren_level = 0;
-    char *last_result = NULL;
-
-    while (pos < region_length) {
-        char c = region_text[pos];
-
-        // Skip whitespace between expressions
-        if (expr_start == pos && isspace(c)) {
-            expr_start++;
-            pos++;
-            continue;
-        }
-
-        // Track parentheses
-        if (c == '(') {
-            paren_level++;
-        } else if (c == ')') {
-            paren_level--;
-            
-            // Found a complete expression
-            if (paren_level == 0) {
-                pos++; // Include the closing paren
-                
-                // Extract and evaluate this expression
-                size_t expr_len = pos - expr_start;
-                char *expr = malloc(expr_len + 1);
-                if (expr) {
-                    strncpy(expr, region_text + expr_start, expr_len);
-                    expr[expr_len] = '\0';
-
-                    // Free the previous result before getting new one
-                    free(last_result);
-                    last_result = eval_scheme_string(expr);
-                    free(expr);
-                }
-                
-                // Move to next expression
-                expr_start = pos;
-            }
-        }
-        
-        pos++;
+    // Trim whitespace from the start and end
+    char *trimmed_text = region_text;
+    while (*trimmed_text && isspace((unsigned char)*trimmed_text)) {
+        trimmed_text++;
+    }
+    char *end_text = trimmed_text + strlen(trimmed_text) - 1;
+    while (end_text > trimmed_text && isspace((unsigned char)*end_text)) {
+        *end_text = '\0';
+        end_text--;
     }
 
-    // Display the last result
-    if (last_result) {
-        message(bm, last_result);
-        free(last_result);
+    // If there's no content after trimming, return
+    if (!*trimmed_text) {
+        free(region_text);
+        message(bm, "No content to evaluate.");
+        return;
+    }
+
+    // Evaluate the region text directly
+    char *result = eval_scheme_string(trimmed_text);
+    if (result) {
+        message(bm, result);
+        free(result);
     } else {
-        message(bm, "No complete expressions found in region");
+        message(bm, "Evaluation returned #f");
     }
 
     free(region_text);
 }
 
-/* void eval_region(BufferManager *bm) { */
-/*     Buffer *buffer = getActiveBuffer(bm); */
-/*     if (!buffer || !buffer->content || !buffer->region.active) { */
-/*         message(bm, "No active region to evaluate."); */
-/*         return; */
-/*     } */
-
-/*     size_t start = buffer->region.start; */
-/*     size_t end = buffer->region.end; */
-/*     if (start > end) { */
-/*         size_t temp = start; */
-/*         start = end; */
-/*         end = temp; */
-/*     } */
-
-/*     size_t region_length = end - start; */
-/*     char *region_text = malloc(region_length + 1); */
-/*     if (!region_text) { */
-/*         message(bm, "Memory allocation failed."); */
-/*         return; */
-/*     } */
-/*     strncpy(region_text, buffer->content + start, region_length); */
-/*     region_text[region_length] = '\0'; */
-
-/*     char *result = eval_scheme_string(region_text); */
-/*     free(region_text); */
-
-/*     if (result) { */
-/*         message(bm, result); */
-/*         free(result); */
-/*     } else { */
-/*         message(bm, "Evaluation failed or returned nil."); */
-/*     } */
-/* } */

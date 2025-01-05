@@ -1422,6 +1422,8 @@ void eval_expression(BufferManager *bm) {
             minibuffer->content[0] = '\0';
             free(prompt->content);
             prompt->content = strdup("Eval: ");
+            setBufferContent(minibuffer, "()");
+            minibuffer->point = 1;  // Place cursor between parentheses
             switchToBuffer(bm, "minibuffer");
         } else {
             // Evaluate the expression
@@ -1765,6 +1767,46 @@ void recenter_top_bottom(Window *window) {
     // Cycle the recenter state
     recenterState = (recenterState + 1) % 3;
 }
+
+void capitalize_word(Buffer *buffer) {
+    if (!buffer || !buffer->content || buffer->point >= buffer->size) {
+        return;
+    }
+
+    // Skip any whitespace or punctuation before the word
+    while (buffer->point < buffer->size && 
+           !isWordChar(buffer->content[buffer->point])) {
+        buffer->point++;
+    }
+
+    // If we've reached the end of the buffer, return
+    if (buffer->point >= buffer->size) {
+        return;
+    }
+
+    // Capitalize the first character of the word
+    if (isWordChar(buffer->content[buffer->point])) {
+        buffer->content[buffer->point] = toupper((unsigned char)buffer->content[buffer->point]);
+        buffer->point++;
+    }
+
+    // Convert the rest of the word to lowercase
+    while (buffer->point < buffer->size && 
+           isWordChar(buffer->content[buffer->point])) {
+        buffer->content[buffer->point] = tolower((unsigned char)buffer->content[buffer->point]);
+        buffer->point++;
+    }
+}
+
+
+
+
+
+
+
+
+
+
 
 // EXTENSION
 

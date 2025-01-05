@@ -74,6 +74,7 @@ double initialMouseX = 0;
 double initialMouseY = 0;
 double dragThreshold = 5; // Threshold in pixels to start dragging
 
+bool eatchar = false;
 
 bool electric_pair_mode = true; // TODO Wrap selection for () [] {} '' ""
 bool auto_scale_mode = true;
@@ -264,7 +265,7 @@ static void inner_main(void *closure, int argc, char **argv) {
         sh = getScreenHeight(); // the resize callback
 
         /* updateWindows(&wm, font, sw, sh); */ 
-        reloadShaders(); // NOTE Reload the shaders each frame
+        /* reloadShaders(); // NOTE Reload the shaders each frame */
 
         Buffer *prompt = getBuffer(&bm, "prompt");
         Buffer *minibuffer = getBuffer(&bm, "minibuffer");
@@ -381,10 +382,13 @@ static void inner_main(void *closure, int argc, char **argv) {
         }
 
         float lastLineY = minibufferHeight - (lineHeight * lineCount) +
-            getCharacterWidth(minibuffer->font, 32);
+            getCharacterWidth(minibuffer->font, 32) - 
+            ((minibuffer->font->descent) / 2);  // Subtract descent to lower it slightly
+
         drawTextEx(minibuffer->font, message->content, promptWidth + lastLineWidth,
                    lastLineY, 1.0, 1.0, CT.message, CT.bg, message->point,
                    cursorVisible, "text");
+
 
         endDrawing();
     }
@@ -435,7 +439,6 @@ void keyCallback(int key, int action, int mods) {
             message(&bm, argBuffer->content);
             return;
         }
-
 
         if (!isCurrentBuffer(&bm, "minibuffer") && !isearch.searching && (ctrlPressed || altPressed)) {
             cleanBuffer(&bm, "minibuffer");
@@ -514,14 +517,15 @@ void keyCallback(int key, int action, int mods) {
           if (ctrl_x_pressed) {
             split_window_below(&wm, font, getScreenWidth(), getScreenHeight());
             ctrl_x_pressed = false;
-            return;
+            eatchar = true;
           }
           break;
+
         case KEY_3:
           if (ctrl_x_pressed) {
             split_window_right(&wm, font, getScreenWidth(), getScreenHeight());
             ctrl_x_pressed = false;
-            return;
+            eatchar = true;
           }
           break;
         case KEY_0:
@@ -614,9 +618,16 @@ void keyCallback(int key, int action, int mods) {
             break;
         case KEY_M:
             if (ctrlPressed) {
-                minimap_mode != minimap_mode;
+                enter(buffer, &bm, &wm, minibuffer, prompt, indentation, electric_pair_mode, sw, sh, &nh, arg);
+            } else if (altPressed) {
+                minimap_mode = !minimap_mode;
             }
             break;
+        case KEY_C:
+            if (altPressed)
+                capitalize_word(buffer);
+            break;
+
 
         case KEY_G:
             if (ctrlPressed){
@@ -828,8 +839,8 @@ void keyCallback(int key, int action, int mods) {
                 split_window_right(&wm, font, sw, sh);
                 other_window(&wm, 1);
             } else if (ctrlPressed) {
-                /* recenter(win); */
-                recenter_top_bottom(win);
+                recenter(win);
+                /* recenter_top_bottom(win); // TODO */
             }
             break;
         case KEY_J:
@@ -900,11 +911,19 @@ void keyCallback(int key, int action, int mods) {
         TSInputEdit edit = createInputEdit(buffer, 0, buffer->size, buffer->size);
         updateSyntaxIncremental(buffer, &edit);
     }
-   
+
+    // Reset eatchar after key is processed
+    if (action == GLFW_RELEASE) {
+        eatchar = false;
+    }
+    
 }
 
 
+
 void textCallback(unsigned int codepoint) {
+    if (eatchar) return;
+    
     // TODO it shoudl take all those variables as parameters
     Window *win = wm.activeWindow;
     Buffer *buffer = win->buffer;
@@ -919,6 +938,7 @@ void textCallback(unsigned int codepoint) {
         buffer->region.active = false;
         return;
     }
+
 
     ctrl_x_pressed = false;
     
@@ -993,6 +1013,7 @@ void textCallback(unsigned int codepoint) {
                 }
             }
         }
+
         updateScroll(win);
     }
 }

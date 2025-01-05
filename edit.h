@@ -90,6 +90,8 @@ void keep_lines(BufferManager *bm, WindowManager *wm);
 void recenter(Window *window);
 extern int recenterState; // 0: Initial, 1: Top, 2: Center, 3: Bottom
 void recenter_top_bottom(Window *window);
+void capitalize_word(Buffer *buffer);
+
 
 // EXTENSION
 static SCM symbol_error_handler(void *data, SCM key, SCM args);

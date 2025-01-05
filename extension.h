@@ -32,14 +32,14 @@ SCM scm_buffer_set_content(SCM name, SCM content);
 // Window operations
 SCM scm_window_split_vertical(void);
 SCM scm_window_split_horizontal(void);
-SCM scm_window_focus_next(SCM count);
+SCM scm_other_window(SCM count);
 SCM scm_window_delete(void);
 
 // UI operations
 /* SCM scm_message(SCM msg); */
 SCM scm_message(SCM fmt, SCM rest);
-SCM scm_theme_next(void);
-SCM scm_theme_previous(void);
+SCM scm_next_theme(void);
+SCM scm_previous_theme(void);
 
 // Version function
 SCM scm_glemax_version(void);
