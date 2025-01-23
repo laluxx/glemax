@@ -49,10 +49,10 @@ char* safe_scm_to_string(SCM str) {
 }
 
 // Buffer Management Functions
-SCM scm_buffer_new(SCM name, SCM path, SCM fontname) {
+SCM scm_buffer_new(SCM name, SCM path, SCM fontPath) {
     char *c_name = safe_scm_to_string(name);
     char *c_path = safe_scm_to_string(path);
-    char *c_font = safe_scm_to_string(fontname);
+    char *c_font = safe_scm_to_string(fontPath);
     
     if (!c_name || !c_path || !c_font) {
         free(c_name); free(c_path); free(c_font);
@@ -138,7 +138,7 @@ SCM scm_other_window(SCM count) {
     return SCM_BOOL_T;
 }
 
-SCM scm_window_delete(void) {
+SCM scm_delete_window(void) {
     delete_window(&wm);
     return SCM_BOOL_T;
 }
@@ -233,10 +233,10 @@ static void init_glemax_primitives(void* data) {
     DEFSUBR("buffer-set-content", scm_buffer_set_content, 2, 0, 0);
     
     // Window operations
-    DEFSUBR("window-split-vertical", scm_window_split_vertical, 0, 0, 0);
-    DEFSUBR("window-split-horizontal", scm_window_split_horizontal, 0, 0, 0);
+    DEFSUBR("split-window-below", scm_window_split_vertical, 0, 0, 0);
+    DEFSUBR("split-window-right", scm_window_split_horizontal, 0, 0, 0);
     DEFSUBR("other-window", scm_other_window, 1, 0, 0);
-    DEFSUBR("window-delete", scm_window_delete, 0, 0, 0);
+    DEFSUBR("delete-window", scm_delete_window, 0, 0, 0);
     
     // UI operations
     /* DEFSUBR("message", scm_message, 1, 0, 0); */
@@ -319,8 +319,9 @@ char* eval_scheme_string(const char* expr) {
                          NULL, NULL
                          );
     
-    if (scm_is_true(result)) {
-        // Convert result to string
+    // Check if we got a result (even if it's #f)
+    if (result != SCM_UNDEFINED && !scm_is_null(result)) {
+        // Convert any result (including #f) to string
         SCM str = scm_object_to_string(result, SCM_UNDEFINED);
         output = scm_to_locale_string(str);
     } else {

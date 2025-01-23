@@ -20,24 +20,16 @@
 
 // [ ] TODO One thing that we really should do is to
 // make the minibuffer just a window and not a special
-// case to handle in all the functions
+// case to handle in all the functions or maybe not since
+// we will always have only one minibuffer
 
 // FIXME many functions calculate the same exact data
 // so the same stuff is recalculated like 6 or more times per frame
 // i hate it, but i hate refactoring more
 
-// TODO COOL an option to automatically make the font smaller if we try to type outisde
-// of the window x cordinate
-
 // TODO FIX backward_list when called on the last character of the buffer
-
 // TODO unhardcode the scroll it shoudl use the modelineHeight + minibufferHeight
-
-// TODO we should add cursor struct to each window
-// TODO we should add scrollbar struct to each window
-// TODO we should add 2 fringes to each window
 // TODO the point should be per window not per buffer
-
 // FIXME most functions that take the "Font *font" shoudl take only the wm now
 // TODO dabbrev-completion
 // TODO rainbow-delimiters-mode
@@ -53,7 +45,6 @@
 // TODO color unmatched characters in isearch
 // TODO unhardcode the keybinds
 // TODO check if the lastmatchindex changes and stop search (like for moving)
-// TODO M-x
 // TODO undo system
 
 // TODO ) inside () shoudl jump to the closing one not simply move right once
@@ -110,6 +101,13 @@ void scrollCallback(double xOffset, double yOffset);
 void cursorPosCallback(double xpos, double ypos);
 void mouseButtonCallback(int button, int action, int mods);
 
+// Add these
+static bool shouldSkipCharacter(Buffer *buffer, unsigned int codepoint);
+static bool isIncludeDirectiveAngleBracket(Buffer *buffer, unsigned int codepoint);
+static void insertIncludeAngleBrackets(Buffer *buffer);
+static void insertCharWithElectricPairs(Buffer *buffer, unsigned int codepoint);
+
+
 void keyCallback(int key, int action, int mods);
 void textCallback(unsigned int codepoint);
 
@@ -117,7 +115,6 @@ void textCallback(unsigned int codepoint);
 static double lastBlinkTime = 0.0;  // Last time the cursor state changed
 static bool cursorVisible = true;  // Initial state of the cursor visibility
 static int blinkCount = 0;        // Counter for number of blinks
-
 
 void drawCursor(Buffer *buffer, Window *win, Color defaultColor) {
     float cursorX = win->x - win->scroll.x;  // Start position adjusted for horizontal scroll
@@ -226,7 +223,6 @@ static void inner_main(void *closure, int argc, char **argv) {
     (void)argc;
     (void)argv;
 
-
     initWindow(sw, sh, "*scratch* - Glemax");
     registerTextCallback(textCallback);
     registerKeyCallback(keyCallback);
@@ -234,17 +230,17 @@ static void inner_main(void *closure, int argc, char **argv) {
     registerCursorPosCallback(cursorPosCallback);
     registerMouseButtonCallback(mouseButtonCallback);
 
-    font = loadFont(fontname, fontsize);
+    font = loadFont(fontPath, fontsize, "name");
 
     initGlobalParser();
     initKillRing(&kr, kill_ring_max);
     initBufferManager(&bm);
     initCommands();
-    newBuffer(&bm, &wm, "minibuffer", "~/", fontname, sw, sh);
-    newBuffer(&bm, &wm, "prompt", "~/", fontname, sw, sh);
-    newBuffer(&bm, &wm, "message", "~/", fontname, sw, sh);
-    newBuffer(&bm, &wm, "arg", "~/", fontname, sw, sh);
-    newBuffer(&bm, &wm, "*scratch*", "~/", fontname, sw, sh);
+    newBuffer(&bm, &wm, "minibuffer", "~/", fontPath, sw, sh);
+    newBuffer(&bm, &wm, "prompt", "~/", fontPath, sw, sh);
+    newBuffer(&bm, &wm, "message", "~/", fontPath, sw, sh);
+    newBuffer(&bm, &wm, "arg", "~/", fontPath, sw, sh);
+    newBuffer(&bm, &wm, "*scratch*", "~/", fontPath, sw, sh);
     bm.lastBuffer = getBuffer(&bm, "*scratch*");
 
     
@@ -255,10 +251,9 @@ static void inner_main(void *closure, int argc, char **argv) {
 
     initSegments(&wm.activeWindow->modeline.segments);
     updateSegments(&wm.activeWindow->modeline, wm.activeWindow->buffer);
-    /* updateWindows(&wm, font, sw, sh); */
+    /* updateWindows(&wm, font, sw, sh); // NOTE We will do it later*/
 
-
-    load_init_file();  // Load user config
+    load_init_file();
 
     while (!windowShouldClose()) {
         sw = getScreenWidth();  // TODO Update in
@@ -266,7 +261,6 @@ static void inner_main(void *closure, int argc, char **argv) {
 
         /* updateWindows(&wm, font, sw, sh); */ 
         /* reloadShaders(); // NOTE Reload the shaders each frame */
-
         Buffer *prompt = getBuffer(&bm, "prompt");
         Buffer *minibuffer = getBuffer(&bm, "minibuffer");
         Buffer *message = getBuffer(&bm, "message");
@@ -285,8 +279,7 @@ static void inner_main(void *closure, int argc, char **argv) {
             promptWidth += getCharacterWidth(minibuffer->font, prompt->content[i]);
         }
 
-        int lineCount =
-            1; // Start with 1 to account for content without any newlines
+        int lineCount = 1; // Start with 1 to account for content without any newlines
         for (int i = 0; i < strlen(minibuffer->content); i++) {
             if (minibuffer->content[i] == '\n') {
                 lineCount++;
@@ -381,9 +374,7 @@ static void inner_main(void *closure, int argc, char **argv) {
                 getCharacterWidth(minibuffer->font, minibuffer->content[i]);
         }
 
-        float lastLineY = minibufferHeight - (lineHeight * lineCount) +
-            getCharacterWidth(minibuffer->font, 32) - 
-            ((minibuffer->font->descent) / 2);  // Subtract descent to lower it slightly
+        float lastLineY = minibufferHeight - (lineHeight * lineCount) + getCharacterWidth(minibuffer->font, 32);
 
         drawTextEx(minibuffer->font, message->content, promptWidth + lastLineWidth,
                    lastLineY, 1.0, 1.0, CT.message, CT.bg, message->point,
@@ -542,7 +533,8 @@ void keyCallback(int key, int action, int mods) {
             /* printSyntaxInfo(buffer); */
             if (ctrlPressed) {
                 printf("Buffer under cursor: %s\n", getBufferUnderCursor(&wm)->name);
-                (insert_guile_symbols(buffer, &bm));
+                load_font(&bm, &wm, sw, sh);
+               /* (insert_guile_symbols(buffer, &bm)); */
             } else if (altPressed) {
                 keep_lines(&bm, &wm);
             }
@@ -628,6 +620,10 @@ void keyCallback(int key, int action, int mods) {
                 capitalize_word(buffer);
             break;
 
+        case KEY_V:
+          if (ctrlPressed)
+              eval_expression(&bm);
+          break;
 
         case KEY_G:
             if (ctrlPressed){
@@ -823,14 +819,14 @@ void keyCallback(int key, int action, int mods) {
             if (altPressed) {
                 nextTheme();
             } else if (ctrlPressed) {
-                text_scale_increase(&bm, fontname, &wm, sh, arg);                    
+                text_scale_increase(&bm, fontPath, &wm, sh, arg);                    
             }
             break;
         case KEY_MINUS:
             if (altPressed) {
                 previousTheme();
             } else if (ctrlPressed) {
-                text_scale_decrease(&bm, fontname, &wm, sh, arg);                    
+                text_scale_decrease(&bm, fontPath, &wm, sh, arg);                    
             }
             break;
 
@@ -919,17 +915,13 @@ void keyCallback(int key, int action, int mods) {
     
 }
 
-
-
 void textCallback(unsigned int codepoint) {
     if (eatchar) return;
     
-    // TODO it shoudl take all those variables as parameters
     Window *win = wm.activeWindow;
     Buffer *buffer = win->buffer;
     Buffer *prompt = getBuffer(&bm, "prompt");
     Buffer *minibuffer = getBuffer(&bm, "minibuffer");
-
     Buffer *argBuffer = getBuffer(&bm, "arg");
     int arg = getGlobalArg(argBuffer);
 
@@ -938,7 +930,6 @@ void textCallback(unsigned int codepoint) {
         buffer->region.active = false;
         return;
     }
-
 
     ctrl_x_pressed = false;
     
@@ -951,33 +942,51 @@ void textCallback(unsigned int codepoint) {
             if (isprint(codepoint)) {
                 insertChar(minibuffer, (char)codepoint);
                 if (strcmp(prompt->content, "I-search backward: ") == 0) {
-                    isearch_backward(buffer, minibuffer, false);  // Continue search backward
+                    isearch_backward(buffer, minibuffer, false);
                 } else {
                     isearch_forward(buffer, &bm, minibuffer, false);
                 }
-
             }
         } else {
-            // Normal behavior when not in search mode
             size_t old_size = buffer->size;
             size_t insert_position = buffer->point;
 
-            if ((codepoint == ')' || codepoint == ']' || codepoint == '}' ||
-                 codepoint == '\'' || codepoint == '\"') &&
-                buffer->point < buffer->size && buffer->content[buffer->point] == codepoint) {
+            // Special handling for '<' in #include lines
+            if (codepoint == '<') {
+                // Find start of current line
+                size_t lineStart = buffer->point;
+                while (lineStart > 0 && buffer->content[lineStart - 1] != '\n') {
+                    lineStart--;
+                }
+
+                // Check if line starts with "#include"
+                char linePrefix[9] = {0}; // Space for "#include" + null terminator
+                size_t prefixLength = buffer->point - lineStart < 8 ? buffer->point - lineStart : 8;
+                strncpy(linePrefix, buffer->content + lineStart, prefixLength);
+                linePrefix[prefixLength] = '\0';
+
+                if (strncmp(linePrefix, "#include", 8) == 0) {
+                    // Insert both brackets and position cursor between them
+                    insertChar(buffer, '<');
+                    insertChar(buffer, '>');
+                    buffer->point--; // Move cursor back between brackets
+                } else {
+                    // Normal character insertion
+                    insertChar(buffer, codepoint);
+                }
+            } else if ((codepoint == ')' || codepoint == ']' || codepoint == '}' ||
+                        codepoint == '\'' || codepoint == '\"') &&
+                       buffer->point < buffer->size && buffer->content[buffer->point] == codepoint) {
                 right_char(buffer, false, &bm, arg);
             } else {
-
                 if (isCurrentBuffer(&bm, "minibuffer")) {
                     insertChar(minibuffer, codepoint);
                 } else {
                     insertChar(buffer, codepoint);
-                    // Update syntax incrementally
                     size_t inserted_length = buffer->size - old_size;
                     TSInputEdit edit = createInputEdit(buffer, insert_position, insert_position, insert_position + inserted_length);
                     updateSyntaxIncremental(buffer, &edit);
                 }
-
 
                 if (electric_pair_mode) {
                     switch (codepoint) {
@@ -1002,7 +1011,6 @@ void textCallback(unsigned int codepoint) {
                         break;
                     }
 
-                    // Move the cursor back to between the pair of characters
                     if (codepoint == '(' || codepoint == '[' || codepoint == '{' ||
                         codepoint == '\'' || codepoint == '\"') {
                         buffer->point--;
@@ -1017,6 +1025,104 @@ void textCallback(unsigned int codepoint) {
         updateScroll(win);
     }
 }
+
+/* void textCallback(unsigned int codepoint) { */
+/*     if (eatchar) return; */
+    
+/*     // TODO it shoudl take all those variables as parameters */
+/*     Window *win = wm.activeWindow; */
+/*     Buffer *buffer = win->buffer; */
+/*     Buffer *prompt = getBuffer(&bm, "prompt"); */
+/*     Buffer *minibuffer = getBuffer(&bm, "minibuffer"); */
+
+/*     Buffer *argBuffer = getBuffer(&bm, "arg"); */
+/*     int arg = getGlobalArg(argBuffer); */
+
+/*     if (buffer->region.active && codepoint == 'e') { */
+/*         eval_region(&bm); */
+/*         buffer->region.active = false; */
+/*         return; */
+/*     } */
+
+
+/*     ctrl_x_pressed = false; */
+    
+/*     if (buffer != NULL) { */
+/*         if (!isearch.searching) { */
+/*             buffer->region.active = false; */
+/*         } */
+
+/*         if (isearch.searching) { */
+/*             if (isprint(codepoint)) { */
+/*                 insertChar(minibuffer, (char)codepoint); */
+/*                 if (strcmp(prompt->content, "I-search backward: ") == 0) { */
+/*                     isearch_backward(buffer, minibuffer, false);  // Continue search backward */
+/*                 } else { */
+/*                     isearch_forward(buffer, &bm, minibuffer, false); */
+/*                 } */
+
+/*             } */
+/*         } else { */
+/*             // Normal behavior when not in search mode */
+/*             size_t old_size = buffer->size; */
+/*             size_t insert_position = buffer->point; */
+
+
+/*             if ((codepoint == ')' || codepoint == ']' || codepoint == '}' || */
+/*                  codepoint == '\'' || codepoint == '\"') && */
+/*                 buffer->point < buffer->size && buffer->content[buffer->point] == codepoint) { */
+/*                 right_char(buffer, false, &bm, arg); */
+/*             } else { */
+
+/*                 if (isCurrentBuffer(&bm, "minibuffer")) { */
+/*                     insertChar(minibuffer, codepoint); */
+/*                 } else { */
+/*                     insertChar(buffer, codepoint); */
+/*                     // Update syntax incrementally */
+/*                     size_t inserted_length = buffer->size - old_size; */
+/*                     TSInputEdit edit = createInputEdit(buffer, insert_position, insert_position, insert_position + inserted_length); */
+/*                     updateSyntaxIncremental(buffer, &edit); */
+/*                 } */
+
+
+/*                 if (electric_pair_mode) { */
+/*                     switch (codepoint) { */
+/*                     case '(': */
+/*                         insertChar(buffer, ')'); */
+/*                         break; */
+/*                     case '[': */
+/*                         insertChar(buffer, ']'); */
+/*                         break; */
+/*                     case '{': */
+/*                         insertChar(buffer, '}'); */
+/*                         break; */
+/*                     case '\'': */
+/*                         if (!(buffer->point > 1 && buffer->content[buffer->point - 2] == '\'')) { */
+/*                             insertChar(buffer, '\''); */
+/*                         } */
+/*                         break; */
+/*                     case '\"': */
+/*                         if (!(buffer->point > 1 && buffer->content[buffer->point - 2] == '\"')) { */
+/*                             insertChar(buffer, '\"'); */
+/*                         } */
+/*                         break; */
+/*                     } */
+
+/*                     // Move the cursor back to between the pair of characters */
+/*                     if (codepoint == '(' || codepoint == '[' || codepoint == '{' || */
+/*                         codepoint == '\'' || codepoint == '\"') { */
+/*                         buffer->point--; */
+/*                     } */
+/*                 } */
+/*                 if (electric_indent_mode && (codepoint == '}' || codepoint == ';')) { */
+/*                     indent(buffer, indentation, &bm, arg); */
+/*                 } */
+/*             } */
+/*         } */
+
+/*         updateScroll(win); */
+/*     } */
+/* } */
 
 
 
@@ -1418,7 +1524,7 @@ void updateScroll(Window *window) {
     // Horizontal scrolling logic
     if (cursorX < viewLeft || cursorRightEdge > viewRight) {
         if (auto_scale_mode && buffer->scale.index > 8) {
-            text_scale_decrease(&bm, fontname, &wm, sh, 1);
+            text_scale_decrease(&bm, fontPath, &wm, sh, 1);
         } else {
             float newScrollX = cursorX - window->width / 2;
             newScrollX = fmax(0, fmin(newScrollX, buffer->size * lineHeight - window->width)); // Ensure the new scroll is within the width of the longest line
@@ -1486,9 +1592,9 @@ void scrollCallback(double xOffset, double yOffset) {
         if (isKeyDown(KEY_LEFT_CONTROL)) {
             int arg = (yOffset > 0) ? -1 : 1;
             if (arg > 0) {
-                text_scale_increase(&bm, fontname, &wm, sh, arg);
+                text_scale_increase(&bm, fontPath, &wm, sh, arg);
             } else {
-                text_scale_decrease(&bm, fontname, &wm, sh, -arg);
+                text_scale_decrease(&bm, fontPath, &wm, sh, -arg);
             }
             updateScroll(win);
              if (blink_cursor_mode) {

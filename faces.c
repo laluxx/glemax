@@ -3,16 +3,12 @@
 
 // FIXME This file is garbage
 // TODO actually implement faces we can have syntax highlighting and font weight and slant
-// TODO implement a way to cicle between the fonts
 
 Font *font;
 Font *minifont;
 int fontsize = 15;
 int minifontsize = 15;
-/* char *fontname = "jetb.ttf"; */
-/* char *fontname = "radon.otf"; */
-/* char *fontname = "comic.ttf"; */
-char *fontname = "fan.otf"; 
+char *fontPath = "fan.otf"; 
 
 
 Font *globalFontCache[MAX_FONT_SCALE_INDEX] = {NULL};
@@ -26,21 +22,28 @@ void initScale(Scale *scale) {
 }
 
 
-Font* updateFont(Scale *scale, int newIndex, char *fontname) {
+Font* updateFont(Scale *scale, int newIndex, char *fontPath) {
     if (newIndex < 0 || newIndex >= MAX_FONT_SCALE_INDEX) {
         fprintf(stderr, "Font scale index out of range!\n");
         return NULL;
     }
     scale->index = newIndex;
-    if (!globalFontCache[scale->index]) {  // Check if font is not already loaded
-        globalFontCache[scale->index] = loadFont(fontname , scale->fontSizes[scale->index]);
+    
+    // Check if we need to load or reload the font
+    if (!globalFontCache[scale->index] || 
+        (globalFontCache[scale->index]->path && strcmp(globalFontCache[scale->index]->path, fontPath) != 0)) {
+        // If the font is not in cache or the path has changed, (re)load it
+        if (globalFontCache[scale->index]) {
+            freeFont(globalFontCache[scale->index]);
+        }
+        globalFontCache[scale->index] = loadFont(fontPath, scale->fontSizes[scale->index], "name");
     }
+    
     return globalFontCache[scale->index];
 }
 
-// TODO it shoudl take a bool, true if increased by the scrollCallback, if so it shoudl scroll the buffer(s)
-// under the cursor
-void text_scale_increase(BufferManager *bm, char *fontname, WindowManager *wm, int sh, int arg) {
+// TODO it shoudl take a bool, true if increased by the scrollCallback, if so it shoudl scroll the buffer(s) under the cursor
+void text_scale_increase(BufferManager *bm, char *fontPath, WindowManager *wm, int sh, int arg) {
     Window *win = wm->activeWindow;
     Buffer *buffer = isCurrentBuffer(bm, "minibuffer") ? getBuffer(bm, "minibuffer") : win->buffer;
     /* Buffer *buffer = isCurrentBuffer(bm, "minibuffer") ? getBuffer(bm, "minibuffer") : getBufferUnderCursor(wm); */
@@ -53,7 +56,7 @@ void text_scale_increase(BufferManager *bm, char *fontname, WindowManager *wm, i
 
     if (nextIndex >= SCALE_ZERO_INDEX + MIN_FONT_SCALE && nextIndex <= SCALE_ZERO_INDEX + MAX_FONT_SCALE) {
         Font *oldFont = buffer->font;  // Keep the old font to calculate the height difference
-        buffer->font = updateFont(scale, nextIndex, fontname);
+        buffer->font = updateFont(scale, nextIndex, buffer->fontPath);
 
         // Adjust y position and height of all windows showing the same buffer
         Window *win = wm->head;
@@ -71,7 +74,7 @@ void text_scale_increase(BufferManager *bm, char *fontname, WindowManager *wm, i
     }
 }
 
-void text_scale_decrease(BufferManager *bm, char *fontname, WindowManager *wm, int sh, int arg) {
+void text_scale_decrease(BufferManager *bm, char *fontPath, WindowManager *wm, int sh, int arg) {
     Window *win = wm->activeWindow;
     Buffer *buffer = isCurrentBuffer(bm, "minibuffer") ? getBuffer(bm, "minibuffer") : win->buffer;
     /* Buffer *buffer = isCurrentBuffer(bm, "minibuffer") ? getBuffer(bm, "minibuffer") : getBufferUnderCursor(wm); */
@@ -84,7 +87,8 @@ void text_scale_decrease(BufferManager *bm, char *fontname, WindowManager *wm, i
 
     if (nextIndex >= SCALE_ZERO_INDEX + MIN_FONT_SCALE && nextIndex <= SCALE_ZERO_INDEX + MAX_FONT_SCALE) {
         Font *oldFont = buffer->font;  // Keep the old font to calculate the height difference
-        buffer->font = updateFont(scale, nextIndex, fontname);
+        buffer->font = updateFont(scale, nextIndex, buffer->fontPath);
+
         
         // Adjust y position and height of all windows showing the same buffer
         Window *win = wm->head;
@@ -110,12 +114,12 @@ void text_scale_decrease(BufferManager *bm, char *fontname, WindowManager *wm, i
 
 
 // TODO use the win->height instead of the sh
-/* void text_scale_increase(Buffer *buffer, char *fontname, WindowManager *wm, int sh, int arg) { */
+/* void text_scale_increase(Buffer *buffer, char *fontPath, WindowManager *wm, int sh, int arg) { */
 /*     Scale *scale = &buffer->scale; */
 /*     int nextIndex = scale->index + 1; */
 /*     if (nextIndex <= SCALE_ZERO_INDEX + MAX_FONT_SCALE) { */
 /*         Font *oldFont = buffer->font;  // Keep the old font to calculate the height difference */
-/*         buffer->font = updateFont(scale, nextIndex, fontname); */
+/*         buffer->font = updateFont(scale, nextIndex, fontPath); */
         
 /*         // Adjust y position and height of all windows showing the same buffer */
 /*         Window *win = wm->head; */
@@ -132,12 +136,12 @@ void text_scale_decrease(BufferManager *bm, char *fontname, WindowManager *wm, i
 /* } */
 
 /* // TODO use the win->height instead of the sh */
-/* void text_scale_decrease(Buffer *buffer, char *fontname, WindowManager *wm, int sh) { */
+/* void text_scale_decrease(Buffer *buffer, char *fontPath, WindowManager *wm, int sh) { */
 /*     Scale *scale = &buffer->scale; */
 /*     int nextIndex = scale->index - 1; */
 /*     if (nextIndex >= SCALE_ZERO_INDEX + MIN_FONT_SCALE) { */
 /*         Font *oldFont = buffer->font;  // Keep the old font to calculate the height difference */
-/*         buffer->font = updateFont(scale, nextIndex, fontname); */
+/*         buffer->font = updateFont(scale, nextIndex, fontPath); */
         
 /*         // Adjust y position and height of all windows showing the same buffer */
 /*         Window *win = wm->head; */

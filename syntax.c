@@ -67,6 +67,7 @@ Color getNodeColor(TSNode node) {
         || strcmp(nodeType, "else") == 0
         || strcmp(nodeType, "struct") == 0
         || strcmp(nodeType, "for") == 0
+        || strcmp(nodeType, "const") == 0
         ){
         return CT.keyword;
     }
@@ -82,6 +83,7 @@ Color getNodeColor(TSNode node) {
     else if (strcmp(nodeType, "type_identifier") == 0
              || strcmp(nodeType, "function_definition") == 0
              || strcmp(nodeType, "sized_type_specifier") == 0
+             || strcmp(nodeType, "primitive_type") == 0
              || strcmp(nodeType, "primitive_type") == 0
              ){
         return CT.type;
@@ -308,6 +310,7 @@ TSInputEdit createInputEdit(Buffer *buffer, size_t start_byte, size_t old_end_by
     edit.new_end_point = byteToPoint(buffer->content, new_end_byte);
     return edit;
 }
+
 
 void updateSyntaxIncremental(Buffer *buffer, TSInputEdit *edit) {
     if (!buffer->tree) {

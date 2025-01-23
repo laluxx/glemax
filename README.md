@@ -48,18 +48,25 @@
   - Flexible window management
 
 ## Key Bindings
+NOTE: They are still hardcoded in the callback functions
+
+### Universal argument
+- `C-0..9` - Digit argument
 
 ### File Operations
 - `C-x C-f` - Find file
 - `C-x C-s` - Save buffer
+- `C-x C-q` - Read only mode
 
 ### Navigation
 - `C-n` - Next line
 - `C-p` - Previous line
+- `M-n` - Forward paragraph
+- `M-p` - Backward paragraph
+- `M-b` - Backward word
 - `C-f` - Forward character
 - `C-b` - Backward character
 - `M-f` - Forward word
-- `M-b` - Backward word
 - `C-e` - Move to end of line
 - `C-a` - Move to beginning of line
 - `M->` - End of buffer
@@ -74,6 +81,12 @@
 - `C-w` - Kill region
 - `C-o` - Open line
 - `C-O` - Duplicate line
+- `M-c` - Capitalize word
+
+### Extension
+- `C-j` - Eval last sexp
+- `R-e` - Eval region
+
 
 ### Search
 - `C-s` - Incremental search forward

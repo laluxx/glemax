@@ -10,6 +10,10 @@
 #include <math.h>
 #include <libguile.h>
 
+#include <sys/stat.h>
+#include <errno.h>
+#include <unistd.h>
+
 // TODO kill_line() should delete the entire line if is composed of only whitespaces
 // TODO kill_line() should kr_kill the entire line if its at the beginning of it
 
@@ -563,27 +567,36 @@ char* paste_from_clipboard() {
     if (!pipe) return NULL;
 
     char* result = NULL;
-    char buffer[128];
-    size_t len = 0;
+    size_t total_size = 0;
+    size_t buffer_size = 4096;  // Use a larger buffer for better performance
+    char* buffer = malloc(buffer_size);
+    
+    if (!buffer) {
+        pclose(pipe);
+        return NULL;
+    }
 
-    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
-        size_t buffer_len = strlen(buffer);
-        char* new_result = realloc(result, len + buffer_len + 1);
+    size_t bytes_read;
+    while ((bytes_read = fread(buffer, 1, buffer_size, pipe)) > 0) {
+        char* new_result = realloc(result, total_size + bytes_read + 1);
         if (!new_result) {
             free(result);
+            free(buffer);
             pclose(pipe);
             return NULL;
         }
         result = new_result;
-        strcpy(result + len, buffer);
-        len += buffer_len;
+        memcpy(result + total_size, buffer, bytes_read);
+        total_size += bytes_read;
     }
+
+    free(buffer);
+    pclose(pipe);
 
     if (result) {
-        result[len] = '\0';  // Ensure the string is NULL-terminated
+        result[total_size] = '\0';  // Null terminate the string
     }
 
-    pclose(pipe);
     return result;
 }
 
@@ -594,12 +607,20 @@ char* paste_from_clipboard() {
 
 void yank(Buffer *buffer, KillRing *kr, int arg) {
     char *clipboard_text = paste_from_clipboard();
-    if (clipboard_text) {
-        for (char *p = clipboard_text; *p; p++) {
-            insertChar(buffer, *p);
-        }
-        free(clipboard_text);
+    if (!clipboard_text) return;
+    
+    // Calculate actual content length (ignoring potential trailing newline)
+    size_t len = strlen(clipboard_text);
+    if (len > 0 && clipboard_text[len-1] == '\n') {
+        len--;  // Don't include the trailing newline when inserting
     }
+    
+    // Insert the text character by character
+    for (size_t i = 0; i < len; i++) {
+        insertChar(buffer, clipboard_text[i]);
+    }
+    
+    free(clipboard_text);
 }
 
 void kill_ring_save(Buffer *buffer, KillRing *kr) {
@@ -1055,6 +1076,9 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
     } else if (strcmp(prompt->content, "Keep lines containing match for regexp: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
         keep_lines(bm, wm);
+    } else if (strcmp(prompt->content, "Switch font to: ") == 0) {
+        add_to_history(nh, prompt->content, minibuffer->content);
+        load_font(bm, wm, sw, sh);
     } else if (strcmp(prompt->content, "Goto line: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
         goto_line(bm, wm, sw, sh);
@@ -1094,13 +1118,55 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
 }
 
 // TODO Dired when calling find_file on a directory
-// TODO Create files when they don't exist (and directories to get to that file)
 
+// TODO Create files when they don't exist (and directories to get to that file)
+int mkdirp(const char *path, mode_t mode) {
+    char *p, *sep;
+    char tmp[PATH_MAX];
+    struct stat st;
+
+    if (path == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    strncpy(tmp, path, sizeof(tmp));
+    tmp[sizeof(tmp) - 1] = '\0';
+    p = tmp;
+
+    while ((sep = strchr(p, '/')) != NULL) {
+        if (sep != p) {
+            *sep = '\0';
+            if (stat(tmp, &st) != 0) {
+                if (mkdir(tmp, mode) != 0 && errno != EEXIST) {
+                    return -1;
+                }
+            } else if (!S_ISDIR(st.st_mode)) {
+                errno = ENOTDIR;
+                return -1;
+            }
+            *sep = '/';
+        }
+        p = sep + 1;
+    }
+
+    if (stat(tmp, &st) != 0) {
+        if (mkdir(tmp, mode) != 0 && errno != EEXIST) {
+            return -1;
+        }
+    } else if (!S_ISDIR(st.st_mode)) {
+        errno = ENOTDIR;
+        return -1;
+    }
+
+    return 0;
+}
 
 void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     Buffer *minibuffer = getBuffer(bm, "minibuffer");
     Buffer *prompt = getBuffer(bm, "prompt");
 
+    // Handle initial minibuffer setup
     if (minibuffer->size == 0) {
         if (bm->lastBuffer && bm->lastBuffer->path) {
             minibuffer->size = 0;
@@ -1114,71 +1180,300 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
         return;
     }
 
+    // Resolve path with home directory expansion
     const char *homeDir = getenv("HOME");
+    if (!homeDir) {
+        message(bm, "Environment variable HOME is not set");
+        return;
+    }
+
     char fullPath[PATH_MAX];
     const char *filePath = minibuffer->content;
-
-    // Resolve full path
+    
     if (filePath[0] == '~') {
-        if (homeDir) {
-            snprintf(fullPath, sizeof(fullPath), "%s%s", homeDir, filePath + 1);
-        } else {
-            fprintf(stderr, "Environment variable HOME is not set.\n");
-            return;
-        }
+        snprintf(fullPath, sizeof(fullPath), "%s%s", homeDir, filePath + 1);
     } else {
         strncpy(fullPath, filePath, sizeof(fullPath) - 1);
-        fullPath[sizeof(fullPath) - 1] = '\0'; // Ensure null termination
+        fullPath[sizeof(fullPath) - 1] = '\0';
     }
 
+    // Create directories if they don't exist
+    char *dirPath = strdup(fullPath);
+    if (!dirPath) {
+        message(bm, "Memory allocation failed");
+        return;
+    }
+
+    char *lastSlash = strrchr(dirPath, '/');
+    if (lastSlash) {
+        *lastSlash = '\0';
+        if (mkdirp(dirPath, 0755) != 0) {
+            char errMsg[256];
+            snprintf(errMsg, sizeof(errMsg), "Failed to create directory %s: %s",
+                     dirPath, strerror(errno));
+            message(bm, errMsg);
+            free(dirPath);
+            return;
+        }
+    }
+    free(dirPath);
+
+    // Try to open existing file first
     FILE *file = fopen(fullPath, "r");
-    if (file) {
-        // Creating buffer with '~' notation for user-friendly display
-        char displayPath[PATH_MAX];
-        if (strncmp(fullPath, homeDir, strlen(homeDir)) == 0) {
-            snprintf(displayPath, sizeof(displayPath), "~%s", fullPath + strlen(homeDir));
-        } else {
-            strncpy(displayPath, fullPath, sizeof(displayPath));
-            displayPath[sizeof(displayPath) - 1] = '\0';
+    bool isNewFile = false;
+
+    if (!file) {
+        // Create new file if it doesn't exist
+        file = fopen(fullPath, "w+");
+        if (!file) {
+            char errMsg[256];
+            snprintf(errMsg, sizeof(errMsg), "Failed to create file %s: %s",
+                     fullPath, strerror(errno));
+            message(bm, errMsg);
+            return;
         }
+        isNewFile = true;
+    }
 
-        newBuffer(bm, wm, displayPath, displayPath, fontname, sw, sh);
-        Buffer *fileBuffer = getBuffer(bm, displayPath);
-
-        if (fileBuffer) {
-            fileBuffer->content = malloc(sizeof(char) * 1024);
-            fileBuffer->capacity = 1024;
-            fileBuffer->size = 0;
-
-            char buffer[1024]; // Temporary buffer for reading file content
-            size_t bytesRead;
-            while ((bytesRead = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-                if (fileBuffer->size + bytesRead >= fileBuffer->capacity) {
-                    fileBuffer->capacity = (fileBuffer->size + bytesRead) * 2;
-                    char *newContent = realloc(fileBuffer->content, fileBuffer->capacity);
-                    if (!newContent) {
-                        free(fileBuffer->content);
-                        fclose(file);
-                        fprintf(stderr, "Failed to allocate memory for file content.\n");
-                        return;
-                    }
-                    fileBuffer->content = newContent;
-                }
-                memcpy(fileBuffer->content + fileBuffer->size, buffer, bytesRead);
-                fileBuffer->size += bytesRead;
-            }
-            fileBuffer->content[fileBuffer->size] = '\0';
-            fclose(file);
-            switchToBuffer(bm, fileBuffer->name);
-        } else {
-            fprintf(stderr, "Failed to retrieve or create buffer for file: %s\n", displayPath);
-            fclose(file);
-        }
-        parseSyntax(fileBuffer);
+    // Create display path with ~ notation if applicable
+    char displayPath[PATH_MAX];
+    if (strncmp(fullPath, homeDir, strlen(homeDir)) == 0) {
+        snprintf(displayPath, sizeof(displayPath), "~%s", fullPath + strlen(homeDir));
     } else {
-        fprintf(stderr, "File does not exist: %s\n", fullPath);
+        strncpy(displayPath, fullPath, sizeof(displayPath) - 1);
+        displayPath[sizeof(displayPath) - 1] = '\0';
+    }
+
+    // Create and setup the buffer
+    newBuffer(bm, wm, displayPath, displayPath, fontPath, sw, sh);
+    Buffer *fileBuffer = getBuffer(bm, displayPath);
+    if (!fileBuffer) {
+        message(bm, "Failed to create buffer");
+        fclose(file);
+        return;
+    }
+
+    // Initialize buffer content
+    fileBuffer->content = malloc(sizeof(char) * 1024);
+    if (!fileBuffer->content) {
+        message(bm, "Failed to allocate buffer memory");
+        fclose(file);
+        return;
+    }
+
+    fileBuffer->capacity = 1024;
+    fileBuffer->size = 0;
+
+    if (!isNewFile) {
+        // Read existing file content
+        char readBuffer[1024];
+        size_t bytesRead;
+        
+        while ((bytesRead = fread(readBuffer, 1, sizeof(readBuffer), file)) > 0) {
+            // Ensure buffer capacity
+            if (fileBuffer->size + bytesRead >= fileBuffer->capacity) {
+                fileBuffer->capacity = (fileBuffer->size + bytesRead) * 2;
+                char *newContent = realloc(fileBuffer->content, fileBuffer->capacity);
+                if (!newContent) {
+                    message(bm, "Failed to resize buffer");
+                    free(fileBuffer->content);
+                    fclose(file);
+                    return;
+                }
+                fileBuffer->content = newContent;
+            }
+
+            // Copy read data to buffer
+            memcpy(fileBuffer->content + fileBuffer->size, readBuffer, bytesRead);
+            fileBuffer->size += bytesRead;
+        }
+    }
+
+    // Null terminate buffer content
+    fileBuffer->content[fileBuffer->size] = '\0';
+    fclose(file);
+
+    // Switch to new buffer and parse syntax
+    switchToBuffer(bm, fileBuffer->name);
+    parseSyntax(fileBuffer);
+
+    // Show appropriate message
+    if (isNewFile) {
+        message(bm, "(New file)");
+    } else {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Loaded %s", displayPath);
+        message(bm, msg);
     }
 }
+
+// IMPORTANT ORIGINAL
+/* void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) { */
+/*     Buffer *minibuffer = getBuffer(bm, "minibuffer"); */
+/*     Buffer *prompt = getBuffer(bm, "prompt"); */
+
+/*     // Handle initial minibuffer setup */
+/*     if (minibuffer->size == 0) { */
+/*         if (bm->lastBuffer && bm->lastBuffer->path) { */
+/*             minibuffer->size = 0; */
+/*             minibuffer->content[0] = '\0'; */
+/*             minibuffer->point = 0; */
+/*             setBufferContent(minibuffer, bm->lastBuffer->path); */
+/*         } */
+/*         free(prompt->content); */
+/*         prompt->content = strdup("Find file: "); */
+/*         switchToBuffer(bm, "minibuffer"); */
+/*         return; */
+/*     } */
+
+/*     // Resolve path with home directory expansion */
+/*     const char *homeDir = getenv("HOME"); */
+/*     if (!homeDir) { */
+/*         message(bm, "Environment variable HOME is not set"); */
+/*         return; */
+/*     } */
+
+/*     char fullPath[PATH_MAX]; */
+/*     const char *filePath = minibuffer->content; */
+    
+/*     if (filePath[0] == '~') { */
+/*         snprintf(fullPath, sizeof(fullPath), "%s%s", homeDir, filePath + 1); */
+/*     } else { */
+/*         strncpy(fullPath, filePath, sizeof(fullPath) - 1); */
+/*         fullPath[sizeof(fullPath) - 1] = '\0'; */
+/*     } */
+
+/*     // Create directories if they don't exist */
+/*     char *dirPath = strdup(fullPath); */
+/*     if (!dirPath) { */
+/*         message(bm, "Memory allocation failed"); */
+/*         return; */
+/*     } */
+
+/*     char *lastSlash = strrchr(dirPath, '/'); */
+/*     if (lastSlash) { */
+/*         *lastSlash = '\0'; */
+        
+/*         // Create each directory in the path */
+/*         char *p = dirPath; */
+/*         if (*p == '/') p++;  // Skip leading slash */
+        
+/*         while (*p) { */
+/*             if (*p == '/') { */
+/*                 *p = '\0'; */
+/*                 if (mkdir(dirPath, 0755) != 0 && errno != EEXIST) { */
+/*                     char errMsg[256]; */
+/*                     snprintf(errMsg, sizeof(errMsg), "Failed to create directory %s: %s", */
+/*                              dirPath, strerror(errno)); */
+/*                     message(bm, errMsg); */
+/*                     free(dirPath); */
+/*                     return; */
+/*                 } */
+/*                 *p = '/'; */
+/*             } */
+/*             p++; */
+/*         } */
+        
+/*         // Create final directory */
+/*         if (mkdir(dirPath, 0755) != 0 && errno != EEXIST) { */
+/*             char errMsg[256]; */
+/*             snprintf(errMsg, sizeof(errMsg), "Failed to create directory %s: %s", */
+/*                      dirPath, strerror(errno)); */
+/*             message(bm, errMsg); */
+/*             free(dirPath); */
+/*             return; */
+/*         } */
+/*     } */
+/*     free(dirPath); */
+
+/*     // Try to open existing file first */
+/*     FILE *file = fopen(fullPath, "r"); */
+/*     bool isNewFile = false; */
+
+/*     if (!file) { */
+/*         // Create new file if it doesn't exist */
+/*         file = fopen(fullPath, "w+"); */
+/*         if (!file) { */
+/*             char errMsg[256]; */
+/*             snprintf(errMsg, sizeof(errMsg), "Failed to create file %s: %s", */
+/*                      fullPath, strerror(errno)); */
+/*             message(bm, errMsg); */
+/*             return; */
+/*         } */
+/*         isNewFile = true; */
+/*     } */
+
+/*     // Create display path with ~ notation if applicable */
+/*     char displayPath[PATH_MAX]; */
+/*     if (strncmp(fullPath, homeDir, strlen(homeDir)) == 0) { */
+/*         snprintf(displayPath, sizeof(displayPath), "~%s", fullPath + strlen(homeDir)); */
+/*     } else { */
+/*         strncpy(displayPath, fullPath, sizeof(displayPath) - 1); */
+/*         displayPath[sizeof(displayPath) - 1] = '\0'; */
+/*     } */
+
+/*     // Create and setup the buffer */
+/*     newBuffer(bm, wm, displayPath, displayPath, fontPath, sw, sh); */
+/*     Buffer *fileBuffer = getBuffer(bm, displayPath); */
+/*     if (!fileBuffer) { */
+/*         message(bm, "Failed to create buffer"); */
+/*         fclose(file); */
+/*         return; */
+/*     } */
+
+/*     // Initialize buffer content */
+/*     fileBuffer->content = malloc(sizeof(char) * 1024); */
+/*     if (!fileBuffer->content) { */
+/*         message(bm, "Failed to allocate buffer memory"); */
+/*         fclose(file); */
+/*         return; */
+/*     } */
+
+/*     fileBuffer->capacity = 1024; */
+/*     fileBuffer->size = 0; */
+
+/*     if (!isNewFile) { */
+/*         // Read existing file content */
+/*         char readBuffer[1024]; */
+/*         size_t bytesRead; */
+        
+/*         while ((bytesRead = fread(readBuffer, 1, sizeof(readBuffer), file)) > 0) { */
+/*             // Ensure buffer capacity */
+/*             if (fileBuffer->size + bytesRead >= fileBuffer->capacity) { */
+/*                 fileBuffer->capacity = (fileBuffer->size + bytesRead) * 2; */
+/*                 char *newContent = realloc(fileBuffer->content, fileBuffer->capacity); */
+/*                 if (!newContent) { */
+/*                     message(bm, "Failed to resize buffer"); */
+/*                     free(fileBuffer->content); */
+/*                     fclose(file); */
+/*                     return; */
+/*                 } */
+/*                 fileBuffer->content = newContent; */
+/*             } */
+
+/*             // Copy read data to buffer */
+/*             memcpy(fileBuffer->content + fileBuffer->size, readBuffer, bytesRead); */
+/*             fileBuffer->size += bytesRead; */
+/*         } */
+/*     } */
+
+/*     // Null terminate buffer content */
+/*     fileBuffer->content[fileBuffer->size] = '\0'; */
+/*     fclose(file); */
+
+/*     // Switch to new buffer and parse syntax */
+/*     switchToBuffer(bm, fileBuffer->name); */
+/*     parseSyntax(fileBuffer); */
+
+/*     // Show appropriate message */
+/*     if (isNewFile) { */
+/*         message(bm, "(New file)"); */
+/*     } else { */
+/*         char msg[256]; */
+/*         snprintf(msg, sizeof(msg), "Loaded %s", displayPath); */
+/*         message(bm, msg); */
+/*     } */
+/* } */
 
 void backspace(Buffer *buffer, bool electric_pair_mode) {
     if (buffer->point > 0 && electric_pair_mode) {
@@ -1207,15 +1502,68 @@ void backspace(Buffer *buffer, bool electric_pair_mode) {
     }
 }
 
-
+// TODO (Shell command succeeded with no output)
 void execute_shell_command(BufferManager *bm, char *command) {
     char *output = NULL;
-    FILE *pipe = popen(command, "r");
-    if (pipe == NULL) {
-        message(bm, "Failed to execute shell command.");
+    char current_dir[PATH_MAX];
+    char target_dir[PATH_MAX];
+    bool dir_changed = false;
+
+    // Get current working directory
+    if (getcwd(current_dir, sizeof(current_dir)) == NULL) {
+        message(bm, "Failed to get current directory");
         return;
     }
 
+    // If we have a last buffer with a path, change to its directory
+    if (bm->lastBuffer && bm->lastBuffer->path) {
+        const char *homeDir = getenv("HOME");
+        char fullPath[PATH_MAX];
+        const char *filePath = bm->lastBuffer->path;
+
+        // Resolve full path from buffer path
+        if (filePath[0] == '~') {
+            if (homeDir) {
+                snprintf(fullPath, sizeof(fullPath), "%s%s", homeDir, filePath + 1);
+            } else {
+                message(bm, "HOME environment variable not set");
+                return;
+            }
+        } else {
+            strncpy(fullPath, filePath, sizeof(fullPath) - 1);
+            fullPath[sizeof(fullPath) - 1] = '\0';
+        }
+
+        // Get directory part of the path
+        strncpy(target_dir, fullPath, sizeof(target_dir) - 1);
+        target_dir[sizeof(target_dir) - 1] = '\0';
+        char *last_slash = strrchr(target_dir, '/');
+        if (last_slash) {
+            *last_slash = '\0';  // Truncate at last slash to get directory path
+            
+            // Change to target directory
+            if (chdir(target_dir) == 0) {
+                dir_changed = true;
+            } else {
+                char errMsg[256];
+                snprintf(errMsg, sizeof(errMsg), "Failed to change directory: %s", strerror(errno));
+                message(bm, errMsg);
+                return;
+            }
+        }
+    }
+
+    // Execute the command
+    FILE *pipe = popen(command, "r");
+    if (pipe == NULL) {
+        message(bm, "Failed to execute command");
+        if (dir_changed) {
+            chdir(current_dir);  // Restore original directory
+        }
+        return;
+    }
+
+    // Read command output
     char buffer[128];
     size_t output_size = 0;
     while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
@@ -1224,7 +1572,10 @@ void execute_shell_command(BufferManager *bm, char *command) {
         if (new_output == NULL) {
             free(output);
             pclose(pipe);
-            message(bm, "Failed to allocate memory for command output.");
+            message(bm, "Failed to allocate memory for command output");
+            if (dir_changed) {
+                chdir(current_dir);
+            }
             return;
         }
         output = new_output;
@@ -1232,27 +1583,31 @@ void execute_shell_command(BufferManager *bm, char *command) {
         output_size += chunk_length;
     }
 
+    // Process output
     if (output != NULL) {
-        output[output_size] = '\0'; // Ensure null-terminated string
-
-        // Remove any trailing newline if present
+        output[output_size] = '\0';
         if (output_size > 0 && output[output_size - 1] == '\n') {
             output[output_size - 1] = '\0';
         }
 
-        // Set the output directly to the minibuffer's content
         Buffer *minibuffer = getBuffer(bm, "minibuffer");
         if (minibuffer != NULL) {
             setBufferContent(minibuffer, output);
-            minibuffer->point = 0; // Reset the cursor position to the start of the buffer
+            minibuffer->point = 0;
         } else {
-            message(bm, "Minibuffer not found.");
+            message(bm, "Minibuffer not found");
         }
-
         free(output);
     }
 
     pclose(pipe);
+
+    // Restore original working directory if we changed it
+    if (dir_changed) {
+        if (chdir(current_dir) != 0) {
+            message(bm, "Failed to restore original directory");
+        }
+    }
 }
 
 
@@ -1443,6 +1798,205 @@ void eval_expression(BufferManager *bm) {
         message(bm, "No last buffer to go to.");
     }
 }
+
+
+void load_font(BufferManager *bm, WindowManager *wm, int sw, int sh) {
+    Buffer *minibuffer = getBuffer(bm, "minibuffer");
+    Buffer *prompt = getBuffer(bm, "prompt");
+    // Initial minibuffer setup
+    if (minibuffer->size == 0) {
+        if (bm->lastBuffer && bm->lastBuffer->name) {
+            minibuffer->size = 0;
+            minibuffer->point = 0;
+            minibuffer->content[0] = '\0';
+            prompt->content = strdup("Switch font to: ");
+            switchToBuffer(bm, "minibuffer");
+        } else {
+            message(bm, "No last buffer to return to.");
+        }
+        return;
+    }
+    // Try to get font path using fontconfig
+    char *newFontPath = getFontPath(minibuffer->content);
+    if (!newFontPath) {
+        char error_msg[256];
+        snprintf(error_msg, sizeof(error_msg), "Font not found: %s", minibuffer->content);
+        message(bm, error_msg);
+        cleanBuffer(bm, "minibuffer");
+        cleanBuffer(bm, "prompt");
+        switchToBuffer(bm, bm->lastBuffer->name);
+        return;
+    }
+    // Try to load the font at the base size first to verify it works
+    Font *testFont = loadFont(newFontPath, fontsize, "name");
+    if (!testFont) {
+        char error_msg[256];
+        snprintf(error_msg, sizeof(error_msg), "Failed to load font: %s", minibuffer->content);
+        message(bm, error_msg);
+        free(newFontPath);
+        cleanBuffer(bm, "minibuffer");
+        cleanBuffer(bm, "prompt");
+        switchToBuffer(bm, bm->lastBuffer->name);
+        return;
+    }
+    freeFont(testFont);  // Free the test font since we'll reload per buffer
+    // Keep track of buffers we've successfully updated
+    int successful_updates = 0;
+    // Try to update each buffer's font
+    for (int i = 0; i < bm->count; i++) {
+        Buffer *buffer = bm->buffers[i];
+
+        /* free(buffer->fontPath); */
+        buffer->fontPath = strdup(newFontPath);
+        
+        Font *newFont = loadFont(newFontPath, buffer->scale.fontSizes[buffer->scale.index], "name");
+        
+        if (!newFont) {
+            // If we fail to load the font for any buffer, revert all previous changes
+            for (int j = 0; j < successful_updates; j++) {
+                Buffer *revert_buffer = bm->buffers[j];
+                revert_buffer->font = loadFont(newFontPath, revert_buffer->scale.fontSizes[revert_buffer->scale.index], "name");
+            }
+            
+            char error_msg[256];
+            snprintf(error_msg, sizeof(error_msg), "Failed to load font for buffer %s", buffer->name);
+            message(bm, error_msg);
+            /* free(newFontPath); */
+            cleanBuffer(bm, "minibuffer");
+            cleanBuffer(bm, "prompt");
+            switchToBuffer(bm, bm->lastBuffer->name);
+            return;
+        }
+        // Free the old font before assigning the new one
+        if (buffer->font) {
+            /* freeFont(buffer->font); */
+        }
+        buffer->font = newFont;
+        successful_updates++;
+    }
+    // Update global fontPath
+    /* free(fontPath); */
+    fontPath = strdup(newFontPath);
+    // Update window positions
+    Window *win = wm->head;
+    while (win) {
+        win->y = sh - win->buffer->font->ascent + win->buffer->font->descent;
+        win->height = win->y;
+        win = win->next;
+    }
+    char msg[256];
+    snprintf(msg, sizeof(msg), "Switched font to: %s", newFontPath);
+    message(bm, msg);
+    /* free(newFontPath); */
+    cleanBuffer(bm, "minibuffer");
+    cleanBuffer(bm, "prompt");
+    switchToBuffer(bm, bm->lastBuffer->name);
+}
+
+
+
+// ORIGINAL
+/* void load_font(BufferManager *bm, WindowManager *wm, int sw, int sh) { */
+/*     Buffer *minibuffer = getBuffer(bm, "minibuffer"); */
+/*     Buffer *prompt = getBuffer(bm, "prompt"); */
+
+/*     // Initial minibuffer setup */
+/*     if (minibuffer->size == 0) { */
+/*         if (bm->lastBuffer && bm->lastBuffer->name) { */
+/*             minibuffer->size = 0; */
+/*             minibuffer->point = 0; */
+/*             minibuffer->content[0] = '\0'; */
+/*             prompt->content = strdup("Switch font to: "); */
+/*             switchToBuffer(bm, "minibuffer"); */
+/*         } else { */
+/*             message(bm, "No last buffer to return to."); */
+/*         } */
+/*         return; */
+/*     } */
+
+/*     // Try to get font path using fontconfig */
+/*     char *fontPath = getFontPath(minibuffer->content); */
+/*     if (!fontPath) { */
+/*         char error_msg[256]; */
+/*         snprintf(error_msg, sizeof(error_msg), "Font not found: %s", minibuffer->content); */
+/*         message(bm, error_msg); */
+/*         cleanBuffer(bm, "minibuffer"); */
+/*         cleanBuffer(bm, "prompt"); */
+/*         switchToBuffer(bm, bm->lastBuffer->name); */
+/*         return; */
+/*     } */
+
+/*     // Try to load the font at the base size first to verify it works */
+/*     Font *testFont = loadFont(fontPath, fontsize, "name"); */
+/*     if (!testFont) { */
+/*         char error_msg[256]; */
+/*         snprintf(error_msg, sizeof(error_msg), "Failed to load font: %s", minibuffer->content); */
+/*         message(bm, error_msg); */
+/*         /\* free(fontPath); *\/ */
+/*         cleanBuffer(bm, "minibuffer"); */
+/*         cleanBuffer(bm, "prompt"); */
+/*         switchToBuffer(bm, bm->lastBuffer->name); */
+/*         return; */
+/*     } */
+/*     /\* freeFont(testFont);  // Free the test font since we'll reload per buffer *\/ */
+
+/*     // Keep track of buffers we've successfully updated */
+/*     int successful_updates = 0; */
+
+/*     // Try to update each buffer's font */
+/*     for (int i = 0; i < bm->count; i++) { */
+/*         Buffer *buffer = bm->buffers[i]; */
+/*         free(buffer->fontPath); */
+/*         buffer->fontPath = strdup(fontPath); */
+        
+/*         Font *newFont = loadFont(fontPath, buffer->scale.fontSizes[buffer->scale.index], "name"); */
+        
+/*         if (!newFont) { */
+/*             // If we fail to load the font for any buffer, revert all previous changes */
+/*             for (int j = 0; j < successful_updates; j++) { */
+/*                 Buffer *revert_buffer = bm->buffers[j]; */
+/*                 revert_buffer->font = loadFont(fontPath, revert_buffer->scale.fontSizes[revert_buffer->scale.index], "name"); */
+/*             } */
+            
+/*             char error_msg[256]; */
+/*             snprintf(error_msg, sizeof(error_msg), "Failed to load font for buffer %s", buffer->name); */
+/*             message(bm, error_msg); */
+/*             /\* free(fontPath); *\/ */
+/*             cleanBuffer(bm, "minibuffer"); */
+/*             cleanBuffer(bm, "prompt"); */
+/*             switchToBuffer(bm, bm->lastBuffer->name); */
+/*             return; */
+/*         } */
+
+/*         // Free the old font before assigning the new one */
+/*         if (buffer->font) { */
+/*             /\* freeFont(buffer->font); *\/ */
+/*         } */
+/*         buffer->font = newFont; */
+/*         successful_updates++; */
+/*     } */
+
+/*     // Only update global font name after all buffers have been successfully updated */
+/*     /\* free(fontPath); *\/ */
+/*     fontPath = strdup(minibuffer->content); */
+
+/*     // Update window positions */
+/*     Window *win = wm->head; */
+/*     while (win) { */
+/*         win->y = sh - win->buffer->font->ascent + win->buffer->font->descent; */
+/*         win->height = win->y; */
+/*         win = win->next; */
+/*     } */
+
+/*     char msg[256]; */
+/*     snprintf(msg, sizeof(msg), "Switched font to: %s", fontPath); */
+/*     message(bm, msg); */
+
+/*     /\* free(fontPath); *\/ */
+/*     cleanBuffer(bm, "minibuffer"); */
+/*     cleanBuffer(bm, "prompt"); */
+/*     switchToBuffer(bm, bm->lastBuffer->name); */
+/* } */
 
 void goto_line(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     Buffer *minibuffer = getBuffer(bm, "minibuffer");
@@ -1871,11 +2425,6 @@ static SCM collect_symbol_info(void *data) {
 }
 
 void insert_guile_symbols(Buffer *buffer, BufferManager *bm) {
-    if (!buffer) {
-        message(bm, "No buffer to insert symbols into.");
-        return;
-    }
-
     SCM result = scm_c_catch(SCM_BOOL_T,
                              collect_symbol_info,
                              NULL,

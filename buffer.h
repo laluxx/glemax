@@ -46,6 +46,7 @@ typedef struct {
     TSTree *tree;    // Tree sitter tree
     SyntaxArray syntaxArray; // Array of syntax highlighting ranges
     char *major_mode;
+    char* fontPath;
 } Buffer;
 
 typedef struct {
@@ -110,7 +111,7 @@ extern double mouseY;
 void initBuffer(Buffer *buffer, const char *name, const char *path);
 
 void newBuffer(BufferManager *manager, WindowManager *wm,
-               const char *name, const char *path, char *fontname,
+               const char *name, const char *path, char *fontPath,
                int sw, int sh);
 
 

@@ -24,7 +24,7 @@ SCM scm_register_command(SCM name, SCM description, SCM expr);
 // Scheme interface functions
 // These should not be called directly from C code
 // Buffer operations
-SCM scm_buffer_new(SCM name, SCM path, SCM fontname);
+SCM scm_buffer_new(SCM name, SCM path, SCM fontPath);
 SCM scm_buffer_switch(SCM name);
 SCM scm_buffer_get_content(SCM name);
 SCM scm_buffer_set_content(SCM name, SCM content);
@@ -33,10 +33,9 @@ SCM scm_buffer_set_content(SCM name, SCM content);
 SCM scm_window_split_vertical(void);
 SCM scm_window_split_horizontal(void);
 SCM scm_other_window(SCM count);
-SCM scm_window_delete(void);
+SCM scm_delete_window(void);
 
 // UI operations
-/* SCM scm_message(SCM msg); */
 SCM scm_message(SCM fmt, SCM rest);
 SCM scm_next_theme(void);
 SCM scm_previous_theme(void);

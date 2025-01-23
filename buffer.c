@@ -31,30 +31,37 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
     buffer->scale.index = 0;
 
     buffer->major_mode = strdup("fundamental");
+    buffer->fontPath = strdup(fontPath);  // Use the global fontPath initially
 
     // Initialize syntax tree
     buffer->tree = ts_parser_parse_string(parser, NULL, buffer->content, buffer->size);
     initSyntaxArray(&buffer->syntaxArray, 10);
 }
 
-
-void newBuffer(BufferManager *manager, WindowManager *wm,
-               const char *name, const char *path, char *fontname,
-               int sw, int sh) {
+void newBuffer(BufferManager *manager, WindowManager *wm, const char *name,
+               const char *path, char *fontPath, int sw, int sh) {
     Buffer *buffer = malloc(sizeof(Buffer));
     if (buffer == NULL) {
         fprintf(stderr, "Failed to allocate memory for new buffer.\n");
         return;
     }
-    
+
     initBuffer(buffer, name, path);
     setMajorMode(buffer);
-    initScale(&buffer->scale); // Ensure this sets the default index properly
-    buffer->font = loadFont(fontname, buffer->scale.fontSizes[buffer->scale.index]); // Make sure this loads the font metrics
+    initScale(&buffer->scale);
+    buffer->fontPath = strdup(fontPath);
+
+    // Use the global font cache
+    if (!globalFontCache[buffer->scale.index]) {
+        globalFontCache[buffer->scale.index] = loadFont(
+                                                        fontPath, buffer->scale.fontSizes[buffer->scale.index], "name");
+    }
+    buffer->font = globalFontCache[buffer->scale.index];
 
     if (manager->count >= manager->capacity) {
         manager->capacity *= 2;
-        Buffer **newBuffers = realloc(manager->buffers, sizeof(Buffer*) * manager->capacity);
+        Buffer **newBuffers =
+            realloc(manager->buffers, sizeof(Buffer *) * manager->capacity);
         if (newBuffers == NULL) {
             fprintf(stderr, "Failed to expand buffer manager capacity.\n");
             free(buffer); // Free allocated buffer on failure
@@ -62,16 +69,18 @@ void newBuffer(BufferManager *manager, WindowManager *wm,
         }
         manager->buffers = newBuffers;
     }
-    
+
     manager->buffers[manager->count++] = buffer;
-    
-    // Set the buffer in the active window, ensuring it is immediately visible and correctly positioned
+
+    // Set the buffer in the active window, ensuring it is immediately visible and
+    // correctly positioned
     if (wm->activeWindow) {
         wm->activeWindow->buffer = buffer;
         wm->activeWindow->y = sh - buffer->font->ascent + buffer->font->descent;
-        wm->activeWindow->height = wm->activeWindow->y; // Adjust height to maintain text position
+        wm->activeWindow->height =
+            wm->activeWindow->y; // Adjust height to maintain text position
     }
-    
+
     // Optionally set the global active buffer if needed
     manager->activeIndex = manager->count - 1;
     free(manager->activeName);
@@ -82,6 +91,7 @@ void freeBuffer(Buffer *buffer) {
     free(buffer->content);
     free(buffer->name);
     free(buffer->major_mode);
+    free(buffer->fontPath);
     buffer->content = NULL;
     buffer->name = NULL;
     buffer->size = 0;

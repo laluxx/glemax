@@ -11,3 +11,6 @@ object and types from C or other languages into Guile's system.  If you
 have a C ‘struct foo’ type, for example, you can define a corresponding
 Guile foreign object type that allows Scheme code to handle ‘struct foo
 *’ objects.
+
+
+Can i just shadow define with define-with-documentation in my C Guile program ?

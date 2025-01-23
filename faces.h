@@ -10,7 +10,7 @@ extern Font *minifont;
 extern int fontincrement;
 extern int fontsize;
 extern int minifontsize;
-extern char *fontname;
+extern char *fontPath;
 
 
 #define MAX_FONT_SCALE 27
@@ -21,8 +21,8 @@ extern char *fontname;
 extern Font *globalFontCache[MAX_FONT_SCALE_INDEX];  // Global cache of rasterized fonts
 
 void initScale(Scale *scale);
-Font* updateFont(Scale *scale, int newIndex, char *fontname);
-void text_scale_decrease(BufferManager *bm, char *fontname, WindowManager *wm, int sh, int arg);
-void text_scale_increase(BufferManager *bm, char *fontname, WindowManager *wm, int sh, int arg);
+Font* updateFont(Scale *scale, int newIndex, char *fontPath);
+void text_scale_decrease(BufferManager *bm, char *fontPath, WindowManager *wm, int sh, int arg);
+void text_scale_increase(BufferManager *bm, char *fontPath, WindowManager *wm, int sh, int arg);
 
 #endif
