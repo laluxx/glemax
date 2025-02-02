@@ -4,6 +4,7 @@
 #include <stdbool.h>
 
 extern bool ctrl_x_pressed;
+extern bool ctrl_c_pressed;
 
 
 #endif

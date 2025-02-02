@@ -227,16 +227,16 @@ static void init_glemax_primitives(void* data) {
     scm_c_export(name, NULL);
     
     // Buffer operations
-    DEFSUBR("buffer-new", scm_buffer_new, 3, 0, 0);
-    DEFSUBR("buffer-switch", scm_buffer_switch, 1, 0, 0);
+    DEFSUBR("buffer-new",         scm_buffer_new, 3, 0, 0);
+    DEFSUBR("buffer-switch",      scm_buffer_switch, 1, 0, 0);
     DEFSUBR("buffer-get-content", scm_buffer_get_content, 1, 0, 0);
     DEFSUBR("buffer-set-content", scm_buffer_set_content, 2, 0, 0);
     
     // Window operations
     DEFSUBR("split-window-below", scm_window_split_vertical, 0, 0, 0);
     DEFSUBR("split-window-right", scm_window_split_horizontal, 0, 0, 0);
-    DEFSUBR("other-window", scm_other_window, 1, 0, 0);
-    DEFSUBR("delete-window", scm_delete_window, 0, 0, 0);
+    DEFSUBR("other-window",       scm_other_window, 1, 0, 0);
+    DEFSUBR("delete-window",      scm_delete_window, 0, 0, 0);
     
     // UI operations
     /* DEFSUBR("message", scm_message, 1, 0, 0); */
@@ -251,7 +251,6 @@ static void init_glemax_primitives(void* data) {
     
 #undef DEFSUBR
 
-    // Instead of module-export-all, we explicitly exported each symbol above
 }
 
 void init_glemax_bindings(void) {

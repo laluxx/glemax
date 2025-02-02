@@ -29,7 +29,7 @@ typedef struct {
     size_t end;     // End position of the region
     size_t mark;    // NOTE Could become a dynamic array of marks
     bool active;    // Whether the region is currently active
-    bool marked;    // Whether the region was activated by pressing C-SPC
+    bool marked;    // HACK Whether the region was activated by pressing C-SPC
 } Region;
 
 typedef struct {
@@ -55,7 +55,7 @@ typedef struct {
     int capacity;        // Capacity of the buffer list
     int activeIndex;     // Index of the active buffer
     char *activeName;    // Name of the active buffer
-    Buffer *lastBuffer;
+    Buffer *lastBuffer;  // For going back from the minibuffer
 } BufferManager;
 
 typedef enum {
@@ -66,6 +66,7 @@ typedef enum {
 typedef struct {
     char *name;     // Name or identifier of the segment
     char *content;  // Content to be displayed in this segment
+    // TODO Width
 } Segment;
 
 typedef struct {
@@ -91,6 +92,7 @@ typedef struct Window {
     struct Window *prev; // Previous window in the list
     struct Window *next; // Next window in the list
     bool isActive;       // Is this the active window?
+    bool hasFringe;      // Weather the window has a left fringe
     SplitOrientation splitOrientation;
 } Window;
 

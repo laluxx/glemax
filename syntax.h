@@ -30,10 +30,9 @@ void printSyntaxInfo(const Buffer *buffer);
 TSPoint byteToPoint(const char* text, uint32_t byte);
 void adjustSyntaxRanges(Buffer *buffer, int index, int lengthChange);
 
-// Add these new function declarations
 void updateSyntaxIncremental(Buffer *buffer, TSInputEdit *edit);
 TSInputEdit createInputEdit(Buffer *buffer, size_t start_byte, size_t old_end_byte, size_t new_end_byte);
-
+void updateAllBuffersSyntaxHighlighting(BufferManager *bm);
 
 
 bool isHexColor(const char *text);

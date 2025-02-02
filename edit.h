@@ -35,6 +35,16 @@ void move_beginning_of_line(Buffer * buffer, bool shift);
 
 void delete_char(Buffer *buffer, BufferManager *bm);
 void kill_line(Buffer *buffer, KillRing *kr);
+
+// Sexpressions
+bool navigate_list(Buffer *buffer, int arg);
+void forward_list(Buffer *buffer, int arg);
+void backward_list(Buffer *buffer, int arg);
+bool forward_sexp(Buffer *buffer, int arg);
+bool backward_sexp(Buffer *buffer, int arg);
+void kill_sexp(Buffer *buffer, KillRing *kr, int arg);
+
+
 void open_line(Buffer *buffer);
 
 void delete_indentation(Buffer *buffer, BufferManager *bm, int arg);
@@ -61,9 +71,6 @@ void backspace(Buffer *buffer, bool electric_pair_mode);
 char* paste_from_clipboard();
 void copy_to_clipboard(const char* text);
 
-void navigate_list(Buffer *buffer, int arg);
-void forward_list(Buffer *buffer, int arg);
-void backward_list(Buffer *buffer, int arg);
 void moveTo(Buffer *buffer, int ln, int col);
 void delete_blank_lines(Buffer *buffer, int arg);
 void save_buffer(BufferManager *bm, Buffer *buffer);

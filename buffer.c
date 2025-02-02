@@ -268,6 +268,8 @@ Buffer *getBufferUnderCursor(WindowManager *wm) {
     }
 }
 
+
+
 void setMajorMode(Buffer *buffer) {
     const char *extension = strrchr(buffer->name, '.');
     if (extension) {
@@ -275,6 +277,12 @@ void setMajorMode(Buffer *buffer) {
             free(buffer->major_mode);
             buffer->major_mode = strdup("c");
         }
+
+        if (strcmp(extension, ".scm") == 0)  {
+            free(buffer->major_mode);
+            buffer->major_mode = strdup("scm");
+        }
+
         // Add more major-modes...
     } else {
         // we could also check the buffer->content here for modes that can't be determined by file extension alone
@@ -324,20 +332,20 @@ void updateSegments(Modeline *modeline, Buffer *buffer) {
             segment->content = strdup(buffer->major_mode);
         }
         else if (strcmp(segment->name, "scale") == 0) {
-          free(segment->content);
-          char scaleStr[32];
-          snprintf(scaleStr, sizeof(scaleStr), "%d", buffer->scale.index);
-          segment->content = strdup(scaleStr);
+            free(segment->content);
+            char scaleStr[32];
+            snprintf(scaleStr, sizeof(scaleStr), "%d", buffer->scale.index);
+            segment->content = strdup(scaleStr);
         }
         else if (strcmp(segment->name, "logo") == 0) {
-          free(segment->content);
-          if (strcmp(buffer->major_mode, "c") == 0) {
-            segment->content = strdup("C");
-          } else if (strcmp(buffer->major_mode, "h") == 0) {
-            segment->content = strdup("H");
-          } else {
-            segment->content = strdup("F");
-          }
+            free(segment->content);
+            if (strcmp(buffer->major_mode, "c") == 0) {
+                segment->content = strdup("C");
+            } else if (strcmp(buffer->major_mode, "scm") == 0) {
+                segment->content = strdup("G");
+            } else {
+                segment->content = strdup("F");
+            }
         }
     }
 }

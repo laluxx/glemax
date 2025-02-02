@@ -3,8 +3,7 @@
 #+DATE: [2024-12-29]
 #+OPTIONS: toc:2
 
-5.5 Defining New Foreign Object Types
-=====================================
+* 5.5 Defining New Foreign Object Types
 
 The “foreign object type” facility is Guile's mechanism for importing
 object and types from C or other languages into Guile's system.  If you

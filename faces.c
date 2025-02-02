@@ -8,7 +8,8 @@ Font *font;
 Font *minifont;
 int fontsize = 15;
 int minifontsize = 15;
-char *fontPath = "fan.otf"; 
+char *fontPath = "fan.otf";
+Font* nerdFont;
 
 
 Font *globalFontCache[MAX_FONT_SCALE_INDEX] = {NULL};

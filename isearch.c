@@ -75,9 +75,6 @@ void isearch_backward(Buffer *buffer, Buffer *minibuffer, bool updateStartIndex)
     }
 }
 
-
-
-
 void jumpLastOccurrence(Buffer *buffer, const char *word) {
     int wordLength = strlen(word);
     int startIndex = buffer->point - wordLength - 1;  // start from the left of the current word

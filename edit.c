@@ -17,32 +17,6 @@
 // TODO kill_line() should delete the entire line if is composed of only whitespaces
 // TODO kill_line() should kr_kill the entire line if its at the beginning of it
 
-// FIXME why arg doesn't work ? 
-/* void insertChar(Buffer *buffer, char c, int arg) { */
-/*     if (arg <= 0) { */
-/*         arg = 1; */
-/*     } */
-
-/*     while (buffer->size + arg >= buffer->capacity) { */
-/*         buffer->capacity *= 2; */
-/*         char *newContent = realloc(buffer->content, buffer->capacity * sizeof(char)); */
-/*         if (!newContent) { */
-/*             fprintf(stderr, "Failed to reallocate memory for buffer.\n"); */
-/*             return; */
-/*         } */
-/*         buffer->content = newContent; */
-/*     } */
-
-/*     for (int i = 0; i < arg; i++) { */
-/*         memmove(buffer->content + buffer->point + 1, buffer->content + buffer->point, buffer->size - buffer->point); */
-/*         buffer->content[buffer->point] = c; */
-/*         buffer->point++; */
-/*         buffer->size++; */
-/*     } */
-/*     buffer->content[buffer->size] = '\0'; */
-/* } */
-
-
 #include "syntax.h"
 void insertChar(Buffer *buffer, unsigned int codepoint) {
     // Handle negative values that came from signed chars
@@ -346,6 +320,76 @@ void delete_char(Buffer *buffer, BufferManager *bm) {
     // Null-terminate the string
     buffer->content[buffer->size] = '\0';
 }
+
+void kill_sexp(Buffer *buffer, KillRing *kr, int arg) {
+    if (buffer == NULL || kr == NULL) return;
+    if (arg == 0) arg = 1;  // Default to killing one sexp if no arg provided
+    
+    size_t start_point = buffer->point;
+    size_t end_point = start_point;
+    int direction = (arg > 0) ? 1 : -1;
+    int count = abs(arg);
+    
+    while (count > 0) {
+        int depth = 0;
+        bool in_string = false;
+        char string_delimiter = 0;
+        
+        while ((direction > 0 && end_point < buffer->size) ||
+               (direction < 0 && end_point > 0)) {
+            char c = buffer->content[end_point];
+            
+            if (!in_string) {
+                if (c == '"' || c == '\'') {
+                    in_string = true;
+                    string_delimiter = c;
+                } else if (c == '(' || c == '[' || c == '{') {
+                    depth += (direction > 0) ? 1 : -1;
+                } else if (c == ')' || c == ']' || c == '}') {
+                    depth += (direction > 0) ? -1 : 1;
+                }
+            } else if (c == string_delimiter && buffer->content[end_point - 1] != '\\') {
+                in_string = false;
+            }
+            
+            end_point += direction;
+            
+            if (depth == 0 && !in_string &&
+                ((direction > 0 && (end_point == buffer->size || isspace(buffer->content[end_point]))) ||
+                 (direction < 0 && (end_point == 0 || isspace(buffer->content[end_point - 1]))))) {
+                break;
+            }
+        }
+        
+        count--;
+    }
+    
+    // Ensure start_point is always less than end_point
+    if (start_point > end_point) {
+        size_t temp = start_point;
+        start_point = end_point;
+        end_point = temp;
+    }
+    
+    // Copy the killed text to the kill ring
+    size_t length = end_point - start_point;
+    char *killed_text = malloc(length + 1);
+    if (killed_text) {
+        memcpy(killed_text, buffer->content + start_point, length);
+        killed_text[length] = '\0';
+        kr_kill(kr, killed_text);
+        free(killed_text);
+    }
+    
+    // Remove the killed text from the buffer
+    memmove(buffer->content + start_point, buffer->content + end_point, buffer->size - end_point);
+    buffer->size -= length;
+    buffer->content[buffer->size] = '\0';
+    
+    // Set the point to where we started killing
+    buffer->point = start_point;
+}
+
 
 void kill_line(Buffer *buffer, KillRing *kr) {
     if (buffer->point >= buffer->size) return; // Nothing to delete if at the end of the buffer
@@ -1893,111 +1937,6 @@ void load_font(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     switchToBuffer(bm, bm->lastBuffer->name);
 }
 
-
-
-// ORIGINAL
-/* void load_font(BufferManager *bm, WindowManager *wm, int sw, int sh) { */
-/*     Buffer *minibuffer = getBuffer(bm, "minibuffer"); */
-/*     Buffer *prompt = getBuffer(bm, "prompt"); */
-
-/*     // Initial minibuffer setup */
-/*     if (minibuffer->size == 0) { */
-/*         if (bm->lastBuffer && bm->lastBuffer->name) { */
-/*             minibuffer->size = 0; */
-/*             minibuffer->point = 0; */
-/*             minibuffer->content[0] = '\0'; */
-/*             prompt->content = strdup("Switch font to: "); */
-/*             switchToBuffer(bm, "minibuffer"); */
-/*         } else { */
-/*             message(bm, "No last buffer to return to."); */
-/*         } */
-/*         return; */
-/*     } */
-
-/*     // Try to get font path using fontconfig */
-/*     char *fontPath = getFontPath(minibuffer->content); */
-/*     if (!fontPath) { */
-/*         char error_msg[256]; */
-/*         snprintf(error_msg, sizeof(error_msg), "Font not found: %s", minibuffer->content); */
-/*         message(bm, error_msg); */
-/*         cleanBuffer(bm, "minibuffer"); */
-/*         cleanBuffer(bm, "prompt"); */
-/*         switchToBuffer(bm, bm->lastBuffer->name); */
-/*         return; */
-/*     } */
-
-/*     // Try to load the font at the base size first to verify it works */
-/*     Font *testFont = loadFont(fontPath, fontsize, "name"); */
-/*     if (!testFont) { */
-/*         char error_msg[256]; */
-/*         snprintf(error_msg, sizeof(error_msg), "Failed to load font: %s", minibuffer->content); */
-/*         message(bm, error_msg); */
-/*         /\* free(fontPath); *\/ */
-/*         cleanBuffer(bm, "minibuffer"); */
-/*         cleanBuffer(bm, "prompt"); */
-/*         switchToBuffer(bm, bm->lastBuffer->name); */
-/*         return; */
-/*     } */
-/*     /\* freeFont(testFont);  // Free the test font since we'll reload per buffer *\/ */
-
-/*     // Keep track of buffers we've successfully updated */
-/*     int successful_updates = 0; */
-
-/*     // Try to update each buffer's font */
-/*     for (int i = 0; i < bm->count; i++) { */
-/*         Buffer *buffer = bm->buffers[i]; */
-/*         free(buffer->fontPath); */
-/*         buffer->fontPath = strdup(fontPath); */
-        
-/*         Font *newFont = loadFont(fontPath, buffer->scale.fontSizes[buffer->scale.index], "name"); */
-        
-/*         if (!newFont) { */
-/*             // If we fail to load the font for any buffer, revert all previous changes */
-/*             for (int j = 0; j < successful_updates; j++) { */
-/*                 Buffer *revert_buffer = bm->buffers[j]; */
-/*                 revert_buffer->font = loadFont(fontPath, revert_buffer->scale.fontSizes[revert_buffer->scale.index], "name"); */
-/*             } */
-            
-/*             char error_msg[256]; */
-/*             snprintf(error_msg, sizeof(error_msg), "Failed to load font for buffer %s", buffer->name); */
-/*             message(bm, error_msg); */
-/*             /\* free(fontPath); *\/ */
-/*             cleanBuffer(bm, "minibuffer"); */
-/*             cleanBuffer(bm, "prompt"); */
-/*             switchToBuffer(bm, bm->lastBuffer->name); */
-/*             return; */
-/*         } */
-
-/*         // Free the old font before assigning the new one */
-/*         if (buffer->font) { */
-/*             /\* freeFont(buffer->font); *\/ */
-/*         } */
-/*         buffer->font = newFont; */
-/*         successful_updates++; */
-/*     } */
-
-/*     // Only update global font name after all buffers have been successfully updated */
-/*     /\* free(fontPath); *\/ */
-/*     fontPath = strdup(minibuffer->content); */
-
-/*     // Update window positions */
-/*     Window *win = wm->head; */
-/*     while (win) { */
-/*         win->y = sh - win->buffer->font->ascent + win->buffer->font->descent; */
-/*         win->height = win->y; */
-/*         win = win->next; */
-/*     } */
-
-/*     char msg[256]; */
-/*     snprintf(msg, sizeof(msg), "Switched font to: %s", fontPath); */
-/*     message(bm, msg); */
-
-/*     /\* free(fontPath); *\/ */
-/*     cleanBuffer(bm, "minibuffer"); */
-/*     cleanBuffer(bm, "prompt"); */
-/*     switchToBuffer(bm, bm->lastBuffer->name); */
-/* } */
-
 void goto_line(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     Buffer *minibuffer = getBuffer(bm, "minibuffer");
     Buffer *prompt = getBuffer(bm, "prompt");
@@ -2057,15 +1996,18 @@ void goto_line(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     switchToBuffer(bm, targetBuffer->name);
 }
 
-
-void navigate_list(Buffer *buffer, int arg) {
+bool navigate_list(Buffer *buffer, int arg) {
+    if (!buffer || arg == 0) return false;
     int direction = (arg > 0) ? 1 : -1;
     int groupsToMove = abs(arg);
     int depth = 0;
     size_t pos = buffer->point;
     bool foundGroup = false;
 
-    while (groupsToMove > 0 && pos >= 0 && pos < buffer->size) {
+    // Adjust starting position for backward movement
+    if (direction == -1 && pos > 0) pos--;
+
+    while (groupsToMove > 0 && pos < buffer->size && pos != (size_t)-1) {
         char c = buffer->content[pos];
         if ((direction == 1 && (c == '(' || c == '[' || c == '{')) ||
             (direction == -1 && (c == ')' || c == ']' || c == '}'))) {
@@ -2076,28 +2018,187 @@ void navigate_list(Buffer *buffer, int arg) {
             if (depth == 0) {
                 foundGroup = true;
                 groupsToMove--;
+                if (groupsToMove == 0) break;
             }
         }
         pos += direction;
     }
 
-    if (foundGroup && groupsToMove == 0) {
-        buffer->point = pos - direction;  // Adjust position back to the last valid position
+    if (foundGroup) {
+        buffer->point = pos;
+        return true;
     } else {
-        printf("No %s group\n", (arg > 0) ? "next" : "previous");
+        message(&bm, (arg > 0) ? "No next group" : "No previous group");
+        return false;
     }
 }
 
 void forward_list(Buffer *buffer, int arg) {
+    if (!buffer) return;
     if (arg == 0) arg = 1;  // Default to moving across one group
-    navigate_list(buffer, arg);
-    buffer->point += 1;
+    if (navigate_list(buffer, arg)) {
+        buffer->point++;  // Move past the closing delimiter
+    }
 }
 
 void backward_list(Buffer *buffer, int arg) {
+    if (!buffer) return;
     if (arg == 0) arg = 1;  // Default to moving across one group
     navigate_list(buffer, -arg);
 }
+
+
+bool forward_sexp(Buffer *buffer, int arg) {
+    if (!buffer || arg == 0) return false;
+
+    size_t original_point = buffer->point;
+    int direction = (arg > 0) ? 1 : -1;
+    int count = abs(arg);
+
+    for (int i = 0; i < count; i++) {
+        // Skip whitespace
+        while (buffer->point < buffer->size && isspace(buffer->content[buffer->point])) {
+            buffer->point++;
+        }
+
+        if (buffer->point >= buffer->size) break;
+
+        char c = buffer->content[buffer->point];
+
+        if (c == '(' || c == '[' || c == '{') {
+            // List-like expression
+            navigate_list(buffer, 1);
+            if (buffer->point < buffer->size) {
+                buffer->point++; // Move past the closing delimiter
+            }
+        } else if (c == '"') {
+            // String
+            buffer->point++; // Move past opening quote
+            while (buffer->point < buffer->size && 
+                   (buffer->content[buffer->point] != '"' || 
+                    (buffer->point > 0 && buffer->content[buffer->point - 1] == '\\'))) {
+                buffer->point++;
+            }
+            if (buffer->point < buffer->size) {
+                buffer->point++; // Move past closing quote
+            }
+        } else if (isalnum(c) || c == '_' || c == '-') {
+            // Symbol-like expression
+            while (buffer->point < buffer->size && 
+                   (isalnum(buffer->content[buffer->point]) || 
+                    buffer->content[buffer->point] == '_' || 
+                    buffer->content[buffer->point] == '-')) {
+                buffer->point++;
+            }
+        } else {
+            // Single character
+            buffer->point++;
+        }
+    }
+
+    if (buffer->point == original_point) {
+        message(&bm, "No next sexp");
+        return false;
+    }
+
+    return true;
+}
+
+bool backward_sexp(Buffer *buffer, int arg) {
+    if (!buffer || arg == 0) return false;
+
+    size_t original_point = buffer->point;
+    int direction = (arg > 0) ? -1 : 1; // Note the reversal of direction
+    int count = abs(arg);
+
+    for (int i = 0; i < count; i++) {
+        // Skip whitespace
+        while (buffer->point > 0 && isspace(buffer->content[buffer->point - 1])) {
+            buffer->point--;
+        }
+
+        if (buffer->point == 0) break;
+
+        char c = buffer->content[buffer->point - 1];
+
+        if (c == ')' || c == ']' || c == '}') {
+            // List-like expression
+            buffer->point--; // Move to the closing delimiter
+            navigate_list(buffer, -1);
+        } else if (c == '"') {
+            // String
+            buffer->point--; // Move to the closing quote
+            while (buffer->point > 0 && 
+                   (buffer->content[buffer->point - 1] != '"' || 
+                    (buffer->point > 1 && buffer->content[buffer->point - 2] == '\\'))) {
+                buffer->point--;
+            }
+            if (buffer->point > 0) {
+                buffer->point--; // Move to opening quote
+            }
+        } else if (isalnum(c) || c == '_' || c == '-') {
+            // Symbol-like expression
+            while (buffer->point > 0 && 
+                   (isalnum(buffer->content[buffer->point - 1]) || 
+                    buffer->content[buffer->point - 1] == '_' || 
+                    buffer->content[buffer->point - 1] == '-')) {
+                buffer->point--;
+            }
+        } else {
+            // Single character
+            buffer->point--;
+        }
+    }
+
+    if (buffer->point == original_point) {
+        message(&bm, "No previous sexp");
+        return false;
+    }
+
+    return true;
+}
+
+
+/* void navigate_list(Buffer *buffer, int arg) { */
+/*     int direction = (arg > 0) ? 1 : -1; */
+/*     int groupsToMove = abs(arg); */
+/*     int depth = 0; */
+/*     size_t pos = buffer->point; */
+/*     bool foundGroup = false; */
+
+/*     while (groupsToMove > 0 && pos >= 0 && pos < buffer->size) { */
+/*         char c = buffer->content[pos]; */
+/*         if ((direction == 1 && (c == '(' || c == '[' || c == '{')) || */
+/*             (direction == -1 && (c == ')' || c == ']' || c == '}'))) { */
+/*             depth += direction; */
+/*         } else if ((direction == 1 && (c == ')' || c == ']' || c == '}')) || */
+/*                    (direction == -1 && (c == '(' || c == '[' || c == '{'))) { */
+/*             depth -= direction; */
+/*             if (depth == 0) { */
+/*                 foundGroup = true; */
+/*                 groupsToMove--; */
+/*             } */
+/*         } */
+/*         pos += direction; */
+/*     } */
+
+/*     if (foundGroup && groupsToMove == 0) { */
+/*         buffer->point = pos - direction;  // Adjust position back to the last valid position */
+/*     } else { */
+/*         printf("No %s group\n", (arg > 0) ? "next" : "previous"); */
+/*     } */
+/* } */
+
+/* void forward_list(Buffer *buffer, int arg) { */
+/*     if (arg == 0) arg = 1;  // Default to moving across one group */
+/*     navigate_list(buffer, arg); */
+/*     buffer->point += 1; */
+/* } */
+
+/* void backward_list(Buffer *buffer, int arg) { */
+/*     if (arg == 0) arg = 1;  // Default to moving across one group */
+/*     navigate_list(buffer, -arg); */
+/* } */
 
 // NOTE This will be useful to implement LSP
 void moveTo(Buffer *buffer, int ln, int col) {

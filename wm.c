@@ -147,8 +147,6 @@ void other_window(WindowManager *wm, int direction) {
     }
 }
 
-
-
 void swap_window(WindowManager *wm, int direction) {
     Window *tw = NULL; // Target Window
 

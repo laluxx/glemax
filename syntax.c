@@ -4,8 +4,8 @@
 #include "syntax.h"
 #include "theme.h"
 
-TSParser *parser;
-
+TSParser *parser; // NOTE Global parser
+static bool printTSNodes = false;
 
 void initGlobalParser() {
     parser = ts_parser_new();
@@ -45,14 +45,15 @@ bool isHexColor(const char *text) {
     return false;
 }
 
-
 // TODO Reorder them based on whats most found in a typucal c buffer
 // for a free performance boost
 Color getNodeColor(TSNode node) {
+    if (printTSNodes) {
+        printf(ts_node_string(node));
+        printf("\n\n\n");
+    }
 
     const char *nodeType = ts_node_type(node);
-    printf(ts_node_string(node));
-    printf("\n\n\n");
 
     if (strcmp(nodeType, "return") == 0
         || strcmp(nodeType, "if") == 0
@@ -341,3 +342,15 @@ void updateSyntaxIncremental(Buffer *buffer, TSInputEdit *edit) {
     }
 }
 
+
+
+// Why do we need to update the syntax ? FIXME
+void updateAllBuffersSyntaxHighlighting(BufferManager *bm) {
+    for (int i = 0; i < bm->count; i++) {
+        Buffer *buffer = bm->buffers[i];  // Changed from &bm->buffers[i]
+        if (buffer && buffer->tree != NULL) {
+            TSInputEdit edit = createInputEdit(buffer, 0, buffer->size, buffer->size);
+            updateSyntaxIncremental(buffer, &edit);
+        }
+    }
+}
