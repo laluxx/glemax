@@ -1,16 +1,104 @@
+#include "theme.h"
+#include "globals.h"
 #include <stdio.h>
 #include <string.h>
-#include "theme.h"
-
-// TODO Theme lerping
 
 int currentThemeIndex = 0;
+int previousThemeIndex = 0;
+float interpolationProgress = 1.0f;
 Theme themes[10];
+Theme currentTheme;
+Theme previousTheme;
 
-Color hexToColor(const char* hex) {
+
+Color hexToColor(const char *hex) {
     int r, g, b;
     sscanf(hex, "#%02x%02x%02x", &r, &g, &b);
-    return (Color){r / 255.0f, g / 255.0f, b / 255.0f, 1.0f}; // NOTE alpha is 1.0f
+    return (Color){r / 255.0f, g / 255.0f, b / 255.0f, 1.0f};
+}
+
+Color lerpColor(Color a, Color b, float t) {
+    return (Color){a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
+                   a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t};
+}
+
+void updateThemeInterpolation() {
+    if (theme_lerp_mode && interpolationProgress < theme_lerp_threshold) {
+        interpolationProgress += theme_lerp_speed;
+        Theme startTheme = previousTheme;
+        Theme endTheme = themes[currentThemeIndex];
+
+        // Interpolate each color component
+        currentTheme.bg = lerpColor(startTheme.bg, endTheme.bg, interpolationProgress);
+        currentTheme.cursor = lerpColor(startTheme.cursor, endTheme.cursor, interpolationProgress);
+        currentTheme.marked_cursor = lerpColor(startTheme.marked_cursor, endTheme.marked_cursor, interpolationProgress);
+        currentTheme.text = lerpColor(startTheme.text, endTheme.text, interpolationProgress);
+        currentTheme.minibuffer = lerpColor(startTheme.minibuffer, endTheme.minibuffer, interpolationProgress);
+        currentTheme.modeline = lerpColor(startTheme.modeline, endTheme.modeline, interpolationProgress);
+        currentTheme.modeline_inactive = lerpColor(startTheme.modeline_inactive, endTheme.modeline_inactive, interpolationProgress);
+        currentTheme.modeline_highlight = lerpColor(startTheme.modeline_highlight, endTheme.modeline_highlight, interpolationProgress);
+        currentTheme.show_paren_match = lerpColor(startTheme.show_paren_match, endTheme.show_paren_match, interpolationProgress);
+        currentTheme.isearch_highlight = lerpColor(startTheme.isearch_highlight, endTheme.isearch_highlight, interpolationProgress);
+        currentTheme.minibuffer_prompt = lerpColor(startTheme.minibuffer_prompt, endTheme.minibuffer_prompt, interpolationProgress);
+        currentTheme.region = lerpColor(startTheme.region, endTheme.region, interpolationProgress);
+        currentTheme.message = lerpColor(startTheme.message, endTheme.message, interpolationProgress);
+        currentTheme.type = lerpColor(startTheme.type, endTheme.type, interpolationProgress);
+        currentTheme.string = lerpColor(startTheme.string, endTheme.string, interpolationProgress);
+        currentTheme.number = lerpColor(startTheme.number, endTheme.number, interpolationProgress);
+        currentTheme.function = lerpColor(startTheme.function, endTheme.function, interpolationProgress);
+        currentTheme.preprocessor = lerpColor(startTheme.preprocessor, endTheme.preprocessor, interpolationProgress);
+        currentTheme.operator = lerpColor(startTheme.operator, endTheme.operator, interpolationProgress);
+        currentTheme.variable = lerpColor(startTheme.variable, endTheme.variable, interpolationProgress);
+        currentTheme.keyword = lerpColor(startTheme.keyword, endTheme.keyword, interpolationProgress);
+        currentTheme.comment = lerpColor(startTheme.comment, endTheme.comment, interpolationProgress);
+        currentTheme.null = lerpColor(startTheme.null, endTheme.null, interpolationProgress);
+        currentTheme.negation = lerpColor(startTheme.negation, endTheme.negation, interpolationProgress);
+
+        if (interpolationProgress >= 1.0f) {
+            interpolationProgress = 1.0f;
+        }
+    } else if (!theme_lerp_mode) {
+        currentTheme = themes[currentThemeIndex];
+        interpolationProgress = 1.0f;
+    }
+}
+
+void switchToTheme(int newIndex) {
+    if (newIndex < 0 || newIndex >= sizeof(themes) / sizeof(Theme)) {
+        return;
+    }
+
+    previousTheme = currentTheme;
+    previousThemeIndex = currentThemeIndex;
+    currentThemeIndex = newIndex;
+    interpolationProgress = 0.0f;
+
+    if (!theme_lerp_mode) {
+        currentTheme = themes[currentThemeIndex];
+    }
+}
+
+void switchToNextTheme() {
+    int nextIndex = (currentThemeIndex + 1) % (sizeof(themes) / sizeof(Theme));
+    switchToTheme(nextIndex);
+    printf("Transitioning to next theme: %s\n", themes[nextIndex].name);
+}
+
+void switchToPreviousTheme() {
+    int prevIndex = (currentThemeIndex - 1 + sizeof(themes) / sizeof(Theme)) %
+        (sizeof(themes) / sizeof(Theme));
+    switchToTheme(prevIndex);
+    printf("Transitioning to previous theme: %s\n", themes[prevIndex].name);
+}
+
+void load_theme(const char *themeName) {
+    for (int i = 0; i < sizeof(themes) / sizeof(Theme); i++) {
+        if (strcmp(themes[i].name, themeName) == 0) {
+            switchToTheme(i);
+            return;
+        }
+    }
+    printf("Theme '%s' not found.\n", themeName);
 }
 
 void initThemes() {
@@ -18,9 +106,11 @@ void initThemes() {
         .name              = "dark",
         .bg                = hexToColor("#18181B"),
         .cursor            = hexToColor("#e4e4e8"),
+        .marked_cursor     = hexToColor("#e4e4e8"),
         .text              = hexToColor("#e4e4e8"),
         .minibuffer        = hexToColor("#18181B"),
         .modeline          = hexToColor("#222225"),
+        .modeline_inactive = hexToColor("#222225"),
         .show_paren_match  = hexToColor("#222225"),
         .isearch_highlight = hexToColor("#303035"),
         .minibuffer_prompt = hexToColor("#4d9391"),
@@ -42,13 +132,15 @@ void initThemes() {
         .name              = "Gum",
         .bg                = hexToColor("#14171E"),
         .cursor            = hexToColor("#D6A0D1"),
+        .marked_cursor     = hexToColor("#9587DD"),
         .text              = hexToColor("#D4D4D6"),
         .minibuffer        = hexToColor("#14171E"),
         .modeline          = hexToColor("#191D26"),
+        .modeline_inactive = hexToColor("#191D26"),
         .show_paren_match  = hexToColor("#222225"),
         .isearch_highlight = hexToColor("#272C3A"),
         .minibuffer_prompt = hexToColor("#9587DD"),
-        .region            = hexToColor("#272C3A"),
+        .region            = hexToColor("#14171e"),
         .message           = hexToColor("#9587DD"),
         .type              = hexToColor("#11ccb2"),
         .string            = hexToColor("#62D2DB"),
@@ -66,9 +158,11 @@ void initThemes() {
         .name              = "ocean",
         .bg                = hexToColor("#1A1A25"),
         .cursor            = hexToColor("#F2F2F2"),
+        .marked_cursor     = hexToColor("#F2F2F2"),
         .text              = hexToColor("#E6E6E8"),
         .minibuffer        = hexToColor("#1A1A25"),
         .modeline          = hexToColor("#252534"),
+        .modeline_inactive = hexToColor("#252534"),
         .show_paren_match  = hexToColor("#252534"),
         .isearch_highlight = hexToColor("#32324A"),
         .minibuffer_prompt = hexToColor("#738FD7"),
@@ -90,13 +184,15 @@ void initThemes() {
         .name              = "temple",
         .bg                = hexToColor("#2B2B2F"),
         .cursor            = hexToColor("#EEDCC1"),
+        .marked_cursor     = hexToColor("#EEDCC1"),
         .text              = hexToColor("#EEDCC1"),
         .minibuffer        = hexToColor("#2B2B2F"),
         .modeline          = hexToColor("#303035"),
+        .modeline_inactive = hexToColor("#303035"),
         .show_paren_match  = hexToColor("#ef6787"),
         .isearch_highlight = hexToColor("#4e333b"),
         .minibuffer_prompt = hexToColor("#4EB8CA"),
-        .region            = hexToColor("#2B2B2F"),
+        .region            = hexToColor("#402E33"),
         .message           = hexToColor("#4EB8CA"),
         .type              = hexToColor("#b9c791"),
         .string            = hexToColor("#fbaed2"),
@@ -115,13 +211,15 @@ void initThemes() {
         .name              = "dark+",
         .bg                = hexToColor("#1e1e1e"),
         .cursor            = hexToColor("#237AD3"),
+        .marked_cursor     = hexToColor("#237AD3"),
         .text              = hexToColor("#d4d4d4"),
         .minibuffer        = hexToColor("#1e1e1e"),
         .modeline          = hexToColor("#68217A"),
+        .modeline_inactive = hexToColor("#1d1d1d"),
         .show_paren_match  = hexToColor("#D16969"),
         .isearch_highlight = hexToColor("#4b474c"),
         .minibuffer_prompt = hexToColor("#237AD3"),
-        .region            = hexToColor("#1e1e1e"),
+        .region            = hexToColor("#113d69"),
         .message           = hexToColor("#237AD3"),
         .type              = hexToColor("#35CDAF"),
         .string            = hexToColor("#DB8E73"),
@@ -139,9 +237,11 @@ void initThemes() {
         .name              = "doom-one",
         .bg                = hexToColor("#282C34"),
         .cursor            = hexToColor("#51AFEF"),
+        .marked_cursor     = hexToColor("#51AFEF"),
         .text              = hexToColor("#BBC2CF"),
         .minibuffer        = hexToColor("#21242B"),
         .modeline          = hexToColor("#1D2026"),
+        .modeline_inactive = hexToColor("#21242b"),
         .show_paren_match  = hexToColor("#222225"),
         .isearch_highlight = hexToColor("#303035"),
         .minibuffer_prompt = hexToColor("#51afef"),
@@ -163,9 +263,11 @@ void initThemes() {
         .name              = "city-lights",
         .bg                = hexToColor("#1D252C"),
         .cursor            = hexToColor("#51AFEF"),
+        .marked_cursor     = hexToColor("#51AFEF"),
         .text              = hexToColor("#A0B3C5"),
         .minibuffer        = hexToColor("#181E24"),
         .modeline          = hexToColor("#181F25"),
+        .modeline_inactive = hexToColor("#1D252C"),
         .show_paren_match  = hexToColor("#222225"),
         .isearch_highlight = hexToColor("#303035"),
         .minibuffer_prompt = hexToColor("#5EC4FF"),
@@ -187,9 +289,11 @@ void initThemes() {
         .name              = "Molokai",
         .bg                = hexToColor("#1C1E1F"),
         .cursor            = hexToColor("#FB2874"),
+        .marked_cursor     = hexToColor("#FB2874"),
         .text              = hexToColor("#D6D6D4"),
         .minibuffer        = hexToColor("#222323"),
         .modeline          = hexToColor("#2D2E2E"),
+        .modeline_inactive = hexToColor("#171819"),
         .show_paren_match  = hexToColor("#222225"),
         .isearch_highlight = hexToColor("#303035"),
         .minibuffer_prompt = hexToColor("#fd971f"),
@@ -211,9 +315,11 @@ void initThemes() {
         .name              = "doom-monokai-ristretto",
         .bg                = hexToColor("#2c2525"),
         .cursor            = hexToColor("#fff1f3"),
+        .marked_cursor     = hexToColor("#fff1f3"),
         .text              = hexToColor("#fff1f3"),
         .minibuffer        = hexToColor("#2c2525"),
         .modeline          = hexToColor("#403838"),
+        .modeline_inactive = hexToColor("#2c2525"),
         .show_paren_match  = hexToColor("#adda78"),
         .isearch_highlight = hexToColor("#403838"),
         .minibuffer_prompt = hexToColor("#f9cc6c"),
@@ -235,9 +341,11 @@ void initThemes() {
         .name              = "doom-nord",
         .bg                = hexToColor("#2E3440"),
         .cursor            = hexToColor("#81A1C1"),
+        .marked_cursor     = hexToColor("#81A1C1"),
         .text              = hexToColor("#ECEFF4"),
         .minibuffer        = hexToColor("#2E3440"),
         .modeline          = hexToColor("#292e39"),
+        .modeline_inactive = hexToColor("#292e39"),
         .show_paren_match  = hexToColor("#8FBCBB"),
         .isearch_highlight = hexToColor("#5a7087"),
         .minibuffer_prompt = hexToColor("#81A1C1"),
@@ -252,37 +360,13 @@ void initThemes() {
         .variable          = hexToColor("#D8DEE9"),
         .keyword           = hexToColor("#81A1C1"),
         .comment           = hexToColor("#6f7787"),
-        .null              = hexToColor("#81A1C1"),
+        .null              = hexToColor("#8FBCBB"),
         .negation          = hexToColor("#BF616A"),
     };
 
-}
-
-
-void nextTheme() {
-    currentThemeIndex++;
-    if (currentThemeIndex >= sizeof(themes) / sizeof(Theme)) {
-        currentThemeIndex = 0;
-    }
-    printf("Switched to next theme: %s\n", CT.name);
-}
-
-void previousTheme() {
-    currentThemeIndex--;
-    if (currentThemeIndex < 0) {
-        currentThemeIndex = sizeof(themes) / sizeof(Theme) - 1;
-    }
-    printf("Switched to previous theme: %s\n", CT.name);
-}
-
-
-void loadTheme(const char* themeName) {
-    for (int i = 0; i < sizeof(themes) / sizeof(Theme); i++) {
-        if (strcmp(themes[i].name, themeName) == 0) {
-            currentThemeIndex = i;
-            return;
-        }
-    }
-    // Handle the case where the theme is not found
-    printf("Theme '%s' not found.\n", themeName);
+    currentThemeIndex = 0;
+    previousThemeIndex = 0;
+    currentTheme = themes[currentThemeIndex];
+    previousTheme = currentTheme;
+    interpolationProgress = 1.0f;
 }

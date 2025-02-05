@@ -11,14 +11,18 @@
 #include "syntax.h"
 #include "theme.h"
 #include "wm.h"
+#include <common.h>
 #include <ctype.h>
 #include <input.h>
 #include <libguile.h>
 #include <lume.h>
+#include <renderer.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "draw.h"
+#include "globals.h"
+
 
 // [/] MAYBE One thing that we really should do, is to
 // make the minibuffer just a window, not a special
@@ -29,9 +33,9 @@
 // so the same stuff is recalculated like 6 or more times per frame
 // i hate it, but i hate refactoring more
 
+// TODO Dim other windows
 // TODO Shared Window Geometry
-// TODO FIX backward_list when called on the last character of the buffer
-// TODO unhardcode the scroll it shoudl use the modelineHeight + minibufferHeight
+// TODO unhardcode the cursor scroll it shoudl use the modelineHeight + minibufferHeight
 // TODO the point should be per window not per buffer
 // FIXME most functions that take the "Font *font" shoudl take only the wm now
 // TODO dabbrev-completion
@@ -39,7 +43,6 @@
 // TODO revert-buffer-mode
 // TODO wdired
 // TODO iedit
-// TODO draw hollow cursor on non active widnows
 // TODO Option to not let the point over correct indentation
 
 // TODO nextBuffer() and previousBuffer() should update the wm->buffer also switchToBuffer
@@ -54,39 +57,21 @@
 // FIXME use setBufferContent() to set the prompt aswell
 
 // TODO Track scope to implement rainbow-delimiters-mode and hl-scope-mode
+// TODO indent backspace
+
+// TODO Click on any triangle to get informations like
+// Why it is there and what it's supposed to do each "widget"
+// will have an id and have all the colors that it uses inside
+// so we should a popup on hover with stuff and help
+
 
 CompletionEngine ce = {0};
 BufferManager bm = {0};
 KillRing kr = {0};
 WindowManager wm = {0};
 NamedHistories nh = {0};
-/* double mouseX; // Moved */
-/* double mouseY; // Moved */
-bool dragging = false;
-double initialMouseX = 0;
-double initialMouseY = 0;
-double dragThreshold = 5; // Threshold in pixels to start dragging
 
-bool  eatchar = false; // NOTE Keychords could be implemented in scheme using this very simple approach
-bool  electric_pair_mode     = true;  // TODO Wrap selection for () [] {} '' ""
-bool  auto_scale_mode        = true;
-bool  blink_cursor_mode      = true;
-float blink_cursor_delay     = 0.5;   // Seconds of idle time before the first blink of the cursor.
-float blink_cursor_interval  = 0.5;   // Lenght of cursor blink interval in seconds.
-int   blink_cursor_blinks    = 10;    // How many times to blink before stopping.
-int   indentation            = 4;     
-bool  show_paren_mode        = true;
-float show_paren_delay       =0.125;  // TODO Time in seconds to delay before showing a matching paren.
-int   kill_ring_max          = 120;   // Maximum length of kill ring before oldest elements are thrown away.
-bool  electric_indent_mode   = true;  // TRUE if you want glemax to electric your indent style
-bool  rainbow_mode           = true;  // TRUE if you are gae
-bool  crystal_cursor_mode    = true;  // Make the cursor crystal clear
-float mouse_wheel_scroll_amount = 2;  // TODO make it a vec2f for vertical and horizontal scrolling
-bool  minimap_mode           = true;  
-bool  color_fringe_mode      = true;  
 
-void drawMiniCursor(Buffer *buffer, Font *font, float x, float y, Color color);
-void drawCursor(Buffer *buffer, Window *win, Color defaultColor);
 void drawHighlight(WindowManager *wm, Font *font, size_t startPos, size_t length, Color highlightColor);
 void highlightMatchingBrackets(WindowManager *wm, Font *font, Color highlightColor);
 void highlightAllOccurrences(WindowManager *wm, const char *searchText, Font *font, Color highlightColor);
@@ -96,8 +81,6 @@ void drawBuffer(Window *win, Buffer *buffer, bool cursorVisible, bool colorPoint
 void highlightHexColors(WindowManager *wm, Font *font, Buffer *buffer, bool rm);
 int getGlobalArg(Buffer *argBuffer);
 void updateScroll(Window *window);
-void drawMinimap(WindowManager *wm, Window *mainWindow, Buffer *buffer);
-void drawHollowCursor(Buffer *buffer, Window *win, Color defaultColor);
 void scrollCallback(double xOffset, double yOffset);
 void cursorPosCallback(double xpos, double ypos);
 void mouseButtonCallback(int button, int action, int mods);
@@ -108,127 +91,8 @@ static bool isIncludeDirectiveAngleBracket(Buffer *buffer, unsigned int codepoin
 static void insertIncludeAngleBrackets(Buffer *buffer);
 static void insertCharWithElectricPairs(Buffer *buffer, unsigned int codepoint);
 
-
 void keyCallback(int key, int action, int mods);
 void textCallback(unsigned int codepoint);
-
-
-static double lastBlinkTime = 0.0;  // Last time the cursor state changed
-static bool cursorVisible = true;  // Initial state of the cursor visibility
-static int blinkCount = 0;        // Counter for number of blinks
-
-void drawHollowCursor(Buffer *buffer, Window *win, Color defaultColor) {
-    // Determine the cursor color based on syntax highlighting
-    Color cursorColor = defaultColor;
-    if (crystal_cursor_mode) {
-        for (size_t i = 0; i < buffer->syntaxArray.used; i++) {
-            if (buffer->point >= buffer->syntaxArray.items[i].start &&
-                buffer->point < buffer->syntaxArray.items[i].end) {
-                cursorColor = buffer->syntaxArray.items[i].color;
-                break;
-            }
-        }
-    }
-
-    drawHollowPoint(buffer, win, buffer->point, cursorColor);
-}
-
-void drawCursor(Buffer *buffer, Window *win, Color defaultColor) {
-    float cursorX = fringe + win->x - win->scroll.x;  // Start position adjusted for horizontal scroll
-    float cursorY = win->y;
-    int lineCount = 0;
-    
-    // Calculate the cursor's x offset within the content of the buffer
-    for (size_t i = 0; i < buffer->point; i++) {
-        if (buffer->content[i] == '\n') {
-            lineCount++;  // Increment line count at each newline
-            cursorX = fringe + win->x - win->scroll.x;  // Reset cursor x to the start of the window on new lines, adjusted for horizontal scroll
-        } else {
-            cursorX += getCharacterWidth(buffer->font, buffer->content[i]);  // Move cursor right by character width
-        }
-    }
-    
-    // Determine cursor width, handle newline or end of buffer cases
-    float cursorWidth = (buffer->point < buffer->size && buffer->content[buffer->point] != '\n') ?
-        getCharacterWidth(buffer->font, buffer->content[buffer->point]) :
-    getCharacterWidth(buffer->font, ' ');  // Use a standard width if at the end of a line or buffer
-    
-    // Compute cursor's y position based on the number of lines, subtract from initial y and add the scroll
-    cursorY += win->scroll.y - lineCount * (buffer->font->ascent + buffer->font->descent) - (buffer->font->descent * 2);
-    
-    // Create a rectangle representing the cursor
-    Vec2f cursorPosition = {cursorX, cursorY};
-    Vec2f cursorSize = {cursorWidth, buffer->font->ascent + buffer->font->descent};
-    
-    // Determine the cursor color considering crystal_cursor_mode
-    Color cursorColor = defaultColor;
-    if (crystal_cursor_mode) {
-        for (size_t i = 0; i < buffer->syntaxArray.used; i++) {
-            if (buffer->point >= buffer->syntaxArray.items[i].start && buffer->point < buffer->syntaxArray.items[i].end) {
-                cursorColor = buffer->syntaxArray.items[i].color;
-                break;
-            }
-        }
-    }
-    
-    // Handle cursor blinking logic
-    if (blink_cursor_mode && blinkCount < blink_cursor_blinks) {
-        double currentTime = getTime();
-        if (currentTime - lastBlinkTime >= (cursorVisible ? blink_cursor_interval : blink_cursor_delay)) {
-            cursorVisible = !cursorVisible;
-            lastBlinkTime = currentTime;
-            if (cursorVisible) {
-                blinkCount++;
-            }
-        }
-        
-        if (cursorVisible) {
-            drawRectangle(cursorPosition, cursorSize, cursorColor);  // Draw the cursor if visible
-        }
-    } else {
-        drawRectangle(cursorPosition, cursorSize, cursorColor);  // Always draw cursor with syntax color if not blinking or crystal_cursor_mode is true
-    }
-}
-
-
-// TODO once we support the minibuffer as a window remove this function
-void drawMiniCursor(Buffer *buffer, Font *font, float x, float y, Color color) {
-    int lineCount = 0;
-    float cursorX = x;
-    
-    for (size_t i = 0; i < buffer->point; i++) {
-        if (buffer->content[i] == '\n') {
-            lineCount++;
-            cursorX = x;
-        } else {
-            cursorX += getCharacterWidth(font, buffer->content[i]);
-        }
-    }
-    
-    float cursorWidth = buffer->point < buffer->size && buffer->content[buffer->point] != '\n'
-        ? getCharacterWidth(font, buffer->content[buffer->point])
-        : getCharacterWidth(font, ' ');
-    
-    Vec2f cursorPosition = {cursorX, y - lineCount * (font->ascent + font->descent) - font->descent};
-    Vec2f cursorSize = {cursorWidth, font->ascent + font->descent};
-    
-    if (blink_cursor_mode && blinkCount < blink_cursor_blinks) {
-        double currentTime = getTime();
-        if (currentTime - lastBlinkTime >= (cursorVisible ? blink_cursor_interval : blink_cursor_delay)) {
-            cursorVisible = !cursorVisible;
-            lastBlinkTime = currentTime;
-            if (cursorVisible) {
-                blinkCount++;  // Increment only on visibility toggle to visible
-            }
-        }
-        
-        if (cursorVisible) {
-            drawRectangle(cursorPosition, cursorSize, color);
-        }
-    } else {
-        drawRectangle(cursorPosition, cursorSize, color);  // Always draw cursor if not blinking
-    }
-}
 
 
 static void inner_main(void *closure, int argc, char **argv) {
@@ -245,10 +109,10 @@ static void inner_main(void *closure, int argc, char **argv) {
     registerScrollCallback(scrollCallback);
     registerCursorPosCallback(cursorPosCallback);
     registerMouseButtonCallback(mouseButtonCallback);
-    
-    font = loadFont(fontPath, fontsize, "name");
 
+    font = loadFont(fontPath, fontsize, "name");
     initThemes();
+    load_theme(first_theme_name);
     initGlobalParser();
     initKillRing(&kr, kill_ring_max);
     initBufferManager(&bm);
@@ -258,6 +122,7 @@ static void inner_main(void *closure, int argc, char **argv) {
     newBuffer(&bm, &wm, "message", "~/", fontPath, sw, sh);
     newBuffer(&bm, &wm, "arg", "~/", fontPath, sw, sh);
     newBuffer(&bm, &wm, "*scratch*", "~/", fontPath, sw, sh);
+
 
     if (argc > 1) {
         const char *filePath = argv[1];
@@ -274,12 +139,14 @@ static void inner_main(void *closure, int argc, char **argv) {
     }
 
 
+    if (!fringe_mode) fringe = 0;
 
     sw = getScreenWidth();  // NOTE Currently get screen dimentions
     sh = getScreenHeight(); // only once at startup
     
     initWindowManager(&wm, &bm, font, sw, sh);
-    
+
+
     initSegments(&wm.activeWindow->modeline.segments);
     updateSegments(&wm.activeWindow->modeline, wm.activeWindow->buffer);
     /* updateWindows(&wm, font, sw, sh); // NOTE We will do it later*/
@@ -289,6 +156,8 @@ static void inner_main(void *closure, int argc, char **argv) {
     while (!windowShouldClose()) {
         sw = getScreenWidth();  // TODO Update in
         sh = getScreenHeight(); // the resize callback
+
+        updateThemeInterpolation();
         
         /* updateWindows(&wm, font, sw, sh); */ 
         /* reloadShaders(); // NOTE Reload the shaders each frame */
@@ -299,11 +168,10 @@ static void inner_main(void *closure, int argc, char **argv) {
         Window *win = wm.head;
         Window *activeWindow = wm.activeWindow;
         Buffer *currentBuffer = activeWindow->buffer;
-        
+
+
         beginDrawing();
         clearBackground(CT.bg);
-        
-        drawFPS(font, 400.0, 400.0, RED);
         
         float promptWidth = 0;
         for (size_t i = 0; i < strlen(prompt->content); i++) {
@@ -335,20 +203,21 @@ static void inner_main(void *closure, int argc, char **argv) {
         }
         
         drawModelines(&wm, font, minibufferHeight, CT.modeline);
-        
+
         for (; win != NULL; win = win->next) {
             Buffer *buffer = win->buffer;
             bool bottom = isBottomWindow(&wm, win);
-            float scissorStartY =
-                win->y - win->height + minibufferHeight + win->modeline.height;
+            float scissorStartY = win->y - win->height + minibufferHeight + win->modeline.height;
             float scissorHeight = sh - scissorStartY;
             if (bottom) {
                 scissorHeight += minibufferHeight;
             }
-            
+
             beginScissorMode((Vec2f){win->x, scissorStartY},
                              (Vec2f){win->width, scissorHeight});
-            
+
+            draw_scopes(&wm, buffer->font);
+
             if (win == wm.activeWindow) {
                 highlightHexColors(&wm, buffer->font, buffer, rainbow_mode);
                 useShader("simple");
@@ -357,10 +226,19 @@ static void inner_main(void *closure, int argc, char **argv) {
                 if (isearch.searching)
                     highlightAllOccurrences(&wm, minibuffer->content, font,
                                             CT.isearch_highlight);
-                
+
+
                 // Draw cursor after all "overlays"
                 if (!isCurrentBuffer(&bm, "minibuffer")) {
-                    drawCursor(currentBuffer, wm.activeWindow, CT.cursor);
+                    if (buffer->region.active) {
+                        if (hide_region_mode) {
+                            drawCursor(currentBuffer, wm.activeWindow, CT.null);
+                        } else {
+                            drawCursor(currentBuffer, wm.activeWindow, CT.cursor);
+                        }
+                    } else {
+                        drawCursor(currentBuffer, wm.activeWindow, CT.cursor);
+                    }
                 }
                 
                 flush();
@@ -368,9 +246,11 @@ static void inner_main(void *closure, int argc, char **argv) {
                 if (isCurrentBuffer(&bm, "minibuffer")) {
                     drawBuffer(win, buffer, cursorVisible, false); // Hide cursor
                 } else {
-                    drawBuffer(win, buffer, cursorVisible, true);
-                    if (minimap_mode) 
-                        drawMinimap(&wm, win, buffer);
+                  drawBuffer(win, buffer, cursorVisible, true);
+                  if (minimap_mode) {
+                    drawMinimap(&wm, win, buffer);
+                    }
+                    
                 }
                 
             } else {
@@ -412,8 +292,9 @@ static void inner_main(void *closure, int argc, char **argv) {
         drawTextEx(minibuffer->font, message->content, promptWidth + lastLineWidth,
                    lastLineY, 1.0, 1.0, CT.message, CT.bg, message->point,
                    cursorVisible, "text");
-        
-        
+
+        drawFPS(font, 400.0, 400.0, RED);
+
         endDrawing();
     }
     
@@ -869,16 +750,14 @@ void keyCallback(int key, int action, int mods) {
             
             case KEY_EQUAL:
             if (altPressed) {
-                nextTheme();
-                updateAllBuffersSyntaxHighlighting(&bm);
+                switchToNextTheme();
             } else if (ctrlPressed) {
                 text_scale_increase(&bm, fontPath, &wm, sh, arg);                    
             }
             break;
             case KEY_MINUS:
             if (altPressed) {
-                previousTheme();
-                updateAllBuffersSyntaxHighlighting(&bm);
+                switchToPreviousTheme();
             } else if (ctrlPressed) {
                 text_scale_decrease(&bm, fontPath, &wm, sh, arg);                    
             }
@@ -948,6 +827,8 @@ void keyCallback(int key, int action, int mods) {
         
         updateScroll(win); // handle the scroll after all possbile cursor movements
     }
+
+    fill_scopes(buffer, &buffer->scopes);
     
     updateRegion(buffer, buffer->point);
     updateSegments(&win->modeline, win->buffer);
@@ -957,7 +838,7 @@ void keyCallback(int key, int action, int mods) {
         lastBlinkTime = getTime();
         cursorVisible = true;
     }
-    
+
     // Update syntax for all key presses
     if (!isCurrentBuffer(&bm, "minibuffer") && buffer->tree != NULL) {
         TSInputEdit edit = createInputEdit(buffer, 0, buffer->size, buffer->size);
@@ -1082,105 +963,6 @@ void textCallback(unsigned int codepoint) {
     }
 }
 
-/* void textCallback(unsigned int codepoint) { */
-/*     if (eatchar) return; */
-
-/*     // TODO it shoudl take all those variables as parameters */
-/*     Window *win = wm.activeWindow; */
-/*     Buffer *buffer = win->buffer; */
-/*     Buffer *prompt = getBuffer(&bm, "prompt"); */
-/*     Buffer *minibuffer = getBuffer(&bm, "minibuffer"); */
-
-/*     Buffer *argBuffer = getBuffer(&bm, "arg"); */
-/*     int arg = getGlobalArg(argBuffer); */
-
-/*     if (buffer->region.active && codepoint == 'e') { */
-/*         eval_region(&bm); */
-/*         buffer->region.active = false; */
-/*         return; */
-/*     } */
-
-
-/*     ctrl_x_pressed = false; */
-
-/*     if (buffer != NULL) { */
-/*         if (!isearch.searching) { */
-/*             buffer->region.active = false; */
-/*         } */
-
-/*         if (isearch.searching) { */
-/*             if (isprint(codepoint)) { */
-/*                 insertChar(minibuffer, (char)codepoint); */
-/*                 if (strcmp(prompt->content, "I-search backward: ") == 0) { */
-/*                     isearch_backward(buffer, minibuffer, false);  // Continue search backward */
-/*                 } else { */
-/*                     isearch_forward(buffer, &bm, minibuffer, false); */
-/*                 } */
-
-/*             } */
-/*         } else { */
-/*             // Normal behavior when not in search mode */
-/*             size_t old_size = buffer->size; */
-/*             size_t insert_position = buffer->point; */
-
-
-/*             if ((codepoint == ')' || codepoint == ']' || codepoint == '}' || */
-/*                  codepoint == '\'' || codepoint == '\"') && */
-/*                 buffer->point < buffer->size && buffer->content[buffer->point] == codepoint) { */
-/*                 right_char(buffer, false, &bm, arg); */
-/*             } else { */
-
-/*                 if (isCurrentBuffer(&bm, "minibuffer")) { */
-/*                     insertChar(minibuffer, codepoint); */
-/*                 } else { */
-/*                     insertChar(buffer, codepoint); */
-/*                     // Update syntax incrementally */
-/*                     size_t inserted_length = buffer->size - old_size; */
-/*                     TSInputEdit edit = createInputEdit(buffer, insert_position, insert_position, insert_position + inserted_length); */
-/*                     updateSyntaxIncremental(buffer, &edit); */
-/*                 } */
-
-
-/*                 if (electric_pair_mode) { */
-/*                     switch (codepoint) { */
-/*                     case '(': */
-/*                         insertChar(buffer, ')'); */
-/*                         break; */
-/*                     case '[': */
-/*                         insertChar(buffer, ']'); */
-/*                         break; */
-/*                     case '{': */
-/*                         insertChar(buffer, '}'); */
-/*                         break; */
-/*                     case '\'': */
-/*                         if (!(buffer->point > 1 && buffer->content[buffer->point - 2] == '\'')) { */
-/*                             insertChar(buffer, '\''); */
-/*                         } */
-/*                         break; */
-/*                     case '\"': */
-/*                         if (!(buffer->point > 1 && buffer->content[buffer->point - 2] == '\"')) { */
-/*                             insertChar(buffer, '\"'); */
-/*                         } */
-/*                         break; */
-/*                     } */
-
-/*                     // Move the cursor back to between the pair of characters */
-/*                     if (codepoint == '(' || codepoint == '[' || codepoint == '{' || */
-/*                         codepoint == '\'' || codepoint == '\"') { */
-/*                         buffer->point--; */
-/*                     } */
-/*                 } */
-/*                 if (electric_indent_mode && (codepoint == '}' || codepoint == ';')) { */
-/*                     indent(buffer, indentation, &bm, arg); */
-/*                 } */
-/*             } */
-/*         } */
-
-/*         updateScroll(win); */
-/*     } */
-/* } */
-
-
 
 // TODO use show_paren_delay
 // TODO highlifght the 2 characters as well
@@ -1253,55 +1035,70 @@ void highlightAllOccurrences(WindowManager *wm, const char *searchText, Font *fo
     }
 }
 
+void drawHighlight(WindowManager *wm, Font *font, size_t startPos,
+                   size_t length, Color highlightColor) {
+    if (!wm || !wm->activeWindow || !wm->activeWindow->buffer)
+        return;
 
-
-void drawHighlight(WindowManager *wm, Font *font, size_t startPos, size_t length, Color highlightColor) {
-    if (!wm || !wm->activeWindow || !wm->activeWindow->buffer) return;
-    
     Buffer *buffer = wm->activeWindow->buffer;
     Window *activeWindow = wm->activeWindow;
-    
-    float x = fringe - activeWindow->x - activeWindow->scroll.x; // Adjust x by horizontal scroll
+
+    float x = fringe + activeWindow->x -
+        activeWindow->scroll.x; // Adjust x by horizontal scroll
     float y = activeWindow->y + font->ascent - font->descent * 2;
     int lineCount = 0;
-    
+
     // Calculate initial x offset and y position up to startPos
     for (size_t i = 0; i < startPos && i < buffer->size; i++) {
         if (buffer->content[i] == '\n') {
             lineCount++;
-            x = fringe - activeWindow->x - activeWindow->scroll.x; // Reset x to the start of the line at each new line, adjust for scroll
+            x = fringe + activeWindow->x -
+                activeWindow->scroll.x; // Reset x to the start of the line at each
+            // new line, adjust for scroll
             y -= (font->ascent + font->descent); // Move up for each new line
         } else {
             x += getCharacterWidth(font, buffer->content[i]); // Accumulate width
         }
     }
-    
+
     // Calculate the width of the highlighted area
     float highlightWidth = 0;
     for (size_t i = startPos; i < startPos + length && i < buffer->size; i++) {
-        if (buffer->content[i] == '\n') break; // Stop if newline is encountered within highlight
+        if (buffer->content[i] == '\n')
+            break; // Stop if newline is encountered within highlight
         highlightWidth += getCharacterWidth(font, buffer->content[i]);
     }
-    
+
     // Adjust y to be the lower left corner of the line to draw the highlight
     y -= font->ascent;
-    
+
     // Adjust y for vertical scrolling
     y += activeWindow->scroll.y;
-    
+
+    // Handle minimap mode and padding
+    if (minimap_mode) {
+        float minimap_padding = minimap_padding_mode ? minimap_left_padding : 0;
+        float maxWidth = activeWindow->width - minimap_width -
+            (x - (fringe + activeWindow->x - activeWindow->scroll.x)) -
+            fringe - minimap_padding;
+        if (highlightWidth > maxWidth)
+            highlightWidth = maxWidth;
+    }
+
     // Define the position and size of the highlight rectangle
     Vec2f position = {x, y};
     Vec2f size = {highlightWidth, font->ascent + font->descent};
-    
+
     // Draw the highlight rectangle
     drawRectangle(position, size, highlightColor);
 }
 
-
 // TODO Optimize this, we shoudl call drawRectangle only 2 times
 // once for all the lines fully selected, and another for the line where the cursor is
 // not one rectangle per line.
+
 void drawRegion(WindowManager *wm, Font *font, Color regionColor) {
+    if (hide_region_mode) return;
     Buffer *buffer = wm->activeWindow->buffer;
     Window *activeWindow = wm->activeWindow;
     
@@ -1316,7 +1113,7 @@ void drawRegion(WindowManager *wm, Font *font, Color regionColor) {
     }
     
     size_t currentLineStart = 0;
-    float x = activeWindow->x - activeWindow->scroll.x;
+    float x = fringe + activeWindow->x - activeWindow->scroll.x;
     float y = activeWindow->y + font->ascent - font->descent * 2 + activeWindow->scroll.y;
     float initialY = y;
     
@@ -1344,6 +1141,11 @@ void drawRegion(WindowManager *wm, Font *font, Color regionColor) {
                         // Extend highlight to the end of the window if the line is completely selected and ends with a newline
                         highlightWidth = activeWindow->width - (lineX - x);
                     }
+                    if (minimap_mode) {
+                        float minimap_padding = minimap_padding_mode ? minimap_left_padding : 0;
+                        float maxWidth = activeWindow->width - minimap_width - (lineX - x) - fringe - minimap_padding;
+                        if (highlightWidth > maxWidth) highlightWidth = maxWidth;
+                    }
                     
                     Vec2f position = {lineX, y - font->ascent};
                     Vec2f size = {highlightWidth, font->ascent + font->descent};
@@ -1355,7 +1157,6 @@ void drawRegion(WindowManager *wm, Font *font, Color regionColor) {
         }
     }
 }
-
 
 void drawModelines(WindowManager *wm, Font *font, float minibufferHeight, Color color) {
     for (Window *win = wm->head; win != NULL; win = win->next) {
@@ -1401,20 +1202,19 @@ void drawModelines(WindowManager *wm, Font *font, float minibufferHeight, Color 
     }
 }
 
-
 void drawBuffer(Window *win, Buffer *buffer, bool cursorVisible, bool colorPoint) {
     Font *font = buffer->font;
     const char *text = buffer->content;
 
     useShader("simple");
-    Vec2f fringePosition = {win->x, win->y - win->height + font->ascent -
-                            font->descent};
+    Vec2f fringePosition = {win->x, win->y - win->height + font->ascent - font->descent};
     Vec2f fringeSize = {fringe, win->height};
     if (color_fringe_mode) {
         drawRectangle(fringePosition, fringeSize, CT.null);
     } else {
         drawRectangle(fringePosition, fringeSize, CT.bg);
     }
+
     flush();
 
     // Start from the adjusted x and y based on scroll position
@@ -1442,11 +1242,12 @@ void drawBuffer(Window *win, Buffer *buffer, bool cursorVisible, bool colorPoint
             }
         } else if (index < buffer->syntaxArray.used && charIndex >= buffer->syntaxArray.items[index].start &&
                    charIndex < buffer->syntaxArray.items[index].end) {
-            currentColor = buffer->syntaxArray.items[index].color;  // Apply syntax coloring
+            currentColor = *buffer->syntaxArray.items[index] .color; // Apply syntax coloring
         } else {
             currentColor = CT.text;  // Default text color
         }
-        
+
+
         drawChar(font, text[charIndex], x, y, 1.0, 1.0, currentColor);  // Draw each character
         
         x += getCharacterWidth(font, text[charIndex]);  // Advance x position by character width
@@ -1512,8 +1313,7 @@ int getGlobalArg(Buffer *argBuffer) {
     }
 }
 
-#include <math.h>
-
+#include <math.h> // Scrolling is hard
 
 void updateScroll(Window *window) {
     Buffer *buffer = window->buffer;
@@ -1551,7 +1351,7 @@ void updateScroll(Window *window) {
     
     // Horizontal scrolling logic
     if (cursorX < viewLeft || cursorRightEdge > viewRight) {
-        if (auto_scale_mode && buffer->scale.index > 8) {
+        if (auto_text_scale_mode && buffer->scale.index > 8) {
             text_scale_decrease(&bm, fontPath, &wm, sh, 1);
         } else {
             float newScrollX = cursorX - window->width / 2;
@@ -1565,79 +1365,12 @@ void updateScroll(Window *window) {
 // NOTE This is just an approximation it could be a neat way to render diff
 // files or commits
 
+// TODO hl-scope-mode
 // TODO it must be much more performant chache it into textures and when we call
 // undo check if we have a mimimap texture for that state
-
-void drawMinimapCursor(WindowManager *wm, Window *mainWindow, Buffer *buffer) {
-  // TODO
-}
-
-void drawMinimapView(WindowManager *wm, Window *mainWindow, Buffer *buffer) {
-  // TODO
-}
-
-void drawMinimapRegion(WindowManager *wm, Window *mainWindow, Buffer *buffer) {
-  // TODO
-}
-
-// TODO hl-scope-mode
-
 // TODO Resize windows with keybinds and draggin the fringe.
 // Option to change color on hover and option to lerp the color change
 
-// ALMOST BETTER
-void drawMinimap(WindowManager *wm, Window *mainWindow, Buffer *buffer) {
-    float minimapWidth = 110;
-    float minimapX = mainWindow->x + mainWindow->width - minimapWidth;  // Positioned on the right edge of the main window
-    
-    float lineHeight = 2.0;
-    float scale = 1.0;
-    
-    useShader("simple");
-    
-    drawMinimapCursor(wm, mainWindow, buffer);
-    float startY = mainWindow->y;
-    size_t lineStart = 0;
-    size_t wordStart = 0;
-    int currentLine = 0;
-    
-    // Calculate the maximum width of text that can fit in the minimap
-    float maxTextWidth = minimapWidth / scale;
-    
-    // Iterate through each character in the buffer to draw syntax highlights
-    for (size_t i = 0; i <= buffer->size; i++) {
-        // Check for word end or line end
-        if (buffer->content[i] == ' ' || buffer->content[i] == '\n' || i == buffer->size) {
-            if (i > wordStart) {  // There's a word to draw
-                for (size_t j = 0; j < buffer->syntaxArray.used; j++) {
-                    Syntax syntax = buffer->syntaxArray.items[j];
-                    if (syntax.start >= wordStart && syntax.start < i) {
-                        // Calculate the start position relative to the current line
-                        float relativeStart = syntax.start - lineStart;
-                        // Ensure the syntax highlight doesn't extend beyond the minimap width
-                        if (relativeStart < maxTextWidth) {
-                            float syntaxStartX = minimapX + relativeStart * scale;
-                            float syntaxWidth = fmin((syntax.end < i ? syntax.end : i) - syntax.start, maxTextWidth - relativeStart) * scale;
-                            
-                            drawRectangle((Vec2f){syntaxStartX, startY}, (Vec2f){syntaxWidth, lineHeight}, syntax.color);
-                        }
-                    }
-                }
-            }
-            wordStart = i + 1;  // Update start of next word
-        }
-        
-        // Check for line end
-        if (buffer->content[i] == '\n' || i == buffer->size) {
-            startY -= (lineHeight + 2);  // Move up for the next line and add 2 pixel spacing (doubled from 1)
-            lineStart = i + 1;  // Update the start of the next line
-            wordStart = lineStart;  // Reset word start to the beginning of the next line
-            currentLine++;
-        }
-    }
-    
-    flush();
-}
 
 
 void scrollCallback(double xOffset, double yOffset) {
@@ -1734,6 +1467,9 @@ void scrollCallback(double xOffset, double yOffset) {
 
 void updateCursorPosition(Window *win, size_t lineStart, size_t lineEnd) {
     float cursorX = win->x;
+    if (fringe_mode) cursorX += fringe;
+
+    
     for (size_t j = lineStart; j < lineEnd; j++) {
         float charWidth = getCharacterWidth(win->buffer->font, win->buffer->content[j]);
         cursorX += charWidth;

@@ -9,7 +9,8 @@
 typedef struct {
     size_t start;
     size_t end;
-    Color color;
+    /* Color color; */
+    Color *color;
 } Syntax;
 
 // TODO keep syntaxes in a tree
@@ -33,6 +34,18 @@ typedef struct {
 } Region;
 
 typedef struct {
+    size_t start;
+    size_t end;
+    int level;
+} Scope;
+
+typedef struct {
+    Scope *items;
+    size_t count;
+    size_t capacity;
+} Scopes;
+
+typedef struct {
     char *content;   // Text content
     size_t size;     // Current size of content
     size_t capacity; // Allocated capacity
@@ -47,6 +60,7 @@ typedef struct {
     SyntaxArray syntaxArray; // Array of syntax highlighting ranges
     char *major_mode;
     char* fontPath;
+    Scopes scopes;
 } Buffer;
 
 typedef struct {
@@ -150,5 +164,8 @@ void updateSegments(Modeline *modeline, Buffer *buffer);
 
 // UTILITY FUNCTIONS
 int getLineNumber(Buffer *buffer);
+
+
+
 
 #endif

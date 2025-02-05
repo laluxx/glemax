@@ -199,12 +199,12 @@ SCM scm_message(SCM fmt, SCM rest) {
 
 
 SCM scm_next_theme(void) {
-    nextTheme();
+    switchToNextTheme();
     return SCM_BOOL_T;
 }
 
 SCM scm_previous_theme(void) {
-    previousTheme();
+    switchToPreviousTheme();
     return SCM_BOOL_T;
 }
 

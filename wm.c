@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+// TODO Tags M-0..9
+
 void initWindowManager(WindowManager *wm, BufferManager *bm, Font *font, int sw, int sh) {
     wm->head = malloc(sizeof(Window));
     wm->head->x = 0;

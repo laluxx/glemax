@@ -19,7 +19,8 @@ void freeSyntaxArray(SyntaxArray *array);
 
 void displaySyntax(Buffer *buffer);
 /* Color getNodeColor(const char* nodeType); */
-Color getNodeColor(TSNode node);
+/* Color getNodeColor(TSNode node); */
+Color *getNodeColor(TSNode node);
 void printSyntaxTree(TSNode node, const char *source, int depth);
 void initSyntaxArray(SyntaxArray *array, size_t initialSize);
 void processNode(TSNode node, const char *source, SyntaxArray *array);

@@ -47,106 +47,176 @@ bool isHexColor(const char *text) {
 
 // TODO Reorder them based on whats most found in a typucal c buffer
 // for a free performance boost
-Color getNodeColor(TSNode node) {
+Color *getNodeColor(TSNode node) {
     if (printTSNodes) {
-        printf(ts_node_string(node));
+        printf("%s", ts_node_string(node));
         printf("\n\n\n");
     }
 
     const char *nodeType = ts_node_type(node);
 
-    if (strcmp(nodeType, "return") == 0
-        || strcmp(nodeType, "if") == 0
-        || strcmp(nodeType, "while") == 0
-        || strcmp(nodeType, "do") == 0
-        || strcmp(nodeType, "switch") == 0
-        || strcmp(nodeType, "break") == 0
-        || strcmp(nodeType, "continue") == 0
-        || strcmp(nodeType, "goto") == 0
-        || strcmp(nodeType, "typedef") == 0
-        || strcmp(nodeType, "extern") == 0
-        || strcmp(nodeType, "else") == 0
-        || strcmp(nodeType, "struct") == 0
-        || strcmp(nodeType, "for") == 0
-        || strcmp(nodeType, "const") == 0
-        ){
-        return CT.keyword;
-    }
-    else if (strcmp(nodeType, "NULL") == 0
-             || (strcmp(nodeType, "true") == 0)
-             || (strcmp(nodeType, "false") == 0)
-             ){
-        return CT.null;
-    }
-    else if (strcmp(nodeType, "!") == 0) {
-        return CT.negation;
-    }
-    else if (strcmp(nodeType, "type_identifier") == 0
-             || strcmp(nodeType, "function_definition") == 0
-             || strcmp(nodeType, "sized_type_specifier") == 0
-             || strcmp(nodeType, "primitive_type") == 0
-             || strcmp(nodeType, "primitive_type") == 0
-             ){
-        return CT.type;
-    }
-    else if (strcmp(nodeType, "string_literal") == 0
-             || strcmp(nodeType, "char_literal") == 0
-             || strcmp(nodeType, "string_content") == 0
-             || strcmp(nodeType, "system_lib_string") == 0
-             || strcmp(nodeType, "\"") == 0
-             ){
-        return CT.string;
-    }
-    else if (strcmp(nodeType, "number_literal") == 0) {
-        return CT.number;
-    }
-    else if (strcmp(nodeType, "function_definition") == 0
-             || strcmp(nodeType, "function_declaration") == 0
-             ){
-        return CT.function;
-    }
-    else if (strcmp(nodeType, "preproc_directive") == 0
-             || strcmp(nodeType, "preproc_arg") == 0
-             || strcmp(nodeType, "preproc_def") == 0
-             || strcmp(nodeType, "#define") == 0
-             || strcmp(nodeType, "#include") == 0
-             ){
-        return CT.preprocessor;
-    }
-    else if (strcmp(nodeType, "assignment_expression") == 0
-             || strcmp(nodeType, "arithmetic_expression") == 0
-             || strcmp(nodeType, "unary_expression") == 0
-             || strcmp(nodeType, "update_expression") == 0
-             ){
-        return CT.cursor;
-    }
-    else if (strcmp(nodeType, "identifier") == 0) {
+    if (strcmp(nodeType, "return") == 0 || strcmp(nodeType, "if") == 0 ||
+        strcmp(nodeType, "while") == 0 || strcmp(nodeType, "do") == 0 ||
+        strcmp(nodeType, "switch") == 0 || strcmp(nodeType, "break") == 0 ||
+        strcmp(nodeType, "continue") == 0 || strcmp(nodeType, "goto") == 0 ||
+        strcmp(nodeType, "typedef") == 0 || strcmp(nodeType, "extern") == 0 ||
+        strcmp(nodeType, "else") == 0 || strcmp(nodeType, "struct") == 0 ||
+        strcmp(nodeType, "for") == 0 || strcmp(nodeType, "const") == 0) {
+        return &CT.keyword;
+    } else if (strcmp(nodeType, "NULL") == 0 || strcmp(nodeType, "true") == 0 ||
+               strcmp(nodeType, "false") == 0) {
+        return &CT.null;
+    } else if (strcmp(nodeType, "!") == 0) {
+        return &CT.negation;
+    } else if (strcmp(nodeType, "type_identifier") == 0 ||
+               strcmp(nodeType, "function_definition") == 0 ||
+               strcmp(nodeType, "sized_type_specifier") == 0 ||
+               strcmp(nodeType, "primitive_type") == 0 ||
+               strcmp(nodeType, "primitive_type") == 0) {
+        return &CT.type;
+    } else if (strcmp(nodeType, "string_literal") == 0 ||
+               strcmp(nodeType, "char_literal") == 0 ||
+               strcmp(nodeType, "string_content") == 0 ||
+               strcmp(nodeType, "system_lib_string") == 0 ||
+               strcmp(nodeType, "\"") == 0) {
+        return &CT.string;
+    } else if (strcmp(nodeType, "number_literal") == 0) {
+        return &CT.number;
+    } else if (strcmp(nodeType, "function_definition") == 0 ||
+               strcmp(nodeType, "function_declaration") == 0) {
+        return &CT.function;
+    } else if (strcmp(nodeType, "preproc_directive") == 0 ||
+               strcmp(nodeType, "preproc_arg") == 0 ||
+               strcmp(nodeType, "preproc_def") == 0 ||
+               strcmp(nodeType, "#define") == 0 ||
+               strcmp(nodeType, "#include") == 0) {
+        return &CT.preprocessor;
+    } else if (strcmp(nodeType, "assignment_expression") == 0 ||
+               strcmp(nodeType, "arithmetic_expression") == 0 ||
+               strcmp(nodeType, "unary_expression") == 0 ||
+               strcmp(nodeType, "update_expression") == 0) {
+        return &CT.cursor;
+    } else if (strcmp(nodeType, "identifier") == 0) {
         TSNode parent = ts_node_parent(node);
         const char *parentType = ts_node_type(parent);
 
-        if (strcmp(parentType, "function_declarator") == 0
-            || strcmp(parentType, "function_definition") == 0
-            ){
-            return CT.function;
+        if (strcmp(parentType, "function_declarator") == 0 ||
+            strcmp(parentType, "function_definition") == 0) {
+            return &CT.function;
+        } else if (strcmp(parentType, "declaration") == 0 ||
+                   strcmp(parentType, "assignment_expression") == 0 ||
+                   strcmp(parentType, "init_declarator") == 0) {
+            return &CT.variable;
+        } else {
+            return &CT.text;
         }
-        else if (strcmp(parentType, "declaration") == 0
-                 || strcmp(parentType, "assignment_expression") == 0
-                 || strcmp(parentType, "init_declarator") == 0) {
-            return CT.variable;
-        }
-        
-        else {
-            return CT.text;
-        }
-    }
-
-    else if (strcmp(nodeType, "comment") == 0) {
-        return CT.comment;
-    }
-    else {
-        return CT.text;
+    } else if (strcmp(nodeType, "comment") == 0) {
+        return &CT.comment;
+    } else {
+        return &CT.text;
     }
 }
+
+/* Color getNodeColor(TSNode node) { */
+/*     if (printTSNodes) { */
+/*         printf(ts_node_string(node)); */
+/*         printf("\n\n\n"); */
+/*     } */
+
+/*     const char *nodeType = ts_node_type(node); */
+
+/*     if (strcmp(nodeType, "return") == 0 */
+/*         || strcmp(nodeType, "if") == 0 */
+/*         || strcmp(nodeType, "while") == 0 */
+/*         || strcmp(nodeType, "do") == 0 */
+/*         || strcmp(nodeType, "switch") == 0 */
+/*         || strcmp(nodeType, "break") == 0 */
+/*         || strcmp(nodeType, "continue") == 0 */
+/*         || strcmp(nodeType, "goto") == 0 */
+/*         || strcmp(nodeType, "typedef") == 0 */
+/*         || strcmp(nodeType, "extern") == 0 */
+/*         || strcmp(nodeType, "else") == 0 */
+/*         || strcmp(nodeType, "struct") == 0 */
+/*         || strcmp(nodeType, "for") == 0 */
+/*         || strcmp(nodeType, "const") == 0 */
+/*         ){ */
+/*         return CT.keyword; */
+/*     } */
+/*     else if (strcmp(nodeType, "NULL") == 0 */
+/*              || (strcmp(nodeType, "true") == 0) */
+/*              || (strcmp(nodeType, "false") == 0) */
+/*              ){ */
+/*         return CT.null; */
+/*     } */
+/*     else if (strcmp(nodeType, "!") == 0) { */
+/*         return CT.negation; */
+/*     } */
+/*     else if (strcmp(nodeType, "type_identifier") == 0 */
+/*              || strcmp(nodeType, "function_definition") == 0 */
+/*              || strcmp(nodeType, "sized_type_specifier") == 0 */
+/*              || strcmp(nodeType, "primitive_type") == 0 */
+/*              || strcmp(nodeType, "primitive_type") == 0 */
+/*              ){ */
+/*         return CT.type; */
+/*     } */
+/*     else if (strcmp(nodeType, "string_literal") == 0 */
+/*              || strcmp(nodeType, "char_literal") == 0 */
+/*              || strcmp(nodeType, "string_content") == 0 */
+/*              || strcmp(nodeType, "system_lib_string") == 0 */
+/*              || strcmp(nodeType, "\"") == 0 */
+/*              ){ */
+/*         return CT.string; */
+/*     } */
+/*     else if (strcmp(nodeType, "number_literal") == 0) { */
+/*         return CT.number; */
+/*     } */
+/*     else if (strcmp(nodeType, "function_definition") == 0 */
+/*              || strcmp(nodeType, "function_declaration") == 0 */
+/*              ){ */
+/*         return CT.function; */
+/*     } */
+/*     else if (strcmp(nodeType, "preproc_directive") == 0 */
+/*              || strcmp(nodeType, "preproc_arg") == 0 */
+/*              || strcmp(nodeType, "preproc_def") == 0 */
+/*              || strcmp(nodeType, "#define") == 0 */
+/*              || strcmp(nodeType, "#include") == 0 */
+/*              ){ */
+/*         return CT.preprocessor; */
+/*     } */
+/*     else if (strcmp(nodeType, "assignment_expression") == 0 */
+/*              || strcmp(nodeType, "arithmetic_expression") == 0 */
+/*              || strcmp(nodeType, "unary_expression") == 0 */
+/*              || strcmp(nodeType, "update_expression") == 0 */
+/*              ){ */
+/*         return CT.cursor; */
+/*     } */
+/*     else if (strcmp(nodeType, "identifier") == 0) { */
+/*         TSNode parent = ts_node_parent(node); */
+/*         const char *parentType = ts_node_type(parent); */
+
+/*         if (strcmp(parentType, "function_declarator") == 0 */
+/*             || strcmp(parentType, "function_definition") == 0 */
+/*             ){ */
+/*             return CT.function; */
+/*         } */
+/*         else if (strcmp(parentType, "declaration") == 0 */
+/*                  || strcmp(parentType, "assignment_expression") == 0 */
+/*                  || strcmp(parentType, "init_declarator") == 0) { */
+/*             return CT.variable; */
+/*         } */
+        
+/*         else { */
+/*             return CT.text; */
+/*         } */
+/*     } */
+
+/*     else if (strcmp(nodeType, "comment") == 0) { */
+/*         return CT.comment; */
+/*     } */
+/*     else { */
+/*         return CT.text; */
+/*     } */
+/* } */
 
 void insertSyntax(SyntaxArray *array, Syntax syntax) {
     if (array->used == array->size) {
@@ -157,11 +227,11 @@ void insertSyntax(SyntaxArray *array, Syntax syntax) {
 }
 
 void processNode(TSNode node, const char *source, SyntaxArray *array) {
-    if (ts_node_child_count(node) == 0) {  // Process only leaf nodes
-        const char *nodeType = ts_node_type(node);
+    if (ts_node_child_count(node) == 0) { // Process only leaf nodes
+        // No need for nodeType here unless you're debugging.
         uint32_t startByte = ts_node_start_byte(node);
         uint32_t endByte = ts_node_end_byte(node);
-        Color color = getNodeColor(node);
+        Color *color = getNodeColor(node); // getNodeColor returns a pointer
 
         Syntax syntax = {startByte, endByte, color};
         insertSyntax(array, syntax);
@@ -173,6 +243,24 @@ void processNode(TSNode node, const char *source, SyntaxArray *array) {
         }
     }
 }
+
+/* void processNode(TSNode node, const char *source, SyntaxArray *array) { */
+/*     if (ts_node_child_count(node) == 0) {  // Process only leaf nodes */
+/*         const char *nodeType = ts_node_type(node); */
+/*         uint32_t startByte = ts_node_start_byte(node); */
+/*         uint32_t endByte = ts_node_end_byte(node); */
+/*         Color color = getNodeColor(node); */
+
+/*         Syntax syntax = {startByte, endByte, color}; */
+/*         insertSyntax(array, syntax); */
+/*     } else { */
+/*         // Recursively process child nodes */
+/*         for (int i = 0; i < ts_node_child_count(node); i++) { */
+/*             TSNode child = ts_node_child(node, i); */
+/*             processNode(child, source, array); */
+/*         } */
+/*     } */
+/* } */
 
 void displaySyntax(Buffer *buffer) {
     TSNode root_node = ts_tree_root_node(buffer->tree);
@@ -322,13 +410,8 @@ void updateSyntaxIncremental(Buffer *buffer, TSInputEdit *edit) {
 
     ts_tree_edit(buffer->tree, edit);
 
-    TSTree *new_tree = ts_parser_parse_string(
-                                              parser,
-                                              buffer->tree,
-                                              buffer->content,
-                                              buffer->size
-                                              );
-
+    TSTree *new_tree = ts_parser_parse_string(parser, buffer->tree,
+                                              buffer->content, buffer->size);
     if (new_tree) {
         ts_tree_delete(buffer->tree);
         buffer->tree = new_tree;

@@ -85,8 +85,9 @@ NOTE: They are still hardcoded in the callback functions
 
 ### Extension
 - `C-j` - Eval last sexp
+- `C-v` - Eval Expression
+- `M-:` - Eval Expression
 - `R-e` - Eval region
-
 
 ### Search
 - `C-s` - Incremental search forward
@@ -98,6 +99,7 @@ NOTE: They are still hardcoded in the callback functions
 - `M-k` - Split window above
 - `M-h` - Split window left
 - `M-l` / `C-x 3` - Split window right
+- `C-x o` - Other Window
 
 ### Customization
 - `M-=` - Next theme
@@ -122,12 +124,11 @@ For the complete list of keybindings, start reading the `keyCallback()` function
 ```bash
 git clone https://github.com/laluxx/lume.git
 cd lume
-make && make install
+make && sudo make install
 ```
 
 2. Clone build and run Glemax:
 ```bash
-cd
 git clone https://github.com/laluxx/glemax.git
 cd glemax
 make && ./glemax
@@ -137,15 +138,14 @@ make && ./glemax
 - [ ] Iedit mode
 - [ ] Rainbow delimiters mode
 - [ ] Undo system
-- [ ] Fringe implementation
 - [ ] Dired and wdired
-- [ ] Proced functionality
+- [ ] Proced
 - [ ] Org-mode support
 - [ ] Runtime variable/function inspection
 - [ ] Integrated debugger
-- [ ] Eshell implementation
-- [ ] EWW browser
-- [ ] C evaluation support
+- [ ] Eshell
+- [ ] EWW
+- [ ] C evaluation
 
 ## License
 This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.

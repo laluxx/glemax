@@ -5,6 +5,9 @@
 #include <string.h>
 #include "syntax.h"
 #include "isearch.h"
+#include "globals.h"
+#include "theme.h"
+#include "draw.h"
 
 double mouseX;
 double mouseY;
@@ -36,6 +39,10 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
     // Initialize syntax tree
     buffer->tree = ts_parser_parse_string(parser, NULL, buffer->content, buffer->size);
     initSyntaxArray(&buffer->syntaxArray, 10);
+
+    buffer->scopes.items = NULL;
+    buffer->scopes.count = 0;
+    buffer->scopes.capacity = 0;
 }
 
 void newBuffer(BufferManager *manager, WindowManager *wm, const char *name,
@@ -128,6 +135,7 @@ void switchToBuffer(BufferManager *bm, const char *bufferName) {
                 bm->lastBuffer = getActiveBuffer(bm);
             }
             bm->activeIndex = i;
+            fill_scopes(bm->buffers[i], &bm->buffers[i]->scopes);
             return;
         }
     }
@@ -289,7 +297,6 @@ void setMajorMode(Buffer *buffer) {
     }
 }
 
-
 // MODELINE
 
 void addSegment(Segments *segments, const char *name, const char *content) {
@@ -359,6 +366,9 @@ int getLineNumber(Buffer *buffer) {
 
     return lineNumber;
 }
+
+
+
 
 
 
