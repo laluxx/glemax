@@ -854,27 +854,27 @@ void keyCallback(int key, int action, int mods) {
 
 void textCallback(unsigned int codepoint) {
     if (eatchar) return;
-    
+
     Window *win = wm.activeWindow;
     Buffer *buffer = win->buffer;
     Buffer *prompt = getBuffer(&bm, "prompt");
     Buffer *minibuffer = getBuffer(&bm, "minibuffer");
     Buffer *argBuffer = getBuffer(&bm, "arg");
     int arg = getGlobalArg(argBuffer);
-    
+
     if (buffer->region.active && codepoint == 'e') {
         eval_region(&bm);
         buffer->region.active = false;
         return;
     }
-    
+
     ctrl_x_pressed = false;
-    
+
     if (buffer != NULL) {
         if (!isearch.searching) {
             buffer->region.active = false;
         }
-        
+
         if (isearch.searching) {
             if (isprint(codepoint)) {
                 insertChar(minibuffer, (char)codepoint);
@@ -887,78 +887,89 @@ void textCallback(unsigned int codepoint) {
         } else {
             size_t old_size = buffer->size;
             size_t insert_position = buffer->point;
-            
-            // Special handling for '<' in #include lines
-            if (codepoint == '<') {
-                // Find start of current line
-                size_t lineStart = buffer->point;
-                while (lineStart > 0 && buffer->content[lineStart - 1] != '\n') {
-                    lineStart--;
-                }
-                
-                // Check if line starts with "#include"
-                char linePrefix[9] = {0}; // Space for "#include" + null terminator
-                size_t prefixLength = buffer->point - lineStart < 8 ? buffer->point - lineStart : 8;
-                strncpy(linePrefix, buffer->content + lineStart, prefixLength);
-                linePrefix[prefixLength] = '\0';
-                
-                if (strncmp(linePrefix, "#include", 8) == 0) {
-                    // Insert both brackets and position cursor between them
-                    insertChar(buffer, '<');
-                    insertChar(buffer, '>');
-                    buffer->point--; // Move cursor back between brackets
-                } else {
-                    // Normal character insertion
-                    insertChar(buffer, codepoint);
-                }
-            } else if ((codepoint == ')' || codepoint == ']' || codepoint == '}' ||
-                        codepoint == '\'' || codepoint == '\"') &&
-                       buffer->point < buffer->size && buffer->content[buffer->point] == codepoint) {
+            size_t original_point = buffer->point;
+
+            if ((codepoint == ')' || codepoint == ']' || codepoint == '}' ||
+                 codepoint == '>' || codepoint == '\'' || codepoint == '\"') &&
+                buffer->point < buffer->size &&
+                buffer->content[buffer->point] == codepoint) {
                 right_char(buffer, false, &bm, arg);
             } else {
                 if (isCurrentBuffer(&bm, "minibuffer")) {
                     insertChar(minibuffer, codepoint);
                 } else {
-                    insertChar(buffer, codepoint);
-                    size_t inserted_length = buffer->size - old_size;
-                    TSInputEdit edit = createInputEdit(buffer, insert_position, insert_position, insert_position + inserted_length);
-                    updateSyntaxIncremental(buffer, &edit);
-                }
-                
-                if (electric_pair_mode) {
-                    switch (codepoint) {
+                    if (electric_pair_mode) {
+                        switch (codepoint) {
                         case '(':
-                        insertChar(buffer, ')');
-                        break;
+                            insertChar(buffer, '(');
+                            insertChar(buffer, ')');
+                            buffer->point--;
+                            break;
                         case '[':
-                        insertChar(buffer, ']');
-                        break;
+                            insertChar(buffer, '[');
+                            insertChar(buffer, ']');
+                            buffer->point--;
+                            break;
                         case '{':
-                        insertChar(buffer, '}');
-                        break;
+                            insertChar(buffer, '{');
+                            insertChar(buffer, '}');
+                            buffer->point--;
+                            break;
+                        case '<':
+                            // Check for #include context
+                            size_t lineStart = buffer->point;
+                            while (lineStart > 0 && buffer->content[lineStart - 1] != '\n') {
+                                lineStart--;
+                            }
+                            if (buffer->point - lineStart >= 8 &&
+                                strncmp(buffer->content + lineStart, "#include", 8) == 0) {
+                                insertChar(buffer, '<');
+                                insertChar(buffer, '>');
+                                buffer->point--;
+                            } else {
+                                insertChar(buffer, '<');
+                            }
+                            break;
                         case '\'':
-                        if (!(buffer->point > 1 && buffer->content[buffer->point - 2] == '\'')) {
                             insertChar(buffer, '\'');
-                        }
-                        break;
+                            if (!(buffer->point > 1 &&
+                                  buffer->content[buffer->point - 2] == '\'')) {
+                                insertChar(buffer, '\'');
+                                buffer->point--;
+                            }
+                            break;
                         case '\"':
-                        if (!(buffer->point > 1 && buffer->content[buffer->point - 2] == '\"')) {
                             insertChar(buffer, '\"');
+                            if (!(buffer->point > 1 &&
+                                  buffer->content[buffer->point - 2] == '\"')) {
+                                insertChar(buffer, '\"');
+                                buffer->point--;
+                            }
+                            break;
+                        default:
+                            insertChar(buffer, codepoint);
                         }
-                        break;
+                    } else {
+                        insertChar(buffer, codepoint);
                     }
-                    
-                    if (codepoint == '(' || codepoint == '[' || codepoint == '{' ||
-                        codepoint == '\'' || codepoint == '\"') {
-                        buffer->point--;
+
+                    // Update syntax and scopes only once after insertion
+                    if (buffer->tree != NULL) {
+                        size_t inserted_length = buffer->size - old_size;
+                        TSInputEdit edit =
+                            createInputEdit(buffer, original_point, original_point,
+                                            original_point + inserted_length);
+                        updateSyntaxIncremental(buffer, &edit);
                     }
+                    fill_scopes(buffer, &buffer->scopes);
                 }
+
                 if (electric_indent_mode && (codepoint == '}' || codepoint == ';')) {
                     indent(buffer, indentation, &bm, arg);
                 }
             }
         }
-        
+
         updateScroll(win);
     }
 }
