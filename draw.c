@@ -65,9 +65,6 @@ Color getScopeColor(int level) {
     return scopeColor;
 }
 
-
-
-// CLEANING
 void draw_scopes(WindowManager *wm, Font *font) {
     if (!hl_scope_mode) return;
     
@@ -75,11 +72,13 @@ void draw_scopes(WindowManager *wm, Font *font) {
     Window *activeWindow = wm->activeWindow;
     
     if (buffer->scopes.count == 0 || buffer->size == 0) return;
-    
+
     float x = fringe + activeWindow->x - activeWindow->scroll.x;
     float y = activeWindow->y + font->ascent - font->descent * 2 + activeWindow->scroll.y;
     
     useShader("simple");
+    
+    size_t lineStart = 0;
     
     for (size_t i = 0; i <= buffer->size; i++) {
         if (i == buffer->size || buffer->content[i] == '\n') {
@@ -88,14 +87,20 @@ void draw_scopes(WindowManager *wm, Font *font) {
                 
                 if (scope.start >= buffer->size || scope.end > buffer->size) continue;
                 
-                // Check if the current line is within the scope
-                if (i > scope.start && i <= scope.end + 1) {
+                // Check if the current line intersects with the scope
+                if ((lineStart <= scope.end) && (i > scope.start)) {
                     float highlightWidth = activeWindow->width - (x - activeWindow->x);
                     
                     if (minimap_mode) {
-                        float minimap_padding = minimap_padding_mode ? minimap_left_padding : 0;
-                        float maxWidth = activeWindow->width - minimap_width - fringe - minimap_padding;
-                        if (highlightWidth > maxWidth) highlightWidth = maxWidth;
+                        float minimap_padding = minimap_padding_mode
+                            ? minimap_left_padding
+                            : 0;
+                        float maxWidth = activeWindow->width
+                            - minimap_width
+                            - fringe
+                            - minimap_padding;
+                        if (highlightWidth > maxWidth)
+                            highlightWidth = maxWidth;
                     }
                     
                     Color scopeColor = getScopeColor(scope.level);
@@ -107,11 +112,13 @@ void draw_scopes(WindowManager *wm, Font *font) {
                 }
             }
             y -= (font->ascent + font->descent);
+            lineStart = i + 1;
         }
     }
     
     flush();
 }
+
 
 
 

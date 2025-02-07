@@ -44,5 +44,5 @@ float  hl_scope_base_brightness  = 0.8f;
 float  hl_scope_brightness_step  = 0.1f;  // How muchg lighter/darker per level
 
 bool   theme_lerp_mode           = true;
-float  theme_lerp_speed          = 0.008f;
+float  theme_lerp_speed          = 0.01f;
 float  theme_lerp_threshold      = 1.0f;

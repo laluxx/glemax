@@ -22,6 +22,10 @@ Color lerpColor(Color a, Color b, float t) {
                    a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t};
 }
 
+float easeOutQuad(float t) {
+    return t * (2 - t);
+}
+
 void updateThemeInterpolation() {
     if (theme_lerp_mode && interpolationProgress < theme_lerp_threshold) {
         interpolationProgress += theme_lerp_speed;

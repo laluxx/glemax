@@ -1527,6 +1527,7 @@ void backspace(Buffer *buffer, bool electric_pair_mode) {
         if ((currentChar == '(' && nextChar == ')') ||
             (currentChar == '[' && nextChar == ']') ||
             (currentChar == '{' && nextChar == '}') ||
+            (currentChar == '<' && nextChar == '>') ||
             (currentChar == '\'' && nextChar == '\'') ||
             (currentChar == '\"' && nextChar == '\"')) {
             // Remove both characters
