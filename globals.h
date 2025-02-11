@@ -41,6 +41,11 @@ extern float  hl_scope_brightness_step;
 extern bool   theme_lerp_mode;
 extern float  theme_lerp_speed;
 extern float  theme_lerp_threshold;
+extern bool   diff_hl_mode;
+extern bool   diff_hl_bg;
+extern bool   scroll_lerp_mode;
+extern float  scroll_lerp_speed;
+
 
 
 

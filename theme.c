@@ -11,11 +11,27 @@ Theme currentTheme;
 Theme previousTheme;
 
 
+
 Color hexToColor(const char *hex) {
     int r, g, b;
     sscanf(hex, "#%02x%02x%02x", &r, &g, &b);
     return (Color){r / 255.0f, g / 255.0f, b / 255.0f, 1.0f};
 }
+
+Color blendColors(Color color1, Color color2, float alpha) {
+    Color result;
+
+    // Blend the RGB components using the alpha coefficient
+    result.r = color1.r * alpha + color2.r * (1 - alpha);
+    result.g = color1.g * alpha + color2.g * (1 - alpha);
+    result.b = color1.b * alpha + color2.b * (1 - alpha);
+
+    // Blend the alpha components (optional, depending on your use case)
+    result.a = color1.a * alpha + color2.a * (1 - alpha);
+
+    return result;
+}
+
 
 Color lerpColor(Color a, Color b, float t) {
     return (Color){a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
@@ -57,6 +73,13 @@ void updateThemeInterpolation() {
         currentTheme.comment = lerpColor(startTheme.comment, endTheme.comment, interpolationProgress);
         currentTheme.null = lerpColor(startTheme.null, endTheme.null, interpolationProgress);
         currentTheme.negation = lerpColor(startTheme.negation, endTheme.negation, interpolationProgress);
+        currentTheme.error = lerpColor(startTheme.error, endTheme.error, interpolationProgress);
+        currentTheme.success = lerpColor(startTheme.success, endTheme.success, interpolationProgress);
+        currentTheme.warning = lerpColor(startTheme.warning, endTheme.warning, interpolationProgress);
+        currentTheme.fringe = lerpColor(startTheme.fringe, endTheme.fringe, interpolationProgress);
+        currentTheme.diff_hl_change = lerpColor(startTheme.diff_hl_change, endTheme.diff_hl_change, interpolationProgress);
+        currentTheme.diff_hl_insert = lerpColor(startTheme.diff_hl_insert, endTheme.diff_hl_insert, interpolationProgress);
+        currentTheme.diff_hl_bg = lerpColor(startTheme.diff_hl_bg, endTheme.diff_hl_bg, interpolationProgress);
 
         if (interpolationProgress >= 1.0f) {
             interpolationProgress = 1.0f;
@@ -109,6 +132,7 @@ void initThemes() {
     themes[0] = (Theme){
         .name              = "dark",
         .bg                = hexToColor("#18181B"),
+        .fringe            = hexToColor("#18181B"),
         .cursor            = hexToColor("#e4e4e8"),
         .marked_cursor     = hexToColor("#e4e4e8"),
         .text              = hexToColor("#e4e4e8"),
@@ -131,10 +155,18 @@ void initThemes() {
         .comment           = hexToColor("#545c5e"),
         .null              = hexToColor("#ab98b5"),
         .negation          = hexToColor("#cd5c60"),
+        .success           = hexToColor("#6fb593"),
+        .warning           = hexToColor("#dbac66"),
+        .error             = hexToColor("#cd5c60"),
+        .diff_hl_change    = hexToColor("#bc90d4"),
+        .diff_hl_insert    = hexToColor("#35BF88"),
+        .diff_hl_bg        = hexToColor("#1d3930"),
+        .diff_hl_change_bg = hexToColor("#383040"),
     };
     themes[1] = (Theme){
         .name              = "Gum",
         .bg                = hexToColor("#14171E"),
+        .fringe            = hexToColor("#14171E"),
         .cursor            = hexToColor("#D6A0D1"),
         .marked_cursor     = hexToColor("#9587DD"),
         .text              = hexToColor("#D4D4D6"),
@@ -157,10 +189,18 @@ void initThemes() {
         .comment           = hexToColor("#454459"),
         .null              = hexToColor("#41b0f3"),
         .negation          = hexToColor("#e55c7a"),
+        .success           = hexToColor("#35BF88"),
+        .warning           = hexToColor("#dbac66"),
+        .error             = hexToColor("#e55c7a"),
+        .diff_hl_change    = hexToColor("#f5c791"),
+        .diff_hl_insert    = hexToColor("#49bdb0"),
+        .diff_hl_bg        = hexToColor("#1e383b"),
+        .diff_hl_change_bg = hexToColor("#413a34"),
     };
     themes[2] = (Theme){
         .name              = "ocean",
         .bg                = hexToColor("#1A1A25"),
+        .fringe            = hexToColor("#1A1A25"),
         .cursor            = hexToColor("#F2F2F2"),
         .marked_cursor     = hexToColor("#F2F2F2"),
         .text              = hexToColor("#E6E6E8"),
@@ -183,10 +223,18 @@ void initThemes() {
         .comment           = hexToColor("#545c5e"),
         .null              = hexToColor("#cea2ca"),
         .negation          = hexToColor("#e84c58"),
+        .success           = hexToColor("#65E6A7"),
+        .warning           = hexToColor("#dbac66"),
+        .error             = hexToColor("#e84c58"),
+        .diff_hl_change    = hexToColor("#dbac66"),
+        .diff_hl_insert    = hexToColor("#35BF88"),
+        .diff_hl_bg        = hexToColor("#1f3b38"),
+        .diff_hl_change_bg = hexToColor("#403732"),
     };
     themes[3] = (Theme){
         .name              = "temple",
         .bg                = hexToColor("#2B2B2F"),
+        .fringe            = hexToColor("#2B2B2F"),
         .cursor            = hexToColor("#EEDCC1"),
         .marked_cursor     = hexToColor("#EEDCC1"),
         .text              = hexToColor("#EEDCC1"),
@@ -209,11 +257,18 @@ void initThemes() {
         .comment           = hexToColor("#697375"),
         .null              = hexToColor("#4FA8A3"),
         .negation          = hexToColor("#e84c58"),
-
+        .success           = hexToColor("#47ba99"),
+        .warning           = hexToColor("#f3c91f"),
+        .error             = hexToColor("#e84c58"),
+        .diff_hl_change    = hexToColor("#D7936D"),
+        .diff_hl_insert    = hexToColor("#4FA8A3"),
+        .diff_hl_bg        = hexToColor("#324446"),
+        .diff_hl_change_bg = hexToColor("#4d3f3b"),
     };
     themes[4] = (Theme){
         .name              = "dark+",
         .bg                = hexToColor("#1e1e1e"),
+        .fringe            = hexToColor("#1e1e1e"),
         .cursor            = hexToColor("#237AD3"),
         .marked_cursor     = hexToColor("#237AD3"),
         .text              = hexToColor("#d4d4d4"),
@@ -236,10 +291,18 @@ void initThemes() {
         .comment           = hexToColor("#579C4C"),
         .null              = hexToColor("#339CDB"),
         .negation          = hexToColor("#D16969"),
+        .success           = hexToColor("#579C4C"),
+        .warning           = hexToColor("#D7BA7D"),
+        .error             = hexToColor("#D16969"),
+        .diff_hl_change    = hexToColor("#339CDB"),
+        .diff_hl_insert    = hexToColor("#579C4C"),
+        .diff_hl_bg        = hexToColor("#293727"),
+        .diff_hl_change_bg = hexToColor("#223743"),
     };
     themes[5] = (Theme){
         .name              = "doom-one",
         .bg                = hexToColor("#282C34"),
+        .fringe            = hexToColor("#282C34"),
         .cursor            = hexToColor("#51AFEF"),
         .marked_cursor     = hexToColor("#51AFEF"),
         .text              = hexToColor("#BBC2CF"),
@@ -262,10 +325,18 @@ void initThemes() {
         .comment           = hexToColor("#5B6268"),
         .null              = hexToColor("#a9a1e1"),
         .negation          = hexToColor("#ff6c6b"),
+        .success           = hexToColor("#98be65"),
+        .warning           = hexToColor("#ECBE7B"),
+        .error             = hexToColor("#ff6c6b"),
+        .diff_hl_change    = hexToColor("#da8548"),
+        .diff_hl_insert    = hexToColor("#98be65"),
+        .diff_hl_bg        = hexToColor("#3e493d"),
+        .diff_hl_change_bg = hexToColor("#4b3d38"),
     };
     themes[6] = (Theme){
         .name              = "city-lights",
         .bg                = hexToColor("#1D252C"),
+        .fringe            = hexToColor("#1D252C"),
         .cursor            = hexToColor("#51AFEF"),
         .marked_cursor     = hexToColor("#51AFEF"),
         .text              = hexToColor("#A0B3C5"),
@@ -288,10 +359,18 @@ void initThemes() {
         .comment           = hexToColor("#41505E"),
         .null              = hexToColor("#E27E8D"),
         .negation          = hexToColor("#5EC4FF"),
+        .success           = hexToColor("#8BD49C"),
+        .warning           = hexToColor("#EBBF83"),
+        .error             = hexToColor("#D95468"),
+        .diff_hl_change    = hexToColor("#D98E48"),
+        .diff_hl_insert    = hexToColor("#8BD49C"),
+        .diff_hl_bg        = hexToColor("#334842"),
+        .diff_hl_change_bg = hexToColor("#423a31"),
     };
     themes[7] = (Theme){
         .name              = "Molokai",
         .bg                = hexToColor("#1C1E1F"),
+        .fringe            = hexToColor("#1C1E1F"),
         .cursor            = hexToColor("#FB2874"),
         .marked_cursor     = hexToColor("#FB2874"),
         .text              = hexToColor("#D6D6D4"),
@@ -314,10 +393,18 @@ void initThemes() {
         .comment           = hexToColor("#555556"),
         .null              = hexToColor("#fd971f"),
         .negation          = hexToColor("#9c91e4"),
+        .success           = hexToColor("#b6e63e"),
+        .warning           = hexToColor("#e2c770"),
+        .error             = hexToColor("#e74c3c"),
+        .diff_hl_change    = hexToColor("#66d9ef"),
+        .diff_hl_insert    = hexToColor("#9ac334"),
+        .diff_hl_bg        = hexToColor("#353f23"),
+        .diff_hl_change_bg = hexToColor("#396872"),
     };
     themes[8] = (Theme){
         .name              = "doom-monokai-ristretto",
         .bg                = hexToColor("#2c2525"),
+        .fringe            = hexToColor("#2c2525"),
         .cursor            = hexToColor("#fff1f3"),
         .marked_cursor     = hexToColor("#fff1f3"),
         .text              = hexToColor("#fff1f3"),
@@ -340,10 +427,18 @@ void initThemes() {
         .comment           = hexToColor("#72696a"),
         .null              = hexToColor("#a8a9eb"),
         .negation          = hexToColor("#fd6883"),
+        .success           = hexToColor("#adda78"),
+        .warning           = hexToColor("#f38d70"),
+        .error             = hexToColor("#fd6883"),
+        .diff_hl_change    = hexToColor("#f38d70"),
+        .diff_hl_insert    = hexToColor("#adda78"),
+        .diff_hl_bg        = hexToColor("#454935"),
+        .diff_hl_change_bg = hexToColor("#533934"),
     };
     themes[9] = (Theme){
         .name              = "doom-nord",
         .bg                = hexToColor("#2E3440"),
+        .fringe            = hexToColor("#2E3440"),
         .cursor            = hexToColor("#81A1C1"),
         .marked_cursor     = hexToColor("#81A1C1"),
         .text              = hexToColor("#ECEFF4"),
@@ -366,6 +461,13 @@ void initThemes() {
         .comment           = hexToColor("#6f7787"),
         .null              = hexToColor("#8FBCBB"),
         .negation          = hexToColor("#BF616A"),
+        .success           = hexToColor("#A3BE8C"),
+        .warning           = hexToColor("#EBCB8B"),
+        .error             = hexToColor("#BF616A"),
+        .diff_hl_change    = hexToColor("#D08770"),
+        .diff_hl_insert    = hexToColor("#A3BE8C"),
+        .diff_hl_bg        = hexToColor("#454f4f"),
+        .diff_hl_change_bg = hexToColor("#4e4449"),
     };
 
     currentThemeIndex = 0;

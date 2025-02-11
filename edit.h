@@ -65,6 +65,8 @@ void indent(Buffer *buffer, int indentation, BufferManager *bm, int arg);
 void indent_region(Buffer *buffer, BufferManager *bm, int indentation, int arg);
 void goto_line(BufferManager *bm, WindowManager *wm, int sw, int sh);
 void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm, Buffer *minibuffer, Buffer *prompt, int indentation, bool electric_indent_mode, int sw, int sh, NamedHistories *nh, int arg);
+
+
 void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh);
 void backspace(Buffer *buffer, bool electric_pair_mode);
 
@@ -85,9 +87,14 @@ void load_font(BufferManager *bm, WindowManager *wm, int sw, int sh);
 
 
 void recenter(Window *window);
-extern int recenterState; // 0: Initial, 1: Top, 2: Center, 3: Bottom
-void recenter_top_bottom(Window *window);
 void capitalize_word(Buffer *buffer);
+
+bool bolp(Buffer *buffer);
+void mark_scope(Buffer *buffer);
+
+// LERP
+
+float getCurrentTime();
 
 
 // EXTENSION

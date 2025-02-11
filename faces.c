@@ -8,7 +8,9 @@ Font *font;
 Font *minifont;
 int fontsize = 15;
 int minifontsize = 15;
-char *fontPath = "fan.otf";
+
+/* char *fontPath = "fan.otf"; */
+char *fontPath = "jetb.ttf";
 Font* nerdFont;
 
 

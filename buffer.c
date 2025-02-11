@@ -8,9 +8,28 @@
 #include "globals.h"
 #include "theme.h"
 #include "draw.h"
+#include "git.h"
 
 double mouseX;
 double mouseY;
+
+void updateDiffs(Buffer *buffer) {
+    if (buffer->path) {
+        // Free the existing diff information if it exists
+        if (buffer->diffs.array) {
+            free(buffer->diffs.array);
+        }
+        // Update the diff information
+        buffer->diffs = getDiffInfo(buffer->path);
+    }
+}
+
+void initDiffs(BufferManager *bm) {
+    for (int i = 0; i < bm->count; i++) {
+        updateDiffs(bm->buffers[i]);
+    }
+}
+
 
 void initBuffer(Buffer *buffer, const char *name, const char *path) {
     if (!parser) {  // Ensure the global parser is initialized
@@ -20,11 +39,13 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
 
     buffer->capacity = 1024;
     buffer->content = malloc(buffer->capacity);
+
     if (!buffer->content) {
         fprintf(stderr, "Failed to allocate memory for buffer content.\n");
         exit(EXIT_FAILURE);
     }
     buffer->content[0] = '\0'; // Initialize content as empty string
+
     buffer->size = 0;
     buffer->point = 0;
     buffer->readOnly = false;
@@ -32,6 +53,22 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
     buffer->path = strdup(path);
     buffer->region.active = false;
     buffer->scale.index = 0;
+
+    FILE *file = fopen(path, "r");
+    if (file) {
+        fseek(file, 0, SEEK_END);
+        buffer->originalSize = ftell(file);
+        fseek(file, 0, SEEK_SET);
+        buffer->originalContent = malloc(buffer->originalSize + 1);
+        fread(buffer->originalContent, 1, buffer->originalSize, file);
+        buffer->originalContent[buffer->originalSize] = '\0';
+        fclose(file);
+    } else {
+        buffer->originalContent = NULL;
+        buffer->originalSize = 0;
+    }
+
+
 
     buffer->major_mode = strdup("fundamental");
     buffer->fontPath = strdup(fontPath);  // Use the global fontPath initially
@@ -43,6 +80,8 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
     buffer->scopes.items = NULL;
     buffer->scopes.count = 0;
     buffer->scopes.capacity = 0;
+
+    buffer->diffs = (Diffs){NULL, 0, 0};
 }
 
 void newBuffer(BufferManager *manager, WindowManager *wm, const char *name,
@@ -58,10 +97,12 @@ void newBuffer(BufferManager *manager, WindowManager *wm, const char *name,
     initScale(&buffer->scale);
     buffer->fontPath = strdup(fontPath);
 
+    
+    
     // Use the global font cache
     if (!globalFontCache[buffer->scale.index]) {
-        globalFontCache[buffer->scale.index] = loadFont(
-                                                        fontPath, buffer->scale.fontSizes[buffer->scale.index], "name");
+        globalFontCache[buffer->scale.index] =
+            loadFont(fontPath, fontsize, "name");
     }
     buffer->font = globalFontCache[buffer->scale.index];
 
@@ -96,6 +137,7 @@ void newBuffer(BufferManager *manager, WindowManager *wm, const char *name,
 
 void freeBuffer(Buffer *buffer) {
     free(buffer->content);
+    free(buffer->originalContent);
     free(buffer->name);
     free(buffer->major_mode);
     free(buffer->fontPath);
@@ -104,6 +146,7 @@ void freeBuffer(Buffer *buffer) {
     buffer->size = 0;
     buffer->capacity = 0;
     buffer->point = 0;
+    free(buffer->diffs.array);
 }
 
 void initBufferManager(BufferManager *manager) {
@@ -121,6 +164,10 @@ void freeBufferManager(BufferManager *manager) {
     }
     free(manager->buffers);
     free(manager->activeName);
+    manager->buffers = NULL;
+    manager->buffers = NULL;
+    manager->buffers = NULL;
+    manager->buffers = NULL;
     manager->buffers = NULL;
     manager->activeName = NULL;
     manager->count = 0;
@@ -277,7 +324,6 @@ Buffer *getBufferUnderCursor(WindowManager *wm) {
 }
 
 
-
 void setMajorMode(Buffer *buffer) {
     const char *extension = strrchr(buffer->name, '.');
     if (extension) {
@@ -306,7 +352,6 @@ void addSegment(Segments *segments, const char *name, const char *content) {
     segments->count++;
 }
 
-
 void initSegments(Segments *segments) {
     segments->segment = NULL;
     segments->count = 0;
@@ -316,6 +361,7 @@ void initSegments(Segments *segments) {
     addSegment(segments, "scroll",      "Top");
     addSegment(segments, "mode",        "Maybe");
     addSegment(segments, "scale",       "Nan");
+    addSegment(segments, "branch",      "Nab");
 }
 
 
@@ -329,6 +375,11 @@ void updateSegments(Modeline *modeline, Buffer *buffer) {
             char lineNumStr[32];
             snprintf(lineNumStr, sizeof(lineNumStr), "L%d", lineNumber);
             segment->content = strdup(lineNumStr);
+        }
+        else if (strcmp(segment->name, "branch") == 0) {
+            free(segment->content);
+            char* branch = getGitBranch(buffer->path);
+            segment->content = branch;
         }
         else if (strcmp(segment->name, "name") == 0) {
             free(segment->content);

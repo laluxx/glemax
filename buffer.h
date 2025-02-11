@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "font.h"
+#include "git.h"
 
 typedef struct {
     size_t start;
@@ -61,6 +62,9 @@ typedef struct {
     char *major_mode;
     char* fontPath;
     Scopes scopes;
+    Diffs diffs;
+    char *originalContent; // Store the original file content
+    size_t originalSize;   // Size of the original content
 } Buffer;
 
 typedef struct {
@@ -108,6 +112,8 @@ typedef struct Window {
     bool isActive;       // Is this the active window?
     bool hasFringe;      // Weather the window has a left fringe
     SplitOrientation splitOrientation;
+    float targetScrollY;
+    bool isScrolling;
 } Window;
 
 typedef struct {
@@ -154,6 +160,12 @@ void cleanBuffer(BufferManager *bm, char *name);
 Buffer *getBufferUnderCursor(WindowManager *wm);
 
 void setMajorMode(Buffer *buffer);
+
+
+// DIFF-HL
+void updateDiffs(Buffer *buffer);
+void initDiffs(BufferManager *bm);
+
 
 
 // MODELINE

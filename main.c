@@ -22,7 +22,8 @@
 #include <stdlib.h>
 #include "draw.h"
 #include "globals.h"
-
+#include "git.h"
+#include <unistd.h>
 
 // [/] MAYBE One thing that we really should do, is to
 // make the minibuffer just a window, not a special
@@ -33,6 +34,10 @@
 // so the same stuff is recalculated like 6 or more times per frame
 // i hate it, but i hate refactoring more
 
+// TODO in updateScroll if we are going up or down fast, try to lerp 2 halfpafes
+// at once, scrolling a full page at once not in 2 steps, or ever 3..
+// This should make fast lerped scrolling feel better
+ 
 // TODO Dim other windows
 // TODO Shared Window Geometry
 // TODO unhardcode the cursor scroll it shoudl use the modelineHeight + minibufferHeight
@@ -70,7 +75,7 @@ BufferManager bm = {0};
 KillRing kr = {0};
 WindowManager wm = {0};
 NamedHistories nh = {0};
-
+Diffs diffs = {0};
 
 void drawHighlight(WindowManager *wm, Font *font, size_t startPos, size_t length, Color highlightColor);
 void highlightMatchingBrackets(WindowManager *wm, Font *font, Color highlightColor);
@@ -81,9 +86,12 @@ void drawBuffer(Window *win, Buffer *buffer, bool cursorVisible, bool colorPoint
 void highlightHexColors(WindowManager *wm, Font *font, Buffer *buffer, bool rm);
 int getGlobalArg(Buffer *argBuffer);
 void updateScroll(Window *window);
+void updateScrollLerp(Window *window);
 void scrollCallback(double xOffset, double yOffset);
 void cursorPosCallback(double xpos, double ypos);
 void mouseButtonCallback(int button, int action, int mods);
+float lerp(float a, float b, float t);
+void drawFringe(Window *win, Font *font);
 
 // These shoule be in c-mode module
 static bool shouldSkipCharacter(Buffer *buffer, unsigned int codepoint);
@@ -118,10 +126,10 @@ static void inner_main(void *closure, int argc, char **argv) {
     initBufferManager(&bm);
     initCommands();
     newBuffer(&bm, &wm, "minibuffer", "~/", fontPath, sw, sh);
-    newBuffer(&bm, &wm, "prompt", "~/", fontPath, sw, sh);
-    newBuffer(&bm, &wm, "message", "~/", fontPath, sw, sh);
-    newBuffer(&bm, &wm, "arg", "~/", fontPath, sw, sh);
-    newBuffer(&bm, &wm, "*scratch*", "~/", fontPath, sw, sh);
+    newBuffer(&bm, &wm, "prompt",     "~/", fontPath, sw, sh);
+    newBuffer(&bm, &wm, "message",    "~/", fontPath, sw, sh);
+    newBuffer(&bm, &wm, "arg",        "~/", fontPath, sw, sh);
+    newBuffer(&bm, &wm, "*scratch*",  "~/", fontPath, sw, sh);
 
 
     if (argc > 1) {
@@ -139,6 +147,7 @@ static void inner_main(void *closure, int argc, char **argv) {
     }
 
 
+
     if (!fringe_mode) fringe = 0;
 
     sw = getScreenWidth();  // NOTE Currently get screen dimentions
@@ -146,6 +155,7 @@ static void inner_main(void *closure, int argc, char **argv) {
     
     initWindowManager(&wm, &bm, font, sw, sh);
 
+    initDiffs(&bm);
 
     initSegments(&wm.activeWindow->modeline.segments);
     updateSegments(&wm.activeWindow->modeline, wm.activeWindow->buffer);
@@ -212,6 +222,7 @@ static void inner_main(void *closure, int argc, char **argv) {
             if (bottom) {
                 scissorHeight += minibufferHeight;
             }
+            updateScrollLerp(win);
 
             beginScissorMode((Vec2f){win->x, scissorStartY},
                              (Vec2f){win->width, scissorHeight});
@@ -221,6 +232,7 @@ static void inner_main(void *closure, int argc, char **argv) {
             if (win == wm.activeWindow) {
                 highlightHexColors(&wm, buffer->font, buffer, rainbow_mode);
                 useShader("simple");
+                drawFringe(win, font);
                 drawRegion(&wm, buffer->font, CT.region);
                 highlightMatchingBrackets(&wm, buffer->font, CT.show_paren_match);
                 if (isearch.searching)
@@ -245,10 +257,11 @@ static void inner_main(void *closure, int argc, char **argv) {
                 
                 if (isCurrentBuffer(&bm, "minibuffer")) {
                     drawBuffer(win, buffer, cursorVisible, false); // Hide cursor
+                    drawHollowCursor(win->buffer, win, CT.cursor); // And hollow it
                 } else {
-                  drawBuffer(win, buffer, cursorVisible, true);
-                  if (minimap_mode) {
-                    drawMinimap(&wm, win, buffer);
+                    drawBuffer(win, buffer, cursorVisible, true);
+                    if (minimap_mode) {
+                        drawMinimap(&wm, win, buffer);
                     }
                     
                 }
@@ -406,7 +419,7 @@ void keyCallback(int key, int action, int mods) {
             if (altPressed && shiftPressed) beginning_of_buffer(buffer);
             break;
             case KEY_ENTER:
-            enter(buffer, &bm, &wm, minibuffer, prompt, indentation, electric_indent_mode, sw, sh, &nh, arg);
+                enter(buffer, &bm, &wm, minibuffer, prompt, indentation, electric_indent_mode, sw, sh, &nh, arg);
             break;
             case KEY_Y:
             if (ctrlPressed)
@@ -539,8 +552,9 @@ void keyCallback(int key, int action, int mods) {
             break;
             
             case KEY_V:
-            if (ctrlPressed)
-                eval_expression(&bm);
+                if (ctrlPressed) {
+                    eval_expression(&bm);
+                }
             break;
             
             case KEY_G:
@@ -785,13 +799,15 @@ void keyCallback(int key, int action, int mods) {
                 eval_last_sexp(&bm);
             }
             break;
-            case KEY_H:
-            if (altPressed && wm.count <= 1) {
+        case KEY_H:
+            if (ctrlPressed && altPressed) {
+                /* mark_defun(buffer); */
+            } else if (altPressed && wm.count <= 1) {
                 split_window_right(&wm, font, sw, sw);
             }
             break;
             
-            case KEY_K:
+        case KEY_K:
             if (altPressed && ctrlPressed) {
                 kill_sexp(buffer, &kr, 1);
             } else if (altPressed && wm.count <= 1) {
@@ -844,12 +860,12 @@ void keyCallback(int key, int action, int mods) {
         TSInputEdit edit = createInputEdit(buffer, 0, buffer->size, buffer->size);
         updateSyntaxIncremental(buffer, &edit);
     }
-    
+
     // Reset eatchar after key is processed
     if (action == GLFW_RELEASE) {
         eatchar = false;
     }
-    
+
 }
 
 void textCallback(unsigned int codepoint) {
@@ -1213,20 +1229,87 @@ void drawModelines(WindowManager *wm, Font *font, float minibufferHeight, Color 
     }
 }
 
+// TODO Optimize this we could draw a single rectangle for both the fringe and the
+// background if true, not 2 rectangles for lines, 
+void drawFringe(Window *win, Font *font) {
+    useShader("simple");
+    float lineHeight = font->ascent + font->descent;
+    int fringeWidth = fringe;
+    int rectangleWidth = fringe; // Width for fringe indicator
+    int rectangleOffset = 1;
+
+    // Calculate max highlight width considering minimap
+    float maxHighlightWidth = win->width - fringe;
+    if (minimap_mode) {
+        float minimap_padding = minimap_padding_mode ? minimap_left_padding : 0;
+        float maxWidthWithMinimap = win->width - minimap_width - fringe - minimap_padding;
+        if (maxWidthWithMinimap < maxHighlightWidth) {
+            maxHighlightWidth = maxWidthWithMinimap;
+        }
+    }
+
+    // Draw the fringe background
+    Vec2f fringePosition = {win->x, win->y};
+    Vec2f fringeSize = {fringeWidth, win->height};
+    drawRectangle(fringePosition, fringeSize, CT.fringe);
+
+    if (diff_hl_mode) {
+        Diffs diffs = win->buffer->diffs;
+        int visibleStartLine = (int)(win->scroll.y / lineHeight);
+        int visibleEndLine = visibleStartLine + (int)(win->height / lineHeight) + 1;
+
+        for (int i = 0; i < diffs.count; i++) {
+            int diffLine = diffs.array[i].line;
+            if (diffLine >= visibleStartLine && diffLine <= visibleEndLine) {
+                // Calculate y position
+                float y = win->y + win->scroll.y - (diffLine * lineHeight);
+                
+                // Position for both rectangles
+                float rectY = y + font->ascent - font->descent;
+                
+                // Small fringe rectangle
+                Vec2f diffPosition = {win->x + rectangleOffset, rectY};
+                Vec2f diffSize = {rectangleWidth - rectangleOffset, lineHeight};
+                
+                Color diffColor;
+                Color bufferColor;
+                switch (diffs.array[i].type) {
+                    case DIFF_ADDED:
+                        diffColor = CT.diff_hl_insert;
+                        bufferColor = CT.diff_hl_bg;
+                        bufferColor.a = 0.2f; // More subtle for buffer
+                        break;
+                    case DIFF_MODIFIED:
+                        diffColor = CT.diff_hl_change;
+                        bufferColor = CT.diff_hl_change_bg;
+                        bufferColor.a = 0.2f;
+                        break;
+                    default:
+                        continue;
+                }
+                
+                // Draw fringe indicator
+                drawRectangle(diffPosition, diffSize, diffColor);
+                
+                // Draw buffer background highlight only if diff_hl_bg is true
+                if (diff_hl_bg) {
+                    Vec2f bufferPosition = {win->x + fringe, rectY};
+                    Vec2f bufferSize = {maxHighlightWidth, lineHeight};
+                    drawRectangle(bufferPosition, bufferSize, bufferColor);
+                }
+            }
+        }
+    }
+    flush();
+}
+
+
 void drawBuffer(Window *win, Buffer *buffer, bool cursorVisible, bool colorPoint) {
     Font *font = buffer->font;
     const char *text = buffer->content;
 
-    useShader("simple");
-    Vec2f fringePosition = {win->x, win->y - win->height + font->ascent - font->descent};
-    Vec2f fringeSize = {fringe, win->height};
-    if (color_fringe_mode) {
-        drawRectangle(fringePosition, fringeSize, CT.null);
-    } else {
-        drawRectangle(fringePosition, fringeSize, CT.bg);
-    }
-
-    flush();
+    // MOVED
+    /* drawFringe(win, font); */
 
     // Start from the adjusted x and y based on scroll position
     float x = fringe + win->x - win->scroll.x;  // Adjust x starting position based on horizontal scroll
@@ -1326,19 +1409,23 @@ int getGlobalArg(Buffer *argBuffer) {
 
 #include <math.h> // Scrolling is hard
 
+float lerp(float a, float b, float t) {
+    return a + t * (b - a);
+}
+
 void updateScroll(Window *window) {
     Buffer *buffer = window->buffer;
     Font *font = buffer->font;
     
     float lineHeight = font->ascent + font->descent;
     
-    // Calculate the vertical and horizontal positions of the cursor in the buffer
+    // Calculate cursor position
     int cursorLine = 0;
     float cursorX = 0;
     for (size_t i = 0; i < buffer->point; i++) {
         if (buffer->content[i] == '\n') {
             cursorLine++;
-            cursorX = 0; // Reset cursorX at the start of each new line
+            cursorX = 0;
         } else {
             cursorX += getCharacterWidth(font, buffer->content[i]);
         }
@@ -1355,22 +1442,87 @@ void updateScroll(Window *window) {
     // Vertical scrolling logic
     if (cursorY < viewTop || cursorY + lineHeight > viewBottom) {
         float newScrollY = cursorY - window->height / 2 + lineHeight / 2;
-        newScrollY = fmax(0, round(newScrollY / lineHeight) * lineHeight); // NOTE Snap to nearest line
-        newScrollY = fmin(newScrollY, buffer->size * lineHeight - window->height); // Don't scroll past the bottom of the buffer
-        window->scroll.y = newScrollY;
+        newScrollY = fmax(0, round(newScrollY / lineHeight) * lineHeight);
+        newScrollY = fmin(newScrollY, buffer->size * lineHeight - window->height);
+        
+        window->targetScrollY = newScrollY;
+        window->isScrolling = true;
     }
     
-    // Horizontal scrolling logic
+    // Horizontal scrolling logic (unchanged)
     if (cursorX < viewLeft || cursorRightEdge > viewRight) {
         if (auto_text_scale_mode && buffer->scale.index > 8) {
             text_scale_decrease(&bm, fontPath, &wm, sh, 1);
         } else {
             float newScrollX = cursorX - window->width / 2;
-            newScrollX = fmax(0, fmin(newScrollX, buffer->size * lineHeight - window->width)); // Ensure the new scroll is within the width of the longest line
+            newScrollX = fmax(0, fmin(newScrollX, buffer->size * lineHeight - window->width));
             window->scroll.x = newScrollX;
         }
     }
 }
+
+void updateScrollLerp(Window *window) {
+    if (window->isScrolling) {
+        if (scroll_lerp_mode) {
+            window->scroll.y = lerp(window->scroll.y, window->targetScrollY, scroll_lerp_speed);
+            if (fabs(window->scroll.y - window->targetScrollY) < 0.1) {
+                window->scroll.y = window->targetScrollY;
+                window->isScrolling = false;
+            }
+        } else {
+            window->scroll.y = window->targetScrollY;
+            window->isScrolling = false;
+        }
+    }
+}
+
+
+// ORIGINAL
+/* void updateScroll(Window *window) { */
+/*     Buffer *buffer = window->buffer; */
+/*     Font *font = buffer->font; */
+    
+/*     float lineHeight = font->ascent + font->descent; */
+    
+/*     // Calculate the vertical and horizontal positions of the cursor in the buffer */
+/*     int cursorLine = 0; */
+/*     float cursorX = 0; */
+/*     for (size_t i = 0; i < buffer->point; i++) { */
+/*         if (buffer->content[i] == '\n') { */
+/*             cursorLine++; */
+/*             cursorX = 0; // Reset cursorX at the start of each new line */
+/*         } else { */
+/*             cursorX += getCharacterWidth(font, buffer->content[i]); */
+/*         } */
+/*     } */
+/*     float cursorY = cursorLine * lineHeight; */
+/*     float cursorWidth = getCharacterWidth(font, buffer->content[buffer->point]); */
+/*     float cursorRightEdge = cursorX + cursorWidth; */
+    
+/*     float viewTop = window->scroll.y; */
+/*     float viewBottom = window->scroll.y + window->height - window->modeline.height; */
+/*     float viewLeft = window->scroll.x; */
+/*     float viewRight = window->scroll.x + window->width; */
+    
+/*     // Vertical scrolling logic */
+/*     if (cursorY < viewTop || cursorY + lineHeight > viewBottom) { */
+/*         float newScrollY = cursorY - window->height / 2 + lineHeight / 2; */
+/*         newScrollY = fmax(0, round(newScrollY / lineHeight) * lineHeight); // NOTE Snap to nearest line */
+/*         newScrollY = fmin(newScrollY, buffer->size * lineHeight - window->height); // Don't scroll past the bottom of the buffer */
+/*         window->scroll.y = newScrollY; */
+/*     } */
+    
+/*     // Horizontal scrolling logic */
+/*     if (cursorX < viewLeft || cursorRightEdge > viewRight) { */
+/*         if (auto_text_scale_mode && buffer->scale.index > 8) { */
+/*             text_scale_decrease(&bm, fontPath, &wm, sh, 1); */
+/*         } else { */
+/*             float newScrollX = cursorX - window->width / 2; */
+/*             newScrollX = fmax(0, fmin(newScrollX, buffer->size * lineHeight - window->width)); // Ensure the new scroll is within the width of the longest line */
+/*             window->scroll.x = newScrollX; */
+/*         } */
+/*     } */
+/* } */
 
 
 // NOTE This is just an approximation it could be a neat way to render diff

@@ -7,6 +7,7 @@
 // double mouseX; NOTE Moved
 // double mouseY; NOTE Moved
 
+
 bool   dragging                  = false;
 double initialMouseX             = 0;
 double initialMouseY             = 0;
@@ -41,8 +42,14 @@ size_t fringe                    = 8;     // Width in pexels
 char   *first_theme_name         = "dark";
 bool   hl_scope_mode             = true; 
 float  hl_scope_base_brightness  = 0.8f;
-float  hl_scope_brightness_step  = 0.1f;  // How muchg lighter/darker per level
-
+float  hl_scope_brightness_step  = 0.1f;  // How much lighter/darker per level
 bool   theme_lerp_mode           = true;
 float  theme_lerp_speed          = 0.01f;
 float  theme_lerp_threshold      = 1.0f;
+
+bool   diff_hl_mode              = true;
+bool   diff_hl_bg                = true; 
+
+bool   scroll_lerp_mode          = true;  // Enable/disable animated scrolling && recentering
+float  scroll_lerp_speed         = 0.06f;  // Lerp scrolling Speed (0.0 to 1.0)
+

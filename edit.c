@@ -9,15 +9,12 @@
 #include <string.h>
 #include <math.h>
 #include <libguile.h>
-
 #include <sys/stat.h>
 #include <errno.h>
 #include <unistd.h>
-
-// TODO kill_line() should delete the entire line if is composed of only whitespaces
-// TODO kill_line() should kr_kill the entire line if its at the beginning of it
-
+#include "globals.h"
 #include "syntax.h"
+
 void insertChar(Buffer *buffer, unsigned int codepoint) {
     // Handle negative values that came from signed chars
     if (codepoint > 0x10FFFF) {
@@ -390,6 +387,10 @@ void kill_sexp(Buffer *buffer, KillRing *kr, int arg) {
     buffer->point = start_point;
 }
 
+bool bolp(Buffer *buffer) {
+    if (buffer->point == 0) return true;
+    return buffer->content[buffer->point - 1] == '\n';
+}
 
 void kill_line(Buffer *buffer, KillRing *kr) {
     if (buffer->point >= buffer->size) return; // Nothing to delete if at the end of the buffer
@@ -397,9 +398,17 @@ void kill_line(Buffer *buffer, KillRing *kr) {
     size_t startOfLine = buffer->point;
     size_t endOfLine = startOfLine;
 
-    // Determine the end of the current line, but do not include the newline character
+    // If we're at the beginning of a line, include the newline in the kill
+    bool kill_newline = bolp(buffer);
+
+    // Determine the end of the current line
     while (endOfLine < buffer->size && buffer->content[endOfLine] != '\n') {
         endOfLine++;
+    }
+
+    // Include the newline if we're killing from the beginning of the line
+    if (kill_newline && endOfLine < buffer->size) {
+        endOfLine++; // Move past the newline
     }
 
     size_t numToDelete = endOfLine - startOfLine;
@@ -410,7 +419,7 @@ void kill_line(Buffer *buffer, KillRing *kr) {
         if (cut_text) {
             memcpy(cut_text, buffer->content + startOfLine, numToDelete);
             cut_text[numToDelete] = '\0';
-            kr_kill(kr, cut_text); // Add to kr_kill ring
+            kr_kill(kr, cut_text); // Add to kill ring
             free(cut_text); // Free temporary text buffer
         }
 
@@ -421,7 +430,7 @@ void kill_line(Buffer *buffer, KillRing *kr) {
         buffer->size -= numToDelete;
     }
 
-    // Handle special case for an empty line or a line where the cursor is right at the newline
+    // Handle special case for an empty line
     if (startOfLine == endOfLine && startOfLine < buffer->size && buffer->content[startOfLine] == '\n') {
         // Kill the newline itself
         memmove(buffer->content + startOfLine, buffer->content + startOfLine + 1, buffer->size - startOfLine);
@@ -429,12 +438,52 @@ void kill_line(Buffer *buffer, KillRing *kr) {
     }
 }
 
+/* void kill_line(Buffer *buffer, KillRing *kr) { */
+/*     if (buffer->point >= buffer->size) return; // Nothing to delete if at the end of the buffer */
+
+/*     size_t startOfLine = buffer->point; */
+/*     size_t endOfLine = startOfLine; */
+
+/*     // Determine the end of the current line, but do not include the newline character */
+/*     while (endOfLine < buffer->size && buffer->content[endOfLine] != '\n') { */
+/*         endOfLine++; */
+/*     } */
+
+/*     size_t numToDelete = endOfLine - startOfLine; */
+
+/*     if (numToDelete > 0) { */
+/*         // Capture the text to be killed */
+/*         char *cut_text = malloc(numToDelete + 1); */
+/*         if (cut_text) { */
+/*             memcpy(cut_text, buffer->content + startOfLine, numToDelete); */
+/*             cut_text[numToDelete] = '\0'; */
+/*             kr_kill(kr, cut_text); // Add to kr_kill ring */
+/*             free(cut_text); // Free temporary text buffer */
+/*         } */
+
+/*         // Shift remaining text in the buffer left over the killed text */
+/*         memmove(buffer->content + startOfLine, buffer->content + endOfLine, buffer->size - endOfLine + 1); // +1 for null terminator */
+
+/*         // Update buffer size */
+/*         buffer->size -= numToDelete; */
+/*     } */
+
+/*     // Handle special case for an empty line or a line where the cursor is right at the newline */
+/*     if (startOfLine == endOfLine && startOfLine < buffer->size && buffer->content[startOfLine] == '\n') { */
+/*         // Kill the newline itself */
+/*         memmove(buffer->content + startOfLine, buffer->content + startOfLine + 1, buffer->size - startOfLine); */
+/*         buffer->size--; */
+/*     } */
+/* } */
+
+
+
+
 void open_line(Buffer *buffer) {
     // Ensure there is enough capacity, and if not, expand the buffer
     if (buffer->size + 1 >= buffer->capacity) {
         buffer->capacity *= 2;
-        char *newContent =
-            realloc(buffer->content, buffer->capacity * sizeof(char));
+        char *newContent = realloc(buffer->content, buffer->capacity * sizeof(char));
         if (!newContent) {
             fprintf(stderr, "Failed to reallocate memory for buffer.\n");
             return;
@@ -560,16 +609,17 @@ void kr_kill(KillRing* kr, const char* text) {
     copy_to_clipboard(text);
 }
 
-
-
 void kill_region(Buffer *buffer, KillRing *kr) {
-    if (!buffer->region.active) {
-        printf("No active region to kr_kill.\n");
-        return;  // No region active, nothing to kr_kill
-    }
+    size_t start, end;
 
-    size_t start = buffer->region.start;
-    size_t end = buffer->region.end;
+    if (buffer->region.active) {
+        start = buffer->region.start;
+        end = buffer->region.end;
+    } else {
+        // kill between mark and point if the region is not active
+        start = buffer->region.mark;
+        end = buffer->point;
+    }
 
     // Ensure start is always less than end
     if (start > end) {
@@ -578,25 +628,27 @@ void kill_region(Buffer *buffer, KillRing *kr) {
         end = temp;
     }
 
-    if (end > buffer->size) end = buffer->size;  // Clamp end to buffer size
-
+    if (end > buffer->size)
+        end = buffer->size; // Clamp end to buffer size
     size_t region_length = end - start;
+
     if (region_length == 0) {
-        printf("Empty region, nothing to kr_kill.\n");
-        return;  // Empty region, nothing to kr_kill
+        printf("Empty region, nothing to kill.\n");
+        return; // Empty region, nothing to kill
     }
 
-    // Allocate and copy the region to kr_kill
+    // Allocate and copy the region to kill
     char *cut_text = malloc(region_length + 1);
     if (cut_text) {
         memcpy(cut_text, buffer->content + start, region_length);
         cut_text[region_length] = '\0';
-        kr_kill(kr, cut_text);  // Add to kr_kill ring
-        free(cut_text);  // Free temporary text buffer
+        kr_kill(kr, cut_text); // Add to kill ring
+        free(cut_text);        // Free temporary text buffer
     }
 
     // Remove the region text from the buffer
-    memmove(buffer->content + start, buffer->content + end, buffer->size - end + 1);
+    memmove(buffer->content + start, buffer->content + end,
+            buffer->size - end + 1);
     buffer->size -= region_length;
 
     // Update cursor position to start of the killed region
@@ -668,10 +720,16 @@ void yank(Buffer *buffer, KillRing *kr, int arg) {
 }
 
 void kill_ring_save(Buffer *buffer, KillRing *kr) {
-    if (!buffer->region.active) return;
+    size_t start, end;
 
-    size_t start = buffer->region.start;
-    size_t end = buffer->region.end;
+    if (buffer->region.active) {
+        start = buffer->region.start;
+        end = buffer->region.end;
+    } else {
+        // Use the mark and point if the region is not active
+        start = buffer->region.mark;
+        end = buffer->point;
+    }
 
     // Ensure start is always less than end
     if (start > end) {
@@ -680,10 +738,12 @@ void kill_ring_save(Buffer *buffer, KillRing *kr) {
         end = temp;
     }
 
-    if (end > buffer->size) end = buffer->size;  // Clamp end to buffer size
-
+    if (end > buffer->size)
+        end = buffer->size; // Clamp end to buffer size
     size_t region_length = end - start;
-    if (region_length == 0) return;  // Empty region, nothing to save
+
+    if (region_length == 0)
+        return; // Empty region, nothing to save
 
     char *text_to_save = malloc(region_length + 1);
     if (text_to_save) {
@@ -692,12 +752,12 @@ void kill_ring_save(Buffer *buffer, KillRing *kr) {
         kr_kill(kr, text_to_save);
         free(text_to_save);
     } else {
-        fprintf(stderr, "Failed to allocate memory for kr_kill ring save.\n");
+        fprintf(stderr, "Failed to allocate memory for kill ring save.\n");
     }
+
+    // Deactivate region after saving it
     buffer->region.active = false;
 }
-
-
 
 
 
@@ -1115,49 +1175,56 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
         add_to_history(nh, prompt->content, minibuffer->content);
         execute_extended_command(bm);
     } else if (strcmp(prompt->content, "Eval: ") == 0) {
-        add_to_history(nh, prompt->content, minibuffer->content);
-        eval_expression(bm); // Let eval_expression handle everything
-    } else if (strcmp(prompt->content, "Keep lines containing match for regexp: ") == 0) {
-        add_to_history(nh, prompt->content, minibuffer->content);
-        keep_lines(bm, wm);
-    } else if (strcmp(prompt->content, "Switch font to: ") == 0) {
-        add_to_history(nh, prompt->content, minibuffer->content);
-        load_font(bm, wm, sw, sh);
-    } else if (strcmp(prompt->content, "Goto line: ") == 0) {
-        add_to_history(nh, prompt->content, minibuffer->content);
-        goto_line(bm, wm, sw, sh);
-        minibuffer->size = 0;
-        minibuffer->point = 0;
-        minibuffer->content[0] = '\0';
-        prompt->content = strdup("");
-    } else if (strcmp(prompt->content, "Shell command: ") == 0) {
-        add_to_history(nh, prompt->content, minibuffer->content);
-        cleanBuffer(bm, "prompt");
-        execute_shell_command(bm, minibuffer->content);
-    } else {
-        if (buffer->point > 0 && buffer->point < buffer->size &&
-            buffer->content[buffer->point - 1] == '{' && buffer->content[buffer->point] == '}') {
-            // Insert a newline and indent for the opening brace
-            insertChar(buffer, '\n');
-            if (electric_indent_mode) {
-                indent(buffer, indentation, bm, arg);
-            }
-
-            size_t newCursorPosition = buffer->point;
-            insertChar(buffer, '\n');
-
-            if (electric_indent_mode) {
-                indent(buffer, indentation, bm, arg);
-            }
-
-            buffer->point = newCursorPosition;
-        } else {
-            insertChar(buffer, '\n');
+      add_to_history(nh, prompt->content, minibuffer->content);
+      eval_expression(bm); // Let eval_expression handle everything
+    }
+    else if (strcmp(prompt->content,
+                    "Keep lines containing match for regexp: ") == 0) {
+      add_to_history(nh, prompt->content, minibuffer->content);
+      keep_lines(bm, wm);
+    }
+    else if (strcmp(prompt->content, "Switch font to: ") == 0) {
+      add_to_history(nh, prompt->content, minibuffer->content);
+      load_font(bm, wm, sw, sh);
+    }
+    else if (strcmp(prompt->content, "Goto line: ") == 0) {
+      add_to_history(nh, prompt->content, minibuffer->content);
+      goto_line(bm, wm, sw, sh);
+      minibuffer->size = 0;
+      minibuffer->point = 0;
+      minibuffer->content[0] = '\0';
+      prompt->content = strdup("");
+    }
+    else if (strcmp(prompt->content, "Shell command: ") == 0) {
+      add_to_history(nh, prompt->content, minibuffer->content);
+      cleanBuffer(bm, "prompt");
+      execute_shell_command(bm, minibuffer->content);
+    }
+    else {
+      if (buffer->point > 0 && buffer->point < buffer->size &&
+          buffer->content[buffer->point - 1] == '{' &&
+          buffer->content[buffer->point] == '}') {
+        // Insert a newline and indent for the opening brace
+        insertChar(buffer, '\n');
+        if (electric_indent_mode) {
+          indent(buffer, indentation, bm, arg);
         }
+
+        size_t newCursorPosition = buffer->point;
+        insertChar(buffer, '\n');
 
         if (electric_indent_mode) {
-            indent(buffer, indentation, bm, arg);
+          indent(buffer, indentation, bm, arg);
         }
+
+        buffer->point = newCursorPosition;
+      } else {
+        insertChar(buffer, '\n');
+      }
+
+      if (electric_indent_mode) {
+        indent(buffer, indentation, bm, arg);
+      }
     }
 }
 
@@ -2359,6 +2426,7 @@ void save_buffer(BufferManager *bm, Buffer *buffer) {
     char msg[512];
     snprintf(msg, sizeof(msg), "Wrote %s", fullPath);
     message(bm, msg);
+    updateDiffs(buffer);
 }
 
 void recenter(Window *window) {
@@ -2378,51 +2446,22 @@ void recenter(Window *window) {
 
     float cursorY = cursorLine * lineHeight;
     float verticalCenter = window->height / 2;
-    window->scroll.y = cursorY - verticalCenter + lineHeight / 2;
-    // Clamp the scroll position to avoid scrolling beyond the content
+    float targetY = cursorY - verticalCenter + lineHeight / 2;
+
+    // Clamp the target scroll position to avoid scrolling beyond the content
     float maxScroll = buffer->size * lineHeight - window->height;
-    window->scroll.y = fmax(0, fmin(window->scroll.y, maxScroll));
+    targetY = fmax(0, fmin(targetY, maxScroll));
+
+    if (scroll_lerp_mode) {
+        // Smooth scrolling: set targetScrollY and enable scrolling
+        window->targetScrollY = targetY;
+        window->isScrolling = true;
+    } else {
+        // Instant scrolling: directly set scroll.y
+        window->scroll.y = targetY;
+    }
 }
 
-int recenterState = 0; // 0: Initial, 1: Top, 2: Center, 3: Bottom
-
-void recenter_top_bottom(Window *window) {
-    if (!window || !window->buffer) return;
-
-    Buffer *buffer = window->buffer;
-    Font *font = buffer->font;
-    float lineHeight = font->ascent + font->descent;
-
-    // Calculate the cursor's current line number dynamically
-    int cursorLine = 0;
-    for (size_t i = 0; i < buffer->point; i++) {
-        if (buffer->content[i] == '\n') cursorLine++;
-    }
-
-    float cursorY = cursorLine * lineHeight;
-
-    // Determine the new scroll position based on the recenter state
-    switch (recenterState) {
-    case 0:  // Center
-        recenter(window);  // Use existing recenter function
-        break;
-    case 1:  // Top
-        window->scroll.y = cursorY;
-        break;
-    case 2:  // Bottom
-        window->scroll.y = cursorY - window->height + lineHeight;
-        break;
-    default:
-        break;
-    }
-
-    // Clamp the scroll position
-    float maxScroll = buffer->size * lineHeight - window->height;
-    window->scroll.y = fmax(0, fmin(window->scroll.y, maxScroll));
-
-    // Cycle the recenter state
-    recenterState = (recenterState + 1) % 3;
-}
 
 void capitalize_word(Buffer *buffer) {
     if (!buffer || !buffer->content || buffer->point >= buffer->size) {
@@ -2453,16 +2492,6 @@ void capitalize_word(Buffer *buffer) {
         buffer->point++;
     }
 }
-
-
-
-
-
-
-
-
-
-
 
 // EXTENSION
 
