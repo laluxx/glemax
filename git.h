@@ -4,7 +4,7 @@
 typedef enum {
     DIFF_NONE,
     DIFF_ADDED,
-    DIFF_MODIFIED,
+    DIFF_CHANGED,
     DIFF_DELETED
 } DiffType;
 

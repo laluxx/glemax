@@ -4,12 +4,10 @@
 #include <tree_sitter/api.h>
 #include "buffer.h"
 
-// NOTE Syntax and SyntaxArray structs are defines inside buffer.h
+// NOTE Syntax and SyntaxArray structs are defined inside buffer.h
 // to avoid circular header dependency
 
 extern TSParser *parser; // NOTE We currently support a single global parser
-                         // when implementing new language syntax make it a
-                         // global dynamix array of parsers
 
 void initSyntax(Buffer *buffer);
 void parseSyntax(Buffer *buffer);
@@ -18,8 +16,6 @@ void freeSyntax(Buffer *buffer);
 void freeSyntaxArray(SyntaxArray *array);
 
 void displaySyntax(Buffer *buffer);
-/* Color getNodeColor(const char* nodeType); */
-/* Color getNodeColor(TSNode node); */
 Color *getNodeColor(TSNode node);
 void printSyntaxTree(TSNode node, const char *source, int depth);
 void initSyntaxArray(SyntaxArray *array, size_t initialSize);
@@ -33,7 +29,6 @@ void adjustSyntaxRanges(Buffer *buffer, int index, int lengthChange);
 
 void updateSyntaxIncremental(Buffer *buffer, TSInputEdit *edit);
 TSInputEdit createInputEdit(Buffer *buffer, size_t start_byte, size_t old_end_byte, size_t new_end_byte);
-void updateAllBuffersSyntaxHighlighting(BufferManager *bm);
 
 
 bool isHexColor(const char *text);

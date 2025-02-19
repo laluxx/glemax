@@ -104,7 +104,7 @@ void draw_scopes(WindowManager *wm, Font *font) {
                     }
                     
                     Color scopeColor = getScopeColor(scope.level);
-                    scopeColor.a = 0.1f + (float)scope.level * 0.05f;
+                    /* scopeColor.a = 0.1f + (float)scope.level * 0.05f; */
                     
                     Vec2f position = {x, y - font->ascent};
                     Vec2f size = {highlightWidth, font->ascent + font->descent};
@@ -335,10 +335,16 @@ void drawMinimap(WindowManager *wm, Window *mainWindow, Buffer *buffer) {
 }
 
 void drawHollowPoint(Buffer *buffer, Window *win, size_t position, Color color) {
-    float x = win->x - win->scroll.x;  // Start position adjusted for horizontal scroll
+    // Validate input
+    if (!buffer || !win) return;
+    if (!buffer->content) return;
+    if (buffer->size == 0) return;
+    if (position >= buffer->size) return;
+
+    float x = win->x - win->scroll.x; // Start position adjusted for horizontal scroll
     float y = win->y;
     int lineCount = 0;
-    
+
     // Calculate position
     for (size_t i = 0; i < position; i++) {
         if (buffer->content[i] == '\n') {
@@ -348,20 +354,23 @@ void drawHollowPoint(Buffer *buffer, Window *win, size_t position, Color color) 
             x += getCharacterWidth(buffer->font, buffer->content[i]);
         }
     }
-    
+
     // Compute y position
-    y += win->scroll.y - lineCount * (buffer->font->ascent + buffer->font->descent) - (buffer->font->descent * 2);
-    
+    y += win->scroll.y -
+        lineCount * (buffer->font->ascent + buffer->font->descent) -
+        (buffer->font->descent * 2);
+
     // Calculate width
-    float width = (position < buffer->size && buffer->content[position] != '\n') ?
-        getCharacterWidth(buffer->font, buffer->content[position]) :
-        getCharacterWidth(buffer->font, ' ');
-    
+    float width = (position < buffer->size && buffer->content[position] != '\n')
+        ? getCharacterWidth(buffer->font, buffer->content[position])
+        : getCharacterWidth(buffer->font, ' ');
+
     float height = buffer->font->ascent + buffer->font->descent;
-    float lineThickness = fmax(1.0f, height * 0.03f);  // Scale line thickness with font size
-    
+    float lineThickness =
+        fmax(1.0f, height * 0.03f); // Scale line thickness with font size
+
     useShader("simple");
-    
+
     // Top line
     drawRectangle((Vec2f){fringe + x, y + height - lineThickness},
                   (Vec2f){width, lineThickness}, color);
@@ -375,11 +384,10 @@ void drawHollowPoint(Buffer *buffer, Window *win, size_t position, Color color) 
     drawRectangle((Vec2f){fringe + x + width - lineThickness, y},
                   (Vec2f){lineThickness, height}, color);
     flush();
-    
 }
 
 void drawMark(Buffer *buffer, Window *win, Color markColor) {
-    drawHollowPoint(buffer, win, buffer->region.mark, markColor);
+    drawHollowPoint(buffer, win, buffer->region.mark, foregroundColorAtPoint(buffer, buffer->region.mark));
 }
 
 void drawHollowCursor(Buffer *buffer, Window *win, Color defaultColor) {
@@ -397,6 +405,7 @@ void drawHollowCursor(Buffer *buffer, Window *win, Color defaultColor) {
 
     drawHollowPoint(buffer, win, buffer->point, cursorColor);
 }
+
 
 void drawCursor(Buffer *buffer, Window *win, Color defaultColor) {
     float cursorX = fringe + win->x - win->scroll.x;  // Start position adjusted for horizontal scroll
@@ -425,19 +434,12 @@ void drawCursor(Buffer *buffer, Window *win, Color defaultColor) {
     Vec2f cursorPosition = {cursorX, cursorY};
     Vec2f cursorSize = {cursorWidth, buffer->font->ascent + buffer->font->descent};
     
-    // Determine the cursor color considering crystal_cursor_mode
+    // Determine the cursor color
     Color cursorColor = defaultColor;
-
     if (buffer->region.active && hide_region_mode) {
         cursorColor = CT.null;
-    } else if (crystal_cursor_mode) {
-        for (size_t i = 0; i < buffer->syntaxArray.used; i++) {
-            if (buffer->point >= buffer->syntaxArray.items[i].start &&
-                buffer->point < buffer->syntaxArray.items[i].end) {
-                cursorColor = *buffer->syntaxArray.items[i].color;
-                break;
-            }
-        }
+    } else {
+        cursorColor = foregroundColorAtPoint(buffer, buffer->point);
     }
     
     // Handle cursor blinking logic

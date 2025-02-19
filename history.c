@@ -68,7 +68,7 @@ const char* previous_history_element(NamedHistories *nh, const char *name, Buffe
         setBufferContent(minibuffer, history->entries[history->index]);
         return history->entries[history->index];
     } else {
-        message(bm, "Beginning of history; no preceding item");
+        message("Beginning of history; no preceding item");
         return NULL;
     }
 }
@@ -78,7 +78,7 @@ const char* next_history_element(NamedHistories *nh, const char *name, Buffer *m
     if (!history) return NULL;
 
     if (history->index == history->size) {
-        message(bm, "End of defaults; no next item");
+        message("End of defaults; no next item");
         return NULL;
     }
 
@@ -88,7 +88,7 @@ const char* next_history_element(NamedHistories *nh, const char *name, Buffer *m
         if (history->currentInput) {
             setBufferContent(minibuffer, history->currentInput);  // Restore the original content
         } else {
-            message(bm, "No more next history entries.");
+            message("No more next history entries.");
         }
         return NULL;
     }

@@ -34,6 +34,9 @@ typedef struct {
     bool marked;    // HACK Whether the region was activated by pressing C-SPC
 } Region;
 
+// NOTE we could attach more informations to Scopes like
+// what is inside that scope is it a function definition ?
+// But it would be redundant since we have TreeSitter.
 typedef struct {
     size_t start;
     size_t end;
@@ -45,6 +48,20 @@ typedef struct {
     size_t count;
     size_t capacity;
 } Scopes;
+
+typedef struct {
+    char *name;
+    int line_number;
+    size_t start_byte;
+    size_t end_byte;
+} Function;
+
+// Keep track of functions in each buffer
+typedef struct {
+    Function *items;
+    size_t used;
+    size_t size;
+} Functions;
 
 typedef struct {
     char *content;   // Text content
@@ -65,6 +82,8 @@ typedef struct {
     Diffs diffs;
     char *originalContent; // Store the original file content
     size_t originalSize;   // Size of the original content
+    int goal_column;       // -1 is unset
+    Functions functions;
 } Buffer;
 
 typedef struct {
@@ -114,6 +133,7 @@ typedef struct Window {
     SplitOrientation splitOrientation;
     float targetScrollY;
     bool isScrolling;
+    bool isMouseWheelScrolling;
 } Window;
 
 typedef struct {
@@ -153,7 +173,9 @@ void updateRegion(Buffer *buffer, size_t new_point);
 void deactivateRegion(Buffer *buffer);
 
 void setBufferContent(Buffer *buffer, const char *newContent);
-void message(BufferManager *bm, const char *message);
+/* void message(BufferManager *bm, const char *message); */
+void message(const char *message);
+/* void message(const char *format, ...); */
 void cleanBuffer(BufferManager *bm, char *name);
 
 
@@ -176,6 +198,8 @@ void updateSegments(Modeline *modeline, Buffer *buffer);
 
 // UTILITY FUNCTIONS
 int getLineNumber(Buffer *buffer);
+int lineNumberAtPoint(Buffer *buffer, size_t point);
+Color foregroundColorAtPoint(Buffer *buffer, size_t point);
 
 
 

@@ -184,14 +184,14 @@ SCM scm_message(SCM fmt, SCM rest) {
             }
         }
         
-        message(&bm, buffer);
+        message(buffer);
         SCM result = scm_from_locale_string(buffer);
         free(format_str);
         return result;
     }
     
     // Simple case - just the format string
-    message(&bm, format_str);
+    message(format_str);
     SCM result = scm_from_locale_string(format_str);
     free(format_str);
     return result;
@@ -388,7 +388,7 @@ static size_t find_enclosing_sexp_start(const char* content, size_t point) {
 void eval_last_sexp(BufferManager *bm) {
     Buffer *buffer = getActiveBuffer(bm);
     if (!buffer || !buffer->content) {
-        message(bm, "No buffer to evaluate.");
+        message("No buffer to evaluate.");
         return;
     }
 
@@ -409,7 +409,7 @@ void eval_last_sexp(BufferManager *bm) {
     }
 
     if (!found) {
-        message(bm, "No S-expression found before point.");
+        message("No S-expression found before point.");
         return;
     }
 
@@ -430,7 +430,7 @@ void eval_last_sexp(BufferManager *bm) {
     }
 
     if (paren_level != 0) {
-        message(bm, "Unmatched parentheses.");
+        message("Unmatched parentheses.");
         return;
     }
 
@@ -439,7 +439,7 @@ void eval_last_sexp(BufferManager *bm) {
     size_t sexp_length = sexp_end - sexp_start;
     char *sexp = malloc(sexp_length + 1);
     if (!sexp) {
-        message(bm, "Memory allocation failed.");
+        message("Memory allocation failed.");
         return;
     }
 
@@ -449,27 +449,27 @@ void eval_last_sexp(BufferManager *bm) {
     char *result = eval_scheme_string(sexp);
     free(sexp);
 
-    message(bm, result ? result : "Evaluation returned #f");
+    message(result ? result : "Evaluation returned #f");
     free(result);
 }
 
 void eval_buffer(BufferManager *bm) {
     Buffer *buffer = getActiveBuffer(bm);
-    if (!buffer || !buffer->content) { message(bm, "No buffer to evaluate."); return; }
+    if (!buffer || !buffer->content) { message("No buffer to evaluate."); return; }
 
     char *result = eval_scheme_string(buffer->content);
     if (result) {
-        message(bm, result);
+        message(result);
         free(result);
     } else {
-        message(bm, "Buffer evaluation returned #f");
+        message("Buffer evaluation returned #f");
     }
 }
 
 void eval_region(BufferManager *bm) {
     Buffer *buffer = getActiveBuffer(bm);
     if (!buffer || !buffer->content || !buffer->region.active) {
-        message(bm, "No active region to evaluate.");
+        message("No active region to evaluate.");
         return;
     }
 
@@ -485,7 +485,7 @@ void eval_region(BufferManager *bm) {
     size_t region_length = end - start;
     char *region_text = malloc(region_length + 1);
     if (!region_text) {
-        message(bm, "Memory allocation failed.");
+        message("Memory allocation failed.");
         return;
     }
     strncpy(region_text, buffer->content + start, region_length);
@@ -505,17 +505,17 @@ void eval_region(BufferManager *bm) {
     // If there's no content after trimming, return
     if (!*trimmed_text) {
         free(region_text);
-        message(bm, "No content to evaluate.");
+        message("No content to evaluate.");
         return;
     }
 
     // Evaluate the region text directly
     char *result = eval_scheme_string(trimmed_text);
     if (result) {
-        message(bm, result);
+        message(result);
         free(result);
     } else {
-        message(bm, "Evaluation returned #f");
+        message("Evaluation returned #f");
     }
 
     free(region_text);

@@ -10,7 +10,7 @@ int fontsize = 15;
 int minifontsize = 15;
 
 /* char *fontPath = "fan.otf"; */
-char *fontPath = "jetb.ttf";
+char *fontPath = "jet-nerd-medium.ttf";
 Font* nerdFont;
 
 
@@ -73,7 +73,7 @@ void text_scale_increase(BufferManager *bm, char *fontPath, WindowManager *wm, i
             win = win->next;
         }
     } else {
-        message(bm, "Cannot increase the font size any further");
+        message("Cannot increase the font size any further");
     }
 }
 
@@ -110,7 +110,7 @@ void text_scale_decrease(BufferManager *bm, char *fontPath, WindowManager *wm, i
             win = win->next;
         }
     } else {
-        message(bm, "Cannot decrease the font size any further");
+        message("Cannot decrease the font size any further");
     }
 }
 

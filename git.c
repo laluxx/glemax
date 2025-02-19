@@ -10,6 +10,7 @@
 
 // DIFF-HL
 
+
 Diffs getDiffInfo(const char *filePath) {
     Diffs diffs = {NULL, 0, 0};
     char command[1024];
@@ -44,7 +45,7 @@ Diffs getDiffInfo(const char *filePath) {
             switch (line[0]) {
             case '+':
                 if (deletionCount > 0) {
-                    diff.type = DIFF_MODIFIED;
+                    diff.type = DIFF_CHANGED;
                     deletionCount--;
                 } else {
                     diff.type = DIFF_ADDED;
@@ -53,9 +54,7 @@ Diffs getDiffInfo(const char *filePath) {
                 currentLine++;
                 break;
             case '-':
-                diff.type = DIFF_DELETED;
-                diff.line = currentLine + deletionCount;
-                diffs.array[diffs.count++] = diff;
+                // Track deletions but do not add to diffs.array
                 deletionCount++;
                 break;
             case ' ':
@@ -72,9 +71,6 @@ Diffs getDiffInfo(const char *filePath) {
     pclose(fp);
     return diffs;
 }
-
-
-
 
 char* getGitBranch(const char* relativePath) {
     char fullPath[1024];

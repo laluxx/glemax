@@ -36,8 +36,11 @@ typedef struct {
     Color fringe;
     Color diff_hl_change;
     Color diff_hl_insert;
+    Color diff_hl_change_cursor;
+    Color diff_hl_insert_cursor;
     Color diff_hl_bg;
     Color diff_hl_change_bg;
+    Color clock;
 } Theme;
 
 extern Theme themes[];
@@ -60,6 +63,7 @@ void load_theme(const char *themeName);
 Color lerpColor(Color a, Color b, float t);
 void updateThemeInterpolation();
 void switchToTheme(int newIndex);
+bool colorsEqual(Color a, Color b);
 
 // Colors utility
 

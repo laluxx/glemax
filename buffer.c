@@ -53,6 +53,7 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
     buffer->path = strdup(path);
     buffer->region.active = false;
     buffer->scale.index = 0;
+    buffer->goal_column = -1;
 
     FILE *file = fopen(path, "r");
     if (file) {
@@ -67,8 +68,6 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
         buffer->originalContent = NULL;
         buffer->originalSize = 0;
     }
-
-
 
     buffer->major_mode = strdup("fundamental");
     buffer->fontPath = strdup(fontPath);  // Use the global fontPath initially
@@ -278,9 +277,12 @@ void setBufferContent(Buffer *buffer, const char *newContent) {
     buffer->point = buffer->size; // Optionally reset the cursor position
 }
 
-void message(BufferManager *bm, const char *message) {
-    Buffer *minibuffer = getBuffer(bm, "minibuffer");
-    Buffer *messageBuffer = getBuffer(bm, "message");
+#include "editor.h"
+
+
+void message(const char *message) {
+    Buffer *minibuffer = getBuffer(&bm, "minibuffer");
+    Buffer *messageBuffer = getBuffer(&bm, "message");
 
     // Prepare the message string with square brackets
     size_t messageLen = strlen(message);
@@ -290,8 +292,8 @@ void message(BufferManager *bm, const char *message) {
     if (formattedMessage) {
         snprintf(formattedMessage, totalLen, "[%s]", message);
 
-        if (isCurrentBuffer(bm, "minibuffer") || isearch.searching) {
-              setBufferContent(messageBuffer, formattedMessage);
+        if (isCurrentBuffer(&bm, "minibuffer") || isearch.searching) {
+            setBufferContent(messageBuffer, formattedMessage);
         } else {
             setBufferContent(minibuffer, message);
         }
@@ -304,11 +306,12 @@ void message(BufferManager *bm, const char *message) {
 }
 
 
+
 void cleanBuffer(BufferManager *bm, char *name) {
     Buffer *buffer = getBuffer(bm, name);
     buffer->size = 0;
     buffer->point = 0;
-    buffer->content[0] = '\0';
+    buffer->content[0] = 0;
 }
 
 
@@ -322,7 +325,6 @@ Buffer *getBufferUnderCursor(WindowManager *wm) {
         win = win->next;
     }
 }
-
 
 void setMajorMode(Buffer *buffer) {
     const char *extension = strrchr(buffer->name, '.');
@@ -418,9 +420,50 @@ int getLineNumber(Buffer *buffer) {
     return lineNumber;
 }
 
+int lineNumberAtPoint(Buffer *buffer, size_t point) {
+    int lineCount = 1; // Lines are 1-indexed
+    for (size_t i = 0; i < point && i < buffer->size; i++) {
+        if (buffer->content[i] == '\n') {
+            lineCount++;
+        }
+    }
+    return lineCount;
+}
 
 
+// NOTE We could memoize them
+Color foregroundColorAtPoint(Buffer *buffer, size_t point) {
+    Color color = CT.text;
 
+    // Check for diff highlighting first if enabled
+    if (diff_hl_cursor) {
+        int currentLine = lineNumberAtPoint(
+                                               buffer, point); // Use the provided point to calculate the line
+        for (int i = 0; i < buffer->diffs.count; ++i) {
+            DiffInfo *diff = &buffer->diffs.array[i];
+            if (diff->line == currentLine) {
+                if (diff->type == DIFF_ADDED) {
+                    color = CT.diff_hl_insert_cursor;
+                } else if (diff->type == DIFF_CHANGED) {
+                    color = CT.diff_hl_change_cursor;
+                }
+                break;
+            }
+        }
+    }
 
+    // Fallback to syntax color if no diff found and crystal_cursor_mode is
+    // enabled
+    if (colorsEqual(color, CT.text) && crystal_cursor_mode) {
+        for (size_t i = 0; i < buffer->syntaxArray.used; ++i) {
+            if (point >= buffer->syntaxArray.items[i].start &&
+                point < buffer->syntaxArray.items[i].end) {
+                color = *buffer->syntaxArray.items[i].color;
+                break;
+            }
+        }
+    }
 
+    return color;
+}
 

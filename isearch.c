@@ -21,7 +21,7 @@ void isearch_forward(Buffer *buffer, BufferManager *bm, Buffer *minibuffer, bool
         isearch.wrap = false;
     } else {
         if (!isearch.wrap) {
-            message(bm, "Reached end of buffer");
+            message("Reached end of buffer");
             isearch.wrap = true;
         } else {
             if (updateStartIndex) {

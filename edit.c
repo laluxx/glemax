@@ -1,8 +1,10 @@
 #include "edit.h"
+#include "buffer.h"
 #include "commands.h"
 #include "keychords.h"
 #include "faces.h"
 #include "syntax.h"
+#include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -111,12 +113,14 @@ void beginning_of_buffer(Buffer *buffer) {
     if (buffer != NULL && buffer->content != NULL) {
         buffer->point = 0;
     }
+    set_mark(buffer, buffer->point);
 }
 
 void end_of_buffer(Buffer *buffer) {
     if (buffer != NULL && buffer->content != NULL) {
         buffer->point = buffer->size;
     }
+    set_mark(buffer, buffer->point);
 }
 
 void right_char(Buffer *buffer, bool shift, BufferManager *bm, int arg) {
@@ -135,7 +139,7 @@ void right_char(Buffer *buffer, bool shift, BufferManager *bm, int arg) {
     }
 
     if (buffer->point >= buffer->size) {
-        message(bm, "End of buffer");
+        message("End of buffer");
     }
 }
 
@@ -153,11 +157,12 @@ void left_char(Buffer *buffer, bool shift, BufferManager *bm, int arg) {
     }
 
     if (buffer->point <= 0) {
-        message(bm, "Beginning of buffer");
+        message("Beginning of buffer");
     }
 }
 
-void previous_line(Buffer *buffer, bool shift, BufferManager *bm) {
+void previous_line(Buffer *buffer, bool shift, BufferManager *bm,
+                   int goal_column) {
     if (shift) {
         if (!buffer->region.active) {
             activateRegion(buffer);
@@ -169,7 +174,7 @@ void previous_line(Buffer *buffer, bool shift, BufferManager *bm) {
     }
 
     if (buffer->point == 0) {
-        message(bm, "Beginning of buffer");
+        message("Beginning of buffer");
         return;
     }
 
@@ -177,6 +182,7 @@ void previous_line(Buffer *buffer, bool shift, BufferManager *bm) {
     int previousLineStart = 0;
     int currentLineStart = 0;
 
+    // Find the start of the current line
     for (int i = buffer->point - 1; i >= 0; i--) {
         if (buffer->content[i] == '\n') {
             currentLineStart = i + 1;
@@ -186,10 +192,11 @@ void previous_line(Buffer *buffer, bool shift, BufferManager *bm) {
 
     if (currentLineStart == 0) {
         buffer->point = 0;
-        message(bm, "Beginning of buffer");
+        message("Beginning of buffer");
         return;
     }
 
+    // Find the start of the previous line
     for (int i = currentLineStart - 2; i >= 0; i--) {
         if (buffer->content[i] == '\n') {
             previousLineStart = i + 1;
@@ -197,6 +204,7 @@ void previous_line(Buffer *buffer, bool shift, BufferManager *bm) {
         }
     }
 
+    // Find the end of the previous line
     for (int i = currentLineStart - 1; i >= 0; i--) {
         if (buffer->content[i] == '\n') {
             previousLineEnd = i;
@@ -204,18 +212,124 @@ void previous_line(Buffer *buffer, bool shift, BufferManager *bm) {
         }
     }
 
+    // Calculate the current column position
     int column = buffer->point - currentLineStart;
-    int previousLineLength = previousLineEnd - previousLineStart;
 
+    // If goal_column is set, use it instead of the current column position
+    if (goal_column >= 0) {
+        column = goal_column;
+    }
+
+    // Calculate the target position in the previous line
+    int previousLineLength = previousLineEnd - previousLineStart;
     if (column >= previousLineLength) {
-        buffer->point = previousLineEnd;
+        buffer->point = previousLineEnd; // Move to the end of the previous line
     } else {
-        buffer->point = previousLineStart + column;
+        buffer->point = previousLineStart + column; // Move to the goal column
     }
 }
 
-// TODO Goal column
-void next_line(Buffer *buffer, bool shift, BufferManager *bm) {
+void set_mark(Buffer *buffer, size_t pos) {
+    buffer->region.mark = pos;
+    message("Mark set");
+}
+
+void set_mark_command(Buffer *buffer) {
+    if (!buffer->region.active) {
+        activateRegion(buffer);
+        buffer->region.marked = true;
+        message("Mark set");
+    } else {
+        deactivateRegion(buffer);
+        buffer->region.marked = false;
+    }
+}
+
+void mark_scope(Buffer *buffer) {
+    if (buffer->scopes.count == 0) {
+        message("No scopes found");
+        return;
+    }
+
+    size_t point = buffer->point;
+    Scope *innermost = NULL;
+
+    // Find the innermost scope containing the cursor
+    for (size_t i = 0; i < buffer->scopes.count; i++) {
+        Scope *scope = &buffer->scopes.items[i];
+        if (scope->start <= point && point <= scope->end) {
+            // Check if this scope is deeper (higher level) than the current innermost
+            if (innermost == NULL || scope->level > innermost->level) {
+                innermost = scope;
+            }
+        }
+    }
+
+    if (innermost != NULL) {
+        // Set the region from the mark to the end of the scope
+        buffer->region.start = buffer->region.mark;
+        buffer->region.end = innermost->end;
+        buffer->region.active = true;
+        buffer->region.marked = false; // Optional: adjust based on your region handling
+        /* message("Scope marked from %zu to %zu", buffer->region.start, buffer->region.end); */
+    } else {
+        /* message("Cursor is not within a scope"); */
+    }
+}
+
+/* void mark_scope(Buffer *buffer) { */
+/*     if (buffer->scopes.count == 0) { */
+/*         message("No scopes found"); */
+/*         return; */
+/*     } */
+
+/*     size_t point = buffer->point; */
+/*     Scope *innermost = NULL; */
+
+/*     // Iterate through all scopes to find the innermost containing the point */
+/*     for (size_t i = 0; i < buffer->scopes.count; i++) { */
+/*         Scope *scope = &buffer->scopes.items[i]; */
+/*         if (scope->start <= point && point <= scope->end) { */
+/*             // Check if this scope is deeper (higher level) than the current innermost */
+/*             if (innermost == NULL || scope->level > innermost->level) { */
+/*                 innermost = scope; */
+/*             } */
+/*         } */
+/*     } */
+
+/*     if (innermost != NULL) { */
+/*         buffer->region.start = innermost->start; */
+/*         buffer->region.end = innermost->end; */
+/*         buffer->region.active = true; */
+/*         buffer->region.marked = false; // Optional: adjust based on your region handling */
+/*         /\* message("Scope marked from %zu to %zu", innermost->start, innermost->end); *\/ */
+/*     } else { */
+/*         /\* message("Cursor is not within a scope"); *\/ */
+/*     } */
+/* } */
+
+void set_goal_column(Buffer *buffer) {
+    // Find the start of the current line
+    size_t line_start = buffer->point;
+    while (line_start > 0 && buffer->content[line_start - 1] != '\n') {
+        line_start--;
+    }
+
+    // Calculate the current column position
+    int current_column = buffer->point - line_start;
+
+    // If the goal_column is already set to the current column, reset it to -1
+    if (buffer->goal_column == current_column) {
+        buffer->goal_column = -1;
+    } else {
+        // Otherwise, set the goal_column to the current column
+        buffer->goal_column = current_column;
+    }
+    message("Goal column set! (use C-x C-n again to unset it)");
+}
+
+
+void next_line(Buffer *buffer, bool shift, BufferManager *bm, int goal_column) {
     if (shift) {
         if (!buffer->region.active) {
             activateRegion(buffer);
@@ -246,12 +360,17 @@ void next_line(Buffer *buffer, bool shift, BufferManager *bm) {
     }
     columnPosition = buffer->point - currentLineStart;
 
+    // If goal_column is set, use it instead of the current column position.
+    if (goal_column >= 0) {
+        columnPosition = goal_column;
+    }
+
     // Calculate the point position in the next line, limited by the line's length.
     size_t targetPosition = nextLineStart + columnPosition;
     if (nextLineStart >= buffer->size) {
         // If no new line to jump to, move cursor to the end and display message
         buffer->point = buffer->size;
-        message(bm, "End of buffer");
+        message("End of buffer");
     } else {
         for (size_t i = nextLineStart; i <= buffer->size; i++) {
             if (buffer->content[i] == '\n' || i == buffer->size) {
@@ -265,6 +384,57 @@ void next_line(Buffer *buffer, bool shift, BufferManager *bm) {
     }
 }
 
+// TODO Goal column
+/* void next_line(Buffer *buffer, bool shift, BufferManager *bm) { */
+/*     if (shift) { */
+/*         if (!buffer->region.active) { */
+/*             activateRegion(buffer); */
+/*         } */
+/*     } else { */
+/*         if (!buffer->region.marked) { */
+/*             buffer->region.active = false; */
+/*         } */
+/*     } */
+
+/*     int currentLineEnd = buffer->point; */
+/*     int nextLineStart = buffer->size; */
+/*     int columnPosition = 0; */
+
+/*     // Determine the end of the current line. */
+/*     for (size_t i = buffer->point; i < buffer->size; i++) { */
+/*         if (buffer->content[i] == '\n') { */
+/*             currentLineEnd = i; */
+/*             nextLineStart = i + 1; */
+/*             break; */
+/*         } */
+/*     } */
+
+/*     // Calculate column position. */
+/*     int currentLineStart = buffer->point; */
+/*     while (currentLineStart > 0 && buffer->content[currentLineStart - 1] != '\n') { */
+/*         currentLineStart--; */
+/*     } */
+/*     columnPosition = buffer->point - currentLineStart; */
+
+/*     // Calculate the point position in the next line, limited by the line's length. */
+/*     size_t targetPosition = nextLineStart + columnPosition; */
+/*     if (nextLineStart >= buffer->size) { */
+/*         // If no new line to jump to, move cursor to the end and display message */
+/*         buffer->point = buffer->size; */
+/*         message("End of buffer"); */
+/*     } else { */
+/*         for (size_t i = nextLineStart; i <= buffer->size; i++) { */
+/*             if (buffer->content[i] == '\n' || i == buffer->size) { */
+/*                 if (targetPosition > i) { */
+/*                     targetPosition = i; */
+/*                 } */
+/*                 break; */
+/*             } */
+/*         } */
+/*         buffer->point = targetPosition; */
+/*     } */
+/* } */
+
 void move_beginning_of_line(Buffer * buffer, bool shift) {
     if (shift) {
         if (!buffer->region.active) {
@@ -277,6 +447,7 @@ void move_beginning_of_line(Buffer * buffer, bool shift) {
     for (int i = buffer->point - 1; i >= 0; i--) {
         if (buffer->content[i] == '\n') {
             buffer->point = i + 1; // Set point right after the newline.
+            set_mark(buffer, buffer->point);
             return;
         }
     }
@@ -295,6 +466,7 @@ void move_end_of_line(Buffer *buffer, bool shift) {
     for (size_t i = buffer->point; i < buffer->size; i++) {
         if (buffer->content[i] == '\n') {
             buffer->point = i;
+            set_mark(buffer, buffer->point);
             return;
         }
     }
@@ -303,7 +475,7 @@ void move_end_of_line(Buffer *buffer, bool shift) {
 
 void delete_char(Buffer *buffer, BufferManager *bm) {
     if (buffer->point >= buffer->size) {
-        message(bm, "End of buffer");
+        message("End of buffer");
         return;
     }
 
@@ -834,68 +1006,149 @@ bool isPunctuationChar(char c) {
 }
 
 bool forward_word(Buffer *buffer, int count, bool shift) {
-    if (buffer == NULL || buffer->content == NULL) return false;
+    if (buffer == NULL || buffer->content == NULL || count == 0)
+        return false;
 
-    if (shift) {
-        if (!buffer->region.active) {
-            activateRegion(buffer);
-        }
-    } else {
-        if (!buffer->region.marked) buffer->region.active = false;
+    if (shift && !buffer->region.active) {
+        activateRegion(buffer);
+    } else if (!shift && !buffer->region.marked) {
+        buffer->region.active = false;
     }
-
 
     size_t pos = buffer->point;
     size_t end = buffer->size;
     int direction = count > 0 ? 1 : -1;
+    count = abs(count);
 
-    while (pos < end && count != 0) {
-        if (direction > 0) { // Moving forward
-            // Skip initial spaces and punctuation
-            while (pos < end && (isspace((unsigned char)buffer->content[pos]) || isPunctuationChar(buffer->content[pos])))
+    while (count > 0 && pos < end && pos > 0) {
+        if (direction > 0) {
+            // Skip non-word characters
+            while (pos < end && !isWordChar(buffer->content[pos]))
                 pos++;
-
-            // Move through the word
-            while (pos < end && isWordChar(buffer->content[pos])) 
+            // Move through word characters
+            while (pos < end && isWordChar(buffer->content[pos]))
                 pos++;
-
-            // If the next character is punctuation, stop before it
-            if (pos < end && isPunctuationChar(buffer->content[pos])) 
-                break;
-        } else { // Moving backward
-            // Skip initial spaces and punctuation when moving backward
-            while (pos > 0 && (isspace((unsigned char)buffer->content[pos - 1]) || isPunctuationChar(buffer->content[pos - 1])))
+        } else {
+            // Move back to start of word or non-word sequence
+            while (pos > 0 && !isWordChar(buffer->content[pos - 1]))
                 pos--;
-
-            // Move to the start of the word
             while (pos > 0 && isWordChar(buffer->content[pos - 1]))
                 pos--;
         }
-        count -= direction;
+        count--;
     }
 
-    buffer->point = pos; // Update the cursor position
+    buffer->point = pos;
     return true;
 }
 
-
-
 bool backward_word(Buffer *buffer, int count, bool shift) {
-    if (buffer == NULL || buffer->content == NULL) return false;
-    
-    // Ensure the cursor starts within the buffer bounds
-    if (buffer->point >= buffer->size) {
-        buffer->point = buffer->size - 1;
-    }
-
-    // Ensure cursor is moved to a valid position if it starts right at a non-character
-    if (!isWordChar(buffer->content[buffer->point]) && !isspace(buffer->content[buffer->point]) && buffer->point > 0) {
-        buffer->point--;
-    }
-
     return forward_word(buffer, -count, shift);
 }
 
+
+// FIXME incorrect
+void transpose_subr(Buffer *buffer, bool (*mover)(Buffer *, int, bool), int arg) {
+  if (buffer == NULL || mover == NULL) return;
+
+  size_t pos1_start, pos1_end, pos2_start, pos2_end;
+  size_t original_point = buffer->point;
+
+  if (arg == 0) {
+    // TODO: Implement mark functionality
+    return;
+  } else if (arg > 0) {
+    // Determine pos1 (current word)
+    (*mover)(buffer, -1, false); // Move backward to start of current word
+    pos1_start = buffer->point;
+    (*mover)(buffer, 1, false); // Move forward to end of current word
+    pos1_end = buffer->point;
+
+    // Move to pos2 (arg words forward)
+    buffer->point = original_point;
+    for (int i = 0; i < arg; i++) {
+      (*mover)(buffer, 1, false);
+    }
+    pos2_end = buffer->point;
+    (*mover)(buffer, -1, false); // Move back to start of the arg-th word
+    pos2_start = buffer->point;
+  } else { // arg < 0
+    // Move backward (-arg) times
+    for (int i = 0; i > arg; i--) {
+      (*mover)(buffer, -1, false);
+    }
+    pos2_start = buffer->point;
+    (*mover)(buffer, 1, false); // Move forward to end of that word
+    pos2_end = buffer->point;
+
+    // Determine pos1 (current word)
+    buffer->point = original_point;
+    (*mover)(buffer, -1, false); // Move back to start of current word
+    pos1_start = buffer->point;
+    (*mover)(buffer, 1, false); // Move forward to end of current word
+    pos1_end = buffer->point;
+  }
+
+  // Perform the transposition
+  size_t len1 = pos1_end - pos1_start;
+  size_t len2 = pos2_end - pos2_start;
+  char *text1 = malloc(len1);
+  char *text2 = malloc(len2);
+
+  if (!text1 || !text2) {
+    free(text1);
+    free(text2);
+    return;
+  }
+
+  memcpy(text1, buffer->content + pos1_start, len1);
+  memcpy(text2, buffer->content + pos2_start, len2);
+
+  // Swap the two regions
+  memmove(buffer->content + pos2_start, text1, len1);
+  memmove(buffer->content + pos1_start, text2, len2);
+
+  free(text1);
+  free(text2);
+
+  // Position point correctly after transposed regions
+  buffer->point = (arg > 0) ? (pos2_start + len1) : pos2_end;
+}
+
+void transpose_words(Buffer *buffer, int arg) {
+    // Handle case where point is at the end of the buffer
+    if (buffer->point == buffer->size) {
+        backward_word(buffer, 1, false);
+    }
+
+    transpose_subr(buffer, forward_word, arg);
+}
+
+void transpose_chars(Buffer *buffer) {
+    if (buffer == NULL || buffer->content == NULL || buffer->size < 2) {
+        return;
+    }
+
+    // If at the end of the buffer, swap the last two characters
+    if (buffer->point == buffer->size) {
+        buffer->point--;
+    }
+
+    // Ensure we're not at the beginning of the buffer
+    if (buffer->point == 0) {
+        buffer->point++;
+    }
+
+    // Swap the character at the point with the previous character
+    char temp = buffer->content[buffer->point];
+    buffer->content[buffer->point] = buffer->content[buffer->point - 1];
+    buffer->content[buffer->point - 1] = temp;
+
+    // Move the point forward
+    if (buffer->point < buffer->size) {
+        buffer->point++;
+    }
+}
 
 void backward_kill_word(Buffer *buffer, KillRing *kr) {
     if (buffer == NULL || buffer->content == NULL || buffer->point == 0) return;
@@ -1294,7 +1547,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     // Resolve path with home directory expansion
     const char *homeDir = getenv("HOME");
     if (!homeDir) {
-        message(bm, "Environment variable HOME is not set");
+        message("Environment variable HOME is not set");
         return;
     }
 
@@ -1311,7 +1564,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     // Create directories if they don't exist
     char *dirPath = strdup(fullPath);
     if (!dirPath) {
-        message(bm, "Memory allocation failed");
+        message("Memory allocation failed");
         return;
     }
 
@@ -1322,7 +1575,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
             char errMsg[256];
             snprintf(errMsg, sizeof(errMsg), "Failed to create directory %s: %s",
                      dirPath, strerror(errno));
-            message(bm, errMsg);
+            message(errMsg);
             free(dirPath);
             return;
         }
@@ -1340,7 +1593,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
             char errMsg[256];
             snprintf(errMsg, sizeof(errMsg), "Failed to create file %s: %s",
                      fullPath, strerror(errno));
-            message(bm, errMsg);
+            message(errMsg);
             return;
         }
         isNewFile = true;
@@ -1359,7 +1612,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     newBuffer(bm, wm, displayPath, displayPath, fontPath, sw, sh);
     Buffer *fileBuffer = getBuffer(bm, displayPath);
     if (!fileBuffer) {
-        message(bm, "Failed to create buffer");
+        message("Failed to create buffer");
         fclose(file);
         return;
     }
@@ -1367,7 +1620,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     // Initialize buffer content
     fileBuffer->content = malloc(sizeof(char) * 1024);
     if (!fileBuffer->content) {
-        message(bm, "Failed to allocate buffer memory");
+        message("Failed to allocate buffer memory");
         fclose(file);
         return;
     }
@@ -1386,7 +1639,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
                 fileBuffer->capacity = (fileBuffer->size + bytesRead) * 2;
                 char *newContent = realloc(fileBuffer->content, fileBuffer->capacity);
                 if (!newContent) {
-                    message(bm, "Failed to resize buffer");
+                    message("Failed to resize buffer");
                     free(fileBuffer->content);
                     fclose(file);
                     return;
@@ -1407,14 +1660,15 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     // Switch to new buffer and parse syntax
     switchToBuffer(bm, fileBuffer->name);
     parseSyntax(fileBuffer);
+    updateDiffs(fileBuffer);
 
     // Show appropriate message
     if (isNewFile) {
-        message(bm, "(New file)");
+        message("(New file)");
     } else {
         char msg[256];
         snprintf(msg, sizeof(msg), "Loaded %s", displayPath);
-        message(bm, msg);
+        message(msg);
     }
 }
 
@@ -1440,7 +1694,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
 /*     // Resolve path with home directory expansion */
 /*     const char *homeDir = getenv("HOME"); */
 /*     if (!homeDir) { */
-/*         message(bm, "Environment variable HOME is not set"); */
+/*         message("Environment variable HOME is not set"); */
 /*         return; */
 /*     } */
 
@@ -1457,7 +1711,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
 /*     // Create directories if they don't exist */
 /*     char *dirPath = strdup(fullPath); */
 /*     if (!dirPath) { */
-/*         message(bm, "Memory allocation failed"); */
+/*         message("Memory allocation failed"); */
 /*         return; */
 /*     } */
 
@@ -1476,7 +1730,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
 /*                     char errMsg[256]; */
 /*                     snprintf(errMsg, sizeof(errMsg), "Failed to create directory %s: %s", */
 /*                              dirPath, strerror(errno)); */
-/*                     message(bm, errMsg); */
+/*                     message(errMsg); */
 /*                     free(dirPath); */
 /*                     return; */
 /*                 } */
@@ -1490,7 +1744,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
 /*             char errMsg[256]; */
 /*             snprintf(errMsg, sizeof(errMsg), "Failed to create directory %s: %s", */
 /*                      dirPath, strerror(errno)); */
-/*             message(bm, errMsg); */
+/*             message(errMsg); */
 /*             free(dirPath); */
 /*             return; */
 /*         } */
@@ -1508,7 +1762,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
 /*             char errMsg[256]; */
 /*             snprintf(errMsg, sizeof(errMsg), "Failed to create file %s: %s", */
 /*                      fullPath, strerror(errno)); */
-/*             message(bm, errMsg); */
+/*             message(errMsg); */
 /*             return; */
 /*         } */
 /*         isNewFile = true; */
@@ -1527,7 +1781,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
 /*     newBuffer(bm, wm, displayPath, displayPath, fontPath, sw, sh); */
 /*     Buffer *fileBuffer = getBuffer(bm, displayPath); */
 /*     if (!fileBuffer) { */
-/*         message(bm, "Failed to create buffer"); */
+/*         message("Failed to create buffer"); */
 /*         fclose(file); */
 /*         return; */
 /*     } */
@@ -1535,7 +1789,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
 /*     // Initialize buffer content */
 /*     fileBuffer->content = malloc(sizeof(char) * 1024); */
 /*     if (!fileBuffer->content) { */
-/*         message(bm, "Failed to allocate buffer memory"); */
+/*         message("Failed to allocate buffer memory"); */
 /*         fclose(file); */
 /*         return; */
 /*     } */
@@ -1554,7 +1808,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
 /*                 fileBuffer->capacity = (fileBuffer->size + bytesRead) * 2; */
 /*                 char *newContent = realloc(fileBuffer->content, fileBuffer->capacity); */
 /*                 if (!newContent) { */
-/*                     message(bm, "Failed to resize buffer"); */
+/*                     message("Failed to resize buffer"); */
 /*                     free(fileBuffer->content); */
 /*                     fclose(file); */
 /*                     return; */
@@ -1578,11 +1832,11 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
 
 /*     // Show appropriate message */
 /*     if (isNewFile) { */
-/*         message(bm, "(New file)"); */
+/*         message("(New file)"); */
 /*     } else { */
 /*         char msg[256]; */
 /*         snprintf(msg, sizeof(msg), "Loaded %s", displayPath); */
-/*         message(bm, msg); */
+/*         message(msg); */
 /*     } */
 /* } */
 
@@ -1623,7 +1877,7 @@ void execute_shell_command(BufferManager *bm, char *command) {
 
     // Get current working directory
     if (getcwd(current_dir, sizeof(current_dir)) == NULL) {
-        message(bm, "Failed to get current directory");
+        message("Failed to get current directory");
         return;
     }
 
@@ -1638,7 +1892,7 @@ void execute_shell_command(BufferManager *bm, char *command) {
             if (homeDir) {
                 snprintf(fullPath, sizeof(fullPath), "%s%s", homeDir, filePath + 1);
             } else {
-                message(bm, "HOME environment variable not set");
+                message("HOME environment variable not set");
                 return;
             }
         } else {
@@ -1659,7 +1913,7 @@ void execute_shell_command(BufferManager *bm, char *command) {
             } else {
                 char errMsg[256];
                 snprintf(errMsg, sizeof(errMsg), "Failed to change directory: %s", strerror(errno));
-                message(bm, errMsg);
+                message(errMsg);
                 return;
             }
         }
@@ -1668,7 +1922,7 @@ void execute_shell_command(BufferManager *bm, char *command) {
     // Execute the command
     FILE *pipe = popen(command, "r");
     if (pipe == NULL) {
-        message(bm, "Failed to execute command");
+        message("Failed to execute command");
         if (dir_changed) {
             chdir(current_dir);  // Restore original directory
         }
@@ -1684,7 +1938,7 @@ void execute_shell_command(BufferManager *bm, char *command) {
         if (new_output == NULL) {
             free(output);
             pclose(pipe);
-            message(bm, "Failed to allocate memory for command output");
+            message("Failed to allocate memory for command output");
             if (dir_changed) {
                 chdir(current_dir);
             }
@@ -1707,7 +1961,7 @@ void execute_shell_command(BufferManager *bm, char *command) {
             setBufferContent(minibuffer, output);
             minibuffer->point = 0;
         } else {
-            message(bm, "Minibuffer not found");
+            message("Minibuffer not found");
         }
         free(output);
     }
@@ -1717,7 +1971,7 @@ void execute_shell_command(BufferManager *bm, char *command) {
     // Restore original working directory if we changed it
     if (dir_changed) {
         if (chdir(current_dir) != 0) {
-            message(bm, "Failed to restore original directory");
+            message("Failed to restore original directory");
         }
     }
 }
@@ -1737,7 +1991,7 @@ void shell_command(BufferManager *bm) {
             prompt->content = strdup("Shell command: ");
             switchToBuffer(bm, "minibuffer");
         } else {
-            message(bm, "No last buffer to go to.");
+            message("No last buffer to go to.");
         }
         return;
     /* } */
@@ -1779,7 +2033,7 @@ void execute_extended_command(BufferManager *bm) {
             cleanBuffer(bm, "message");
         }
     } else {
-        message(bm, "No last buffer to go to.");
+        message("No last buffer to go to.");
     }
 }
 
@@ -1798,7 +2052,7 @@ void keep_lines(BufferManager *bm, WindowManager *wm) {
             prompt->content = strdup("Keep lines containing match for regexp: ");
             switchToBuffer(bm, "minibuffer");
         } else {
-            message(bm, "No last buffer to go to.");
+            message("No last buffer to go to.");
         }
         return;
     }
@@ -1808,7 +2062,7 @@ void keep_lines(BufferManager *bm, WindowManager *wm) {
     Buffer *buffer = bm->lastBuffer;
 
     if (!buffer || !pattern || !buffer->content || buffer->size == 0) {
-        message(bm, "Invalid buffer or pattern");
+        message("Invalid buffer or pattern");
         return;
     }
 
@@ -1828,7 +2082,7 @@ void keep_lines(BufferManager *bm, WindowManager *wm) {
             size_t line_length = read_pos - line_start;
             char *line = malloc(line_length + 1);
             if (!line) {
-                message(bm, "Memory allocation failed");
+                message("Memory allocation failed");
                 return;
             }
             
@@ -1867,7 +2121,7 @@ void keep_lines(BufferManager *bm, WindowManager *wm) {
     // Display results message
     char msg[100];
     snprintf(msg, sizeof(msg), "Kept %zu out of %zu total lines", lines_kept, lines_total);
-    message(bm, msg);
+    message(msg);
 
     // Clean up minibuffer
     minibuffer->size = 0;
@@ -1895,7 +2149,7 @@ void eval_expression(BufferManager *bm) {
         } else {
             // Evaluate the expression
             char *result = eval_scheme_string(minibuffer->content);
-            message(bm, result);
+            message(result);
             free(result);
 
             // Reset region on the lastBuffer
@@ -1907,7 +2161,7 @@ void eval_expression(BufferManager *bm) {
             switchToBuffer(bm, bm->lastBuffer->name);
         }
     } else {
-        message(bm, "No last buffer to go to.");
+        message("No last buffer to go to.");
     }
 }
 
@@ -1924,7 +2178,7 @@ void load_font(BufferManager *bm, WindowManager *wm, int sw, int sh) {
             prompt->content = strdup("Switch font to: ");
             switchToBuffer(bm, "minibuffer");
         } else {
-            message(bm, "No last buffer to return to.");
+            message("No last buffer to return to.");
         }
         return;
     }
@@ -1933,7 +2187,7 @@ void load_font(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     if (!newFontPath) {
         char error_msg[256];
         snprintf(error_msg, sizeof(error_msg), "Font not found: %s", minibuffer->content);
-        message(bm, error_msg);
+        message(error_msg);
         cleanBuffer(bm, "minibuffer");
         cleanBuffer(bm, "prompt");
         switchToBuffer(bm, bm->lastBuffer->name);
@@ -1944,7 +2198,7 @@ void load_font(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     if (!testFont) {
         char error_msg[256];
         snprintf(error_msg, sizeof(error_msg), "Failed to load font: %s", minibuffer->content);
-        message(bm, error_msg);
+        message(error_msg);
         free(newFontPath);
         cleanBuffer(bm, "minibuffer");
         cleanBuffer(bm, "prompt");
@@ -1972,7 +2226,7 @@ void load_font(BufferManager *bm, WindowManager *wm, int sw, int sh) {
             
             char error_msg[256];
             snprintf(error_msg, sizeof(error_msg), "Failed to load font for buffer %s", buffer->name);
-            message(bm, error_msg);
+            message(error_msg);
             /* free(newFontPath); */
             cleanBuffer(bm, "minibuffer");
             cleanBuffer(bm, "prompt");
@@ -1998,7 +2252,7 @@ void load_font(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     }
     char msg[256];
     snprintf(msg, sizeof(msg), "Switched font to: %s", newFontPath);
-    message(bm, msg);
+    message(msg);
     /* free(newFontPath); */
     cleanBuffer(bm, "minibuffer");
     cleanBuffer(bm, "prompt");
@@ -2019,7 +2273,7 @@ void goto_line(BufferManager *bm, WindowManager *wm, int sw, int sh) {
             prompt->content = strdup("Goto line: ");
             switchToBuffer(bm, "minibuffer");
         } else {
-            message(bm, "No last buffer to go to.");
+            message("No last buffer to go to.");
         }
         return;
     }
@@ -2027,14 +2281,14 @@ void goto_line(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     // Parse the input as a line number and navigate
     long line_number = strtol(minibuffer->content, NULL, 10); // Parse the input to get the line number
     if (line_number <= 0) {
-        message(bm, "Invalid line number.");
+        message("Invalid line number.");
         return;
     }
 
     // Assume last buffer is the target unless otherwise specified
     Buffer *targetBuffer = bm->lastBuffer;
     if (!targetBuffer || !targetBuffer->content) {
-        message(bm, "No valid last buffer.");
+        message("No valid last buffer.");
         return;
     }
 
@@ -2053,7 +2307,7 @@ void goto_line(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     if (current_line == line_number) {
         targetBuffer->point = index;
     } else {
-        message(bm, "Line number exceeds total number of lines in the last buffer.");
+        message("Line number exceeds total number of lines in the last buffer.");
     }
 
     // Clear minibuffer after operation
@@ -2096,7 +2350,7 @@ bool navigate_list(Buffer *buffer, int arg) {
         buffer->point = pos;
         return true;
     } else {
-        message(&bm, (arg > 0) ? "No next group" : "No previous group");
+        message((arg > 0) ? "No next group" : "No previous group");
         return false;
     }
 }
@@ -2165,7 +2419,7 @@ bool forward_sexp(Buffer *buffer, int arg) {
     }
 
     if (buffer->point == original_point) {
-        message(&bm, "No next sexp");
+        message("No next sexp");
         return false;
     }
 
@@ -2219,7 +2473,7 @@ bool backward_sexp(Buffer *buffer, int arg) {
     }
 
     if (buffer->point == original_point) {
-        message(&bm, "No previous sexp");
+        message("No previous sexp");
         return false;
     }
 
@@ -2376,13 +2630,13 @@ void delete_blank_lines(Buffer *buffer, int arg) {
 void save_buffer(BufferManager *bm, Buffer *buffer) {
     // Check if the buffer is NULL or if it's read-only
     if (buffer == NULL || buffer->readOnly) {
-        message(bm, "Cannot save a read-only buffer.");
+        message("Cannot save a read-only buffer.");
         return;
     }
 
     // Check if the buffer has a valid path
     if (buffer->path == NULL || strlen(buffer->path) == 0) {
-        message(bm, "No file path specified.");
+        message("No file path specified.");
         return;
     }
 
@@ -2394,7 +2648,7 @@ void save_buffer(BufferManager *bm, Buffer *buffer) {
         if (homeDir) {
             snprintf(fullPath, sizeof(fullPath), "%s%s", homeDir, buffer->path + 1);
         } else {
-            message(bm, "Environment variable HOME is not set.");
+            message("Environment variable HOME is not set.");
             return;
         }
     } else {
@@ -2407,7 +2661,7 @@ void save_buffer(BufferManager *bm, Buffer *buffer) {
     if (file == NULL) {
         char errMsg[256];
         snprintf(errMsg, sizeof(errMsg), "Error saving file: %s", strerror(errno));
-        message(bm, errMsg);
+        message(errMsg);
         return;
     }
 
@@ -2415,7 +2669,7 @@ void save_buffer(BufferManager *bm, Buffer *buffer) {
     size_t written = fwrite(buffer->content, sizeof(char), buffer->size, file);
     if (written != buffer->size) {
         fclose(file);
-        message(bm, "Error writing to file.");
+        message("Error writing to file.");
         return;
     }
 
@@ -2425,7 +2679,7 @@ void save_buffer(BufferManager *bm, Buffer *buffer) {
     // Display a message indicating success using the full path
     char msg[512];
     snprintf(msg, sizeof(msg), "Wrote %s", fullPath);
-    message(bm, msg);
+    message(msg);
     updateDiffs(buffer);
 }
 
@@ -2492,6 +2746,153 @@ void capitalize_word(Buffer *buffer) {
         buffer->point++;
     }
 }
+
+// DIFF-HL
+
+// Helper function to compare integers for qsort
+static int compare_ints(const void *a, const void *b) {
+    int arg1 = *(const int *)a;
+    int arg2 = *(const int *)b;
+    return (arg1 > arg2) - (arg1 < arg2);
+}
+
+void diff_hl_next_hunk(Buffer *buffer) {
+    if (buffer->diffs.count == 0)
+        return;
+
+    // Collect all unique line numbers from diffs
+    int *lines = malloc(buffer->diffs.count * sizeof(int));
+    int uniqueCount = 0;
+    for (int i = 0; i < buffer->diffs.count; i++) {
+        int line = buffer->diffs.array[i].line;
+        bool found = false;
+        for (int j = 0; j < uniqueCount; j++) {
+            if (lines[j] == line) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            lines[uniqueCount++] = line;
+        }
+    }
+
+    if (uniqueCount == 0) {
+        free(lines);
+        return;
+    }
+
+    // Sort lines
+    qsort(lines, uniqueCount, sizeof(int), compare_ints);
+
+    // Group consecutive lines into hunks and record start lines
+    int *hunkStarts = malloc(uniqueCount * sizeof(int));
+    int hunkCount = 0;
+    hunkStarts[0] = lines[0];
+    hunkCount = 1;
+
+    for (int i = 1; i < uniqueCount; i++) {
+        if (lines[i] != lines[i - 1] + 1) {
+            hunkStarts[hunkCount++] = lines[i];
+        }
+    }
+
+    // Find current line
+    int currentLine = getLineNumber(buffer);
+
+    // Find next hunk
+    int nextHunk = -1;
+    for (int i = 0; i < hunkCount; i++) {
+        if (hunkStarts[i] > currentLine) {
+            nextHunk = hunkStarts[i];
+            break;
+        }
+    }
+
+    // Wrap around if needed
+    if (nextHunk == -1 && hunkCount > 0) {
+        nextHunk = hunkStarts[0];
+    }
+
+    if (nextHunk != -1) {
+        moveTo(buffer, nextHunk, 0);
+    }
+
+    right_char(buffer, 0, &bm, 1);
+    free(lines);
+    free(hunkStarts);
+}
+
+void diff_hl_previous_hunk(Buffer *buffer) {
+    if (buffer->diffs.count == 0)
+        return;
+
+    // Collect all unique line numbers from diffs
+    int *lines = malloc(buffer->diffs.count * sizeof(int));
+    int uniqueCount = 0;
+    for (int i = 0; i < buffer->diffs.count; i++) {
+        int line = buffer->diffs.array[i].line;
+        bool found = false;
+        for (int j = 0; j < uniqueCount; j++) {
+            if (lines[j] == line) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            lines[uniqueCount++] = line;
+        }
+    }
+
+    if (uniqueCount == 0) {
+        free(lines);
+        return;
+    }
+
+    // Sort lines
+    qsort(lines, uniqueCount, sizeof(int), compare_ints);
+
+    // Group consecutive lines into hunks and record start lines
+    int *hunkStarts = malloc(uniqueCount * sizeof(int));
+    int hunkCount = 0;
+    hunkStarts[0] = lines[0];
+    hunkCount = 1;
+
+    for (int i = 1; i < uniqueCount; i++) {
+        if (lines[i] != lines[i - 1] + 1) {
+            hunkStarts[hunkCount++] = lines[i];
+        }
+    }
+
+    // Find current line
+    int currentLine = getLineNumber(buffer);
+
+    // Find previous hunk
+    int prevHunk = -1;
+    for (int i = hunkCount - 1; i >= 0; i--) {
+        if (hunkStarts[i] < currentLine) {
+            prevHunk = hunkStarts[i];
+            break;
+        }
+    }
+
+    // Wrap around if needed
+    if (prevHunk == -1 && hunkCount > 0) {
+        prevHunk = hunkStarts[hunkCount - 1];
+    }
+
+    if (prevHunk != -1) {
+        moveTo(buffer, prevHunk, 0);
+    }
+
+    right_char(buffer, 0, &bm, 1);
+
+    free(lines);
+    free(hunkStarts);
+}
+
+
+
 
 // EXTENSION
 
@@ -2565,7 +2966,7 @@ void insert_guile_symbols(Buffer *buffer, BufferManager *bm) {
                              NULL);
 
     if (scm_is_false(result)) {
-        message(bm, "Failed to collect Guile symbols.");
+        message("Failed to collect Guile symbols.");
         return;
     }
 
@@ -2678,78 +3079,26 @@ void insert_guile_symbols(Buffer *buffer, BufferManager *bm) {
 
     char msg[128];
     snprintf(msg, sizeof(msg), "Inserted documentation for %zu Guile functions.", count);
-    message(bm, msg);
+    message(msg);
 }
 
 
-// BASE
-/* static SCM */
-/* collect_symbols (void *data) */
-/* { */
-/*     (void)data; */
-/*     return scm_eval_string (scm_from_locale_string ( */
-/*                                                     "(sort (map (lambda (s) (symbol->string s)) \ */
-/*            (append (module-map (lambda (sym var) sym) \ */
-/*                              (current-module)) \ */
-/*                   (module-map (lambda (sym var) sym) \ */
-/*                              (resolve-interface '(guile))))) \ */
-/*           string<?)")); */
-/* } */
+Function *getFunctionAtPoint(Buffer *buffer, size_t point) {
+    for (size_t i = 0; i < buffer->functions.used; i++) {
+        Function *func = &buffer->functions.items[i];
+        if (point >= func->start_byte && point <= func->end_byte) {
+            return func;
+        }
+    }
+    return NULL;
+}
 
-/* void */
-/* insert_guile_symbols (Buffer *buffer, BufferManager *bm) */
-/* { */
-/*     if (!buffer) */
-/*         { */
-/*             message (bm, "No buffer to insert symbols into."); */
-/*             return; */
-/*         } */
-
-/*     SCM result = scm_c_catch (SCM_BOOL_T, */
-/*                               collect_symbols, */
-/*                               NULL, */
-/*                               symbol_error_handler, */
-/*                               NULL, */
-/*                               NULL, */
-/*                               NULL); */
-
-/*     if (scm_is_false (result)) */
-/*         { */
-/*             message (bm, "Failed to collect Guile symbols."); */
-/*             return; */
-/*         } */
-
-/*     /\* Insert header *\/ */
-/*     const char *header = "\n;; Available Guile Symbols:\n\n"; */
-/*     for (const char *p = header; *p; p++) */
-/*         insertChar (buffer, *p); */
-
-/*     size_t count = 0; */
-
-/*     /\* Process each symbol *\/ */
-/*     for (SCM lst = result; scm_is_pair (lst); lst = scm_cdr (lst)) */
-/*         { */
-/*             SCM str = scm_car (lst); */
-/*             char *symbol_name = scm_to_locale_string (str); */
-
-/*             if (symbol_name) */
-/*                 { */
-/*                     /\* Insert with prefix *\/ */
-/*                     const char *prefix = ";; "; */
-/*                     for (const char *p = prefix; *p; p++) */
-/*                         insertChar (buffer, *p); */
-
-/*                     for (char *p = symbol_name; *p; p++) */
-/*                         insertChar (buffer, *p); */
-          
-/*                     insertChar (buffer, '\n'); */
-/*                     free (symbol_name); */
-/*                     count++; */
-/*                 } */
-/*         } */
-
-/*     /\* Report completion *\/ */
-/*     char msg[128]; */
-/*     snprintf (msg, sizeof(msg), "Inserted %zu Guile symbols into buffer.", count); */
-/*     message (bm, msg); */
-/* } */
+void printBufferFunctions(Buffer *buffer) {
+    printf("Functions in %s:\n", buffer->name);
+    for (size_t i = 0; i < buffer->functions.used; i++) {
+        Function *func = &buffer->functions.items[i];
+        printf("%3d: %s (lines %d-%d)\n", 
+               i+1, func->name, func->line_number,
+               byteToPoint(buffer->content, func->end_byte).row + 1);
+    }
+}

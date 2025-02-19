@@ -117,113 +117,37 @@ Color *getNodeColor(TSNode node) {
     }
 }
 
-/* Color getNodeColor(TSNode node) { */
-/*     if (printTSNodes) { */
-/*         printf(ts_node_string(node)); */
-/*         printf("\n\n\n"); */
-/*     } */
-
-/*     const char *nodeType = ts_node_type(node); */
-
-/*     if (strcmp(nodeType, "return") == 0 */
-/*         || strcmp(nodeType, "if") == 0 */
-/*         || strcmp(nodeType, "while") == 0 */
-/*         || strcmp(nodeType, "do") == 0 */
-/*         || strcmp(nodeType, "switch") == 0 */
-/*         || strcmp(nodeType, "break") == 0 */
-/*         || strcmp(nodeType, "continue") == 0 */
-/*         || strcmp(nodeType, "goto") == 0 */
-/*         || strcmp(nodeType, "typedef") == 0 */
-/*         || strcmp(nodeType, "extern") == 0 */
-/*         || strcmp(nodeType, "else") == 0 */
-/*         || strcmp(nodeType, "struct") == 0 */
-/*         || strcmp(nodeType, "for") == 0 */
-/*         || strcmp(nodeType, "const") == 0 */
-/*         ){ */
-/*         return CT.keyword; */
-/*     } */
-/*     else if (strcmp(nodeType, "NULL") == 0 */
-/*              || (strcmp(nodeType, "true") == 0) */
-/*              || (strcmp(nodeType, "false") == 0) */
-/*              ){ */
-/*         return CT.null; */
-/*     } */
-/*     else if (strcmp(nodeType, "!") == 0) { */
-/*         return CT.negation; */
-/*     } */
-/*     else if (strcmp(nodeType, "type_identifier") == 0 */
-/*              || strcmp(nodeType, "function_definition") == 0 */
-/*              || strcmp(nodeType, "sized_type_specifier") == 0 */
-/*              || strcmp(nodeType, "primitive_type") == 0 */
-/*              || strcmp(nodeType, "primitive_type") == 0 */
-/*              ){ */
-/*         return CT.type; */
-/*     } */
-/*     else if (strcmp(nodeType, "string_literal") == 0 */
-/*              || strcmp(nodeType, "char_literal") == 0 */
-/*              || strcmp(nodeType, "string_content") == 0 */
-/*              || strcmp(nodeType, "system_lib_string") == 0 */
-/*              || strcmp(nodeType, "\"") == 0 */
-/*              ){ */
-/*         return CT.string; */
-/*     } */
-/*     else if (strcmp(nodeType, "number_literal") == 0) { */
-/*         return CT.number; */
-/*     } */
-/*     else if (strcmp(nodeType, "function_definition") == 0 */
-/*              || strcmp(nodeType, "function_declaration") == 0 */
-/*              ){ */
-/*         return CT.function; */
-/*     } */
-/*     else if (strcmp(nodeType, "preproc_directive") == 0 */
-/*              || strcmp(nodeType, "preproc_arg") == 0 */
-/*              || strcmp(nodeType, "preproc_def") == 0 */
-/*              || strcmp(nodeType, "#define") == 0 */
-/*              || strcmp(nodeType, "#include") == 0 */
-/*              ){ */
-/*         return CT.preprocessor; */
-/*     } */
-/*     else if (strcmp(nodeType, "assignment_expression") == 0 */
-/*              || strcmp(nodeType, "arithmetic_expression") == 0 */
-/*              || strcmp(nodeType, "unary_expression") == 0 */
-/*              || strcmp(nodeType, "update_expression") == 0 */
-/*              ){ */
-/*         return CT.cursor; */
-/*     } */
-/*     else if (strcmp(nodeType, "identifier") == 0) { */
-/*         TSNode parent = ts_node_parent(node); */
-/*         const char *parentType = ts_node_type(parent); */
-
-/*         if (strcmp(parentType, "function_declarator") == 0 */
-/*             || strcmp(parentType, "function_definition") == 0 */
-/*             ){ */
-/*             return CT.function; */
-/*         } */
-/*         else if (strcmp(parentType, "declaration") == 0 */
-/*                  || strcmp(parentType, "assignment_expression") == 0 */
-/*                  || strcmp(parentType, "init_declarator") == 0) { */
-/*             return CT.variable; */
-/*         } */
-        
-/*         else { */
-/*             return CT.text; */
-/*         } */
-/*     } */
-
-/*     else if (strcmp(nodeType, "comment") == 0) { */
-/*         return CT.comment; */
-/*     } */
-/*     else { */
-/*         return CT.text; */
-/*     } */
-/* } */
-
 void insertSyntax(SyntaxArray *array, Syntax syntax) {
     if (array->used == array->size) {
         array->size *= 2;
         array->items = realloc(array->items, array->size * sizeof(Syntax));
     }
     array->items[array->used++] = syntax;
+}
+
+void processFunctionDefinition(TSNode node, const char *source, Buffer *buffer) {
+    TSNode declarator = ts_node_child_by_field_name(node, "declarator", 11);
+    if (ts_node_is_null(declarator)) return;
+
+    TSNode identifier = ts_node_child_by_field_name(declarator, "declarator", 11);
+    if (ts_node_is_null(identifier)) return;
+    
+    const char *node_type = ts_node_type(identifier);
+    if (strcmp(node_type, "identifier") != 0) return;
+
+    uint32_t start_byte = ts_node_start_byte(identifier);
+    uint32_t end_byte = ts_node_end_byte(identifier);
+    TSPoint start_point = ts_node_start_point(identifier);
+
+    // Extract function name
+    char *name = strndup(source + start_byte, end_byte - start_byte);
+    
+    Function func = {
+        .name = name,
+        .line_number = start_point.row + 1,
+        .start_byte = start_byte,
+        .end_byte = end_byte
+    };
 }
 
 void processNode(TSNode node, const char *source, SyntaxArray *array) {
@@ -244,24 +168,6 @@ void processNode(TSNode node, const char *source, SyntaxArray *array) {
     }
 }
 
-/* void processNode(TSNode node, const char *source, SyntaxArray *array) { */
-/*     if (ts_node_child_count(node) == 0) {  // Process only leaf nodes */
-/*         const char *nodeType = ts_node_type(node); */
-/*         uint32_t startByte = ts_node_start_byte(node); */
-/*         uint32_t endByte = ts_node_end_byte(node); */
-/*         Color color = getNodeColor(node); */
-
-/*         Syntax syntax = {startByte, endByte, color}; */
-/*         insertSyntax(array, syntax); */
-/*     } else { */
-/*         // Recursively process child nodes */
-/*         for (int i = 0; i < ts_node_child_count(node); i++) { */
-/*             TSNode child = ts_node_child(node, i); */
-/*             processNode(child, source, array); */
-/*         } */
-/*     } */
-/* } */
-
 void displaySyntax(Buffer *buffer) {
     TSNode root_node = ts_tree_root_node(buffer->tree);
     processNode(root_node, buffer->content, &buffer->syntaxArray);
@@ -271,8 +177,6 @@ void parseSyntax(Buffer *buffer) {
     buffer->tree = ts_parser_parse_string(parser, NULL, buffer->content, buffer->size);
     displaySyntax(buffer);
 }
-
-
 
 void updateSyntax(Buffer *buffer, const char *newContent, size_t newContentSize) {
     TSInputEdit edit;
@@ -426,14 +330,3 @@ void updateSyntaxIncremental(Buffer *buffer, TSInputEdit *edit) {
 }
 
 
-
-// Why do we need to update the syntax ? FIXME
-void updateAllBuffersSyntaxHighlighting(BufferManager *bm) {
-    for (int i = 0; i < bm->count; i++) {
-        Buffer *buffer = bm->buffers[i];  // Changed from &bm->buffers[i]
-        if (buffer && buffer->tree != NULL) {
-            TSInputEdit edit = createInputEdit(buffer, 0, buffer->size, buffer->size);
-            updateSyntaxIncremental(buffer, &edit);
-        }
-    }
-}

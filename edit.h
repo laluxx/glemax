@@ -15,7 +15,6 @@ typedef struct {
     int index;         // Current index for yanking
 } KillRing;
 
-
 void initKillRing(KillRing* kr, int capacity);
 void freeKillRing(KillRing* kr);
 void kr_kill(KillRing* kr, const char* text);
@@ -27,14 +26,21 @@ void buffer_insert_char(Buffer *buffer, char c);
 
 void right_char(Buffer *buffer, bool shift, BufferManager *bm, int count);
 void left_char(Buffer *buffer, bool shift, BufferManager *bm, int count);
-void previous_line(Buffer *buffer, bool shift, BufferManager *bm);
-void next_line(Buffer *buffer, bool shift, BufferManager *bm);
-
+/* void previous_line(Buffer *buffer, bool shift, BufferManager *bm); */
+void previous_line(Buffer *buffer, bool shift, BufferManager *bm, int goal_column);
+/* void next_line(Buffer *buffer, bool shift, BufferManager *bm); */
+void next_line(Buffer *buffer, bool shift, BufferManager *bm, int goal_column);
+void set_goal_column(Buffer *buffer);
 void move_end_of_line(Buffer *buffer, bool shift);
 void move_beginning_of_line(Buffer * buffer, bool shift);
 
 void delete_char(Buffer *buffer, BufferManager *bm);
 void kill_line(Buffer *buffer, KillRing *kr);
+
+// Mark
+void set_mark(Buffer *buffer, size_t pos);
+void set_mark_command(Buffer *buffer);
+
 
 // Sexpressions
 bool navigate_list(Buffer *buffer, int arg);
@@ -44,6 +50,10 @@ bool forward_sexp(Buffer *buffer, int arg);
 bool backward_sexp(Buffer *buffer, int arg);
 void kill_sexp(Buffer *buffer, KillRing *kr, int arg);
 
+// Transposing
+void transpose_subr(Buffer *buffer, bool (*mover)(Buffer *, int, bool), int arg);
+void transpose_words(Buffer *buffer, int arg);
+void transpose_chars(Buffer *buffer);
 
 void open_line(Buffer *buffer);
 
@@ -96,6 +106,9 @@ void mark_scope(Buffer *buffer);
 
 float getCurrentTime();
 
+// DIFF-HL
+void diff_hl_next_hunk(Buffer *buffer);
+void diff_hl_previous_hunk(Buffer *buffer);
 
 // EXTENSION
 static SCM symbol_error_handler(void *data, SCM key, SCM args);
@@ -103,5 +116,7 @@ static SCM collect_symbols_helper(void *data);
 void insert_guile_symbols(Buffer *buffer, BufferManager *bm);
 
 
+Function *getFunctionAtPoint(Buffer *buffer, size_t point);
+void printBufferFunctions(Buffer *buffer);
 
 #endif
