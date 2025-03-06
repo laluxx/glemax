@@ -4,6 +4,8 @@
 #include "syntax.h"
 #include "theme.h"
 
+// TODO language injection for org-mode and md-mode..
+
 TSParser *parser; // NOTE Global parser
 static bool printTSNodes = false;
 
@@ -330,3 +332,61 @@ void updateSyntaxIncremental(Buffer *buffer, TSInputEdit *edit) {
 }
 
 
+
+// FUNCTIONS
+
+void traverseTreeForFunctions(TSNode node, const char *source, Buffer *buffer) {
+    // Check if this node is a function definition or declaration
+    const char *nodeType = ts_node_type(node);
+    if (strcmp(nodeType, "function_definition") == 0 ||
+        strcmp(nodeType, "function_declaration") == 0) {
+        // Attempt to locate the declarator containing the identifier
+        TSNode declarator = ts_node_child_by_field_name(node, "declarator", 11);
+        if (!ts_node_is_null(declarator)) {
+            // Further extract the actual identifier node
+            TSNode identifier = ts_node_child_by_field_name(declarator, "declarator", 11);
+            if (!ts_node_is_null(identifier) && strcmp(ts_node_type(identifier), "identifier") == 0) {
+                uint32_t start_byte = ts_node_start_byte(identifier);
+                uint32_t end_byte = ts_node_end_byte(identifier);
+                TSPoint start_point = ts_node_start_point(identifier);
+
+                // Extract function name from the source text
+                char *name = strndup(source + start_byte, end_byte - start_byte);
+
+                // Create a new function record
+                Function newFunc;
+                newFunc.name = name;
+                newFunc.line_number = start_point.row + 1; // 1-indexed line number
+                newFunc.start_byte = start_byte;
+                newFunc.end_byte = end_byte;
+
+                // Add newFunc to the buffer's functions array
+                // (Here you should reallocate buffer->functions.items if necessary)
+                if (buffer->functions.used == buffer->functions.size) {
+                    buffer->functions.size = buffer->functions.size ? buffer->functions.size * 2 : 4;
+                    buffer->functions.items = realloc(buffer->functions.items, buffer->functions.size * sizeof(Function));
+                }
+                buffer->functions.items[buffer->functions.used++] = newFunc;
+            }
+        }
+    }
+
+    // Recursively traverse child nodes
+    uint32_t childCount = ts_node_child_count(node);
+    for (uint32_t i = 0; i < childCount; i++) {
+        TSNode child = ts_node_child(node, i);
+        traverseTreeForFunctions(child, source, buffer);
+    }
+}
+
+// A helper to start the extraction from the tree's root.
+void extractFunctions(Buffer *buffer) {
+    if (!buffer->tree) return;
+    // Initialize the functions array if necessary.
+    buffer->functions.used = 0;
+    buffer->functions.size = 4;  // starting size
+    buffer->functions.items = malloc(buffer->functions.size * sizeof(Function));
+
+    TSNode root = ts_tree_root_node(buffer->tree);
+    traverseTreeForFunctions(root, buffer->content, buffer);
+}

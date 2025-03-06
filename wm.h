@@ -19,4 +19,6 @@ void printActiveWindowDetails(WindowManager *wm);
 bool isBottomWindow(WindowManager *wm, Window *window);
 void swap_window(WindowManager *wm, int direction);
 
+void shell_command_to_window(WindowManager *wm, BufferManager *bm, const char *command, int sw, int sh);
+
 #endif // WM_H

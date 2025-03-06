@@ -2,6 +2,8 @@
 #define COMPLETION_H
 
 #include <stdbool.h>
+#include "buffer.h"
+#include "edit.h"
 
 typedef struct {
     char** items;        // Array of completion strings
@@ -11,5 +13,7 @@ typedef struct {
 } CompletionEngine;
 
 void fetch_completions(const char* input, CompletionEngine *ce);
+void insert_completions(Buffer *buffer, CompletionEngine *ce);
+
 
 #endif

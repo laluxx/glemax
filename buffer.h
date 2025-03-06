@@ -10,7 +10,7 @@
 typedef struct {
     size_t start;
     size_t end;
-    /* Color color; */
+    /* Color bg/fg; */
     Color *color;
 } Syntax;
 
@@ -80,10 +80,13 @@ typedef struct {
     char* fontPath;
     Scopes scopes;
     Diffs diffs;
-    char *originalContent; // Store the original file content
-    size_t originalSize;   // Size of the original content
-    int goal_column;       // -1 is unset
-    Functions functions;
+    char *originalContent;     // Store the original file content
+    size_t originalSize;       // Size of the original content
+    int goal_column;           // -1 is unset
+    Functions functions;       // TODO
+    int animatedLineNumber;    // Line number being animated
+    double animationStartTime; // Start time of the animation
+    char *url;                 // Gemini url TODO Make it a dynamic array of url(s)
 } Buffer;
 
 typedef struct {
@@ -172,17 +175,16 @@ void activateRegion(Buffer *buffer);
 void updateRegion(Buffer *buffer, size_t new_point);
 void deactivateRegion(Buffer *buffer);
 
-void setBufferContent(Buffer *buffer, const char *newContent);
-/* void message(BufferManager *bm, const char *message); */
+/* void setBufferContent(Buffer *buffer, const char *newContent); */
+void setBufferContent(Buffer *buffer, const char *newContent, bool pointAtSize);
 void message(const char *message);
-/* void message(const char *format, ...); */
 void cleanBuffer(BufferManager *bm, char *name);
 
 
 Buffer *getBufferUnderCursor(WindowManager *wm);
 
-void setMajorMode(Buffer *buffer);
-
+void inferMajorMode(Buffer *buffer);
+void setMajorMode(Buffer *buffer, char *mode);
 
 // DIFF-HL
 void updateDiffs(Buffer *buffer);
@@ -200,7 +202,7 @@ void updateSegments(Modeline *modeline, Buffer *buffer);
 int getLineNumber(Buffer *buffer);
 int lineNumberAtPoint(Buffer *buffer, size_t point);
 Color foregroundColorAtPoint(Buffer *buffer, size_t point);
-
+char* getCurrentLine(Buffer *buffer);
 
 
 

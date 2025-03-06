@@ -80,3 +80,15 @@ char   *buffer_shader            = "text";
 char   *scratch_buffer_content   = ";; This buffer is for text that is not saved, and for Lisp evaluation.\n;; To create a file, visit it with 'C-x C-f' and enter text in its buffer.\n\n";
 
 bool   mark_mode                 = true;
+
+bool   region_fg_mode            = true;
+bool   region_alpa_mode          = true;  // TODO
+
+bool   lerp_line_mode            = true;
+float  lerp_line_duration        = 1.0;
+
+bool   vertico_mode              = true;  // TODO
+bool   find_file_focus_existing  = false; // If true, focus the window that already contains the buffer you are trying to find
+
+
+size_t max_gemini_redirections = 5;

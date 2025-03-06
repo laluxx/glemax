@@ -70,3 +70,31 @@ void fetch_completions(const char* input, CompletionEngine *ce) {
     ce->isActive = ce->count > 0; // Activate only if there are completions
     ce->currentIndex = -1; // Reset index for new session
 }
+
+void insert_completions(Buffer *buffer, CompletionEngine *ce) {
+    if (!buffer || !ce || ce->count == 0) {
+        message("No completions to insert.");
+        return;
+    }
+
+    // Insert each completion item into the buffer, one per line
+    for (int i = 0; i < ce->count; i++) {
+        const char *completion = ce->items[i];
+        if (!completion) continue;
+
+        // Insert the completion item
+        for (const char *p = completion; *p; p++) {
+            insertChar(buffer, *p);
+        }
+
+        // Insert a newline after each completion (except the last one)
+        if (i < ce->count - 1) {
+            insertChar(buffer, '\n');
+        }
+    }
+
+    // Notify the user
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Inserted %d completions.", ce->count);
+    message(msg);
+}

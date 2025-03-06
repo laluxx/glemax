@@ -1,4 +1,5 @@
 #include "buffer.h"
+#include "edit.h"
 #include "faces.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -55,6 +56,9 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
     buffer->scale.index = 0;
     buffer->goal_column = -1;
 
+    buffer->animatedLineNumber = -1;
+    buffer->animationStartTime = 0.0f;
+
     FILE *file = fopen(path, "r");
     if (file) {
         fseek(file, 0, SEEK_END);
@@ -69,7 +73,9 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
         buffer->originalSize = 0;
     }
 
-    buffer->major_mode = strdup("fundamental");
+    setMajorMode(buffer, "fundamental");
+    
+    buffer->url = strdup("NaU");
     buffer->fontPath = strdup(fontPath);  // Use the global fontPath initially
 
     // Initialize syntax tree
@@ -92,7 +98,7 @@ void newBuffer(BufferManager *manager, WindowManager *wm, const char *name,
     }
 
     initBuffer(buffer, name, path);
-    setMajorMode(buffer);
+    inferMajorMode(buffer);
     initScale(&buffer->scale);
     buffer->fontPath = strdup(fontPath);
 
@@ -257,7 +263,8 @@ void deactivateRegion(Buffer *buffer) {
     buffer->region.active = false;
 }
 
-void setBufferContent(Buffer *buffer, const char *newContent) {
+// TODO Set the mark ?
+void setBufferContent(Buffer *buffer, const char *newContent, bool pointAtSize) {
     size_t newContentSize = strlen(newContent) + 1; // +1 for the null terminator
 
     // Check if buffer's current capacity is insufficient
@@ -274,12 +281,17 @@ void setBufferContent(Buffer *buffer, const char *newContent) {
     // Copy new content to buffer
     strcpy(buffer->content, newContent);
     buffer->size = newContentSize - 1; // Not counting the null terminator
-    buffer->point = buffer->size; // Optionally reset the cursor position
+    if (pointAtSize) {
+        buffer->point = buffer->size;
+    } else {
+        buffer->point = 0;
+    }
 }
 
 #include "editor.h"
 
 
+// TODO Make it variadic also on the C side
 void message(const char *message) {
     Buffer *minibuffer = getBuffer(&bm, "minibuffer");
     Buffer *messageBuffer = getBuffer(&bm, "message");
@@ -293,9 +305,9 @@ void message(const char *message) {
         snprintf(formattedMessage, totalLen, "[%s]", message);
 
         if (isCurrentBuffer(&bm, "minibuffer") || isearch.searching) {
-            setBufferContent(messageBuffer, formattedMessage);
+            setBufferContent(messageBuffer, formattedMessage, true);
         } else {
-            setBufferContent(minibuffer, message);
+            setBufferContent(minibuffer, message, true);
         }
 
         free(formattedMessage);
@@ -305,15 +317,12 @@ void message(const char *message) {
     }
 }
 
-
-
 void cleanBuffer(BufferManager *bm, char *name) {
     Buffer *buffer = getBuffer(bm, name);
     buffer->size = 0;
     buffer->point = 0;
     buffer->content[0] = 0;
 }
-
 
 Buffer *getBufferUnderCursor(WindowManager *wm) {
     Window *win = wm->head;
@@ -326,17 +335,21 @@ Buffer *getBufferUnderCursor(WindowManager *wm) {
     }
 }
 
-void setMajorMode(Buffer *buffer) {
+void setMajorMode(Buffer *buffer, char *mode) {
+    buffer->major_mode = strdup(mode);
+}
+
+void inferMajorMode(Buffer *buffer) {
     const char *extension = strrchr(buffer->name, '.');
     if (extension) {
         if (strcmp(extension, ".c") == 0 || strcmp(extension, ".h") == 0) {
             free(buffer->major_mode);
-            buffer->major_mode = strdup("c");
+            setMajorMode(buffer, "c");
         }
 
         if (strcmp(extension, ".scm") == 0)  {
             free(buffer->major_mode);
-            buffer->major_mode = strdup("scm");
+            setMajorMode(buffer, "scm");
         }
 
         // Add more major-modes...
@@ -365,7 +378,6 @@ void initSegments(Segments *segments) {
     addSegment(segments, "scale",       "Nan");
     addSegment(segments, "branch",      "Nab");
 }
-
 
 void updateSegments(Modeline *modeline, Buffer *buffer) {
     for (size_t i = 0; i < modeline->segments.count; i++) {
@@ -403,8 +415,10 @@ void updateSegments(Modeline *modeline, Buffer *buffer) {
                 segment->content = strdup("C");
             } else if (strcmp(buffer->major_mode, "scm") == 0) {
                 segment->content = strdup("G");
+            } else if (strcmp(buffer->major_mode, "gemini") == 0) {
+                segment->content = strdup("Gem");
             } else {
-                segment->content = strdup("F");
+              segment->content = strdup("F");
             }
         }
     }
@@ -431,7 +445,7 @@ int lineNumberAtPoint(Buffer *buffer, size_t point) {
 }
 
 
-// NOTE We could memoize them
+// NOTE We could/should memoize them
 Color foregroundColorAtPoint(Buffer *buffer, size_t point) {
     Color color = CT.text;
 
@@ -466,4 +480,37 @@ Color foregroundColorAtPoint(Buffer *buffer, size_t point) {
 
     return color;
 }
+
+
+/* Returns a newly allocated string containing the text of the current line.
+   Caller is responsible for freeing the returned string. */
+char* getCurrentLine(Buffer *buffer) {
+    if (buffer->size == 0) return strdup("");
+
+    // Find the start of the current line
+    size_t start = buffer->point;
+    while (start > 0 && buffer->content[start - 1] != '\n') {
+        start--;
+    }
+
+    // Find the end of the current line
+    size_t end = buffer->point;
+    while (end < buffer->size && buffer->content[end] != '\n') {
+        end++;
+    }
+
+    // Calculate length of the line (and allocate memory for it)
+    size_t len = end - start;
+    char *line = malloc(len + 1);
+    if (!line) {
+        fprintf(stderr, "Failed to allocate memory for current line.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Copy the line content and null terminate it
+    strncpy(line, buffer->content + start, len);
+    line[len] = '\0';
+    return line;
+}
+
 

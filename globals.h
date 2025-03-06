@@ -58,5 +58,12 @@ extern char   *clock_shader;
 extern char   *buffer_shader;
 extern char   *scratch_buffer_content;
 extern bool   mark_mode;
+extern bool   region_fg_mode;
+extern bool   region_alpa_mode;
+extern bool   lerp_line_mode;
+extern float  lerp_line_duration;
+extern bool   vertico_mode;
+extern bool   find_file_focus_existing;
+extern size_t max_gemini_redirections;
 
 #endif

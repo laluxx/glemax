@@ -24,5 +24,7 @@ void initScale(Scale *scale);
 Font* updateFont(Scale *scale, int newIndex, char *fontPath);
 void text_scale_decrease(BufferManager *bm, char *fontPath, WindowManager *wm, int sh, int arg);
 void text_scale_increase(BufferManager *bm, char *fontPath, WindowManager *wm, int sh, int arg);
+void text_scale_increase_by_buffer(BufferManager *bm, char *bufferName, char *fontPath, WindowManager *wm, int sh, int arg);
+void text_scale_decrease_by_buffer(BufferManager *bm, char *bufferName, char *fontPath, WindowManager *wm, int sh, int arg);
 
 #endif

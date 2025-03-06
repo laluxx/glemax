@@ -112,7 +112,7 @@ SCM scm_buffer_set_content(SCM name, SCM content) {
     
     Buffer *buffer = getBuffer(&bm, c_name);
     if (buffer) {
-        setBufferContent(buffer, c_content);
+        setBufferContent(buffer, c_content, true);
         free(c_name); free(c_content);
         return SCM_BOOL_T;
     }
@@ -231,7 +231,7 @@ static void init_glemax_primitives(void* data) {
     DEFSUBR("buffer-switch",      scm_buffer_switch, 1, 0, 0);
     DEFSUBR("buffer-get-content", scm_buffer_get_content, 1, 0, 0);
     DEFSUBR("buffer-set-content", scm_buffer_set_content, 2, 0, 0);
-    
+
     // Window operations
     DEFSUBR("split-window-below", scm_window_split_vertical, 0, 0, 0);
     DEFSUBR("split-window-right", scm_window_split_horizontal, 0, 0, 0);

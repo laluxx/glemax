@@ -11,7 +11,7 @@ Theme currentTheme;
 Theme previousTheme;
 
 
-
+// TODO take the alpha as a parameter
 Color hexToColor(const char *hex) {
     int r, g, b;
     sscanf(hex, "#%02x%02x%02x", &r, &g, &b);
@@ -67,6 +67,7 @@ void updateThemeInterpolation() {
         currentTheme.isearch_highlight     = lerpColor(startTheme.isearch_highlight, endTheme.isearch_highlight, interpolationProgress);
         currentTheme.minibuffer_prompt     = lerpColor(startTheme.minibuffer_prompt, endTheme.minibuffer_prompt, interpolationProgress);
         currentTheme.region                = lerpColor(startTheme.region, endTheme.region, interpolationProgress);
+        currentTheme.region_fg             = lerpColor(startTheme.region_fg, endTheme.region_fg, interpolationProgress);
         currentTheme.message               = lerpColor(startTheme.message, endTheme.message, interpolationProgress);
         currentTheme.type                  = lerpColor(startTheme.type, endTheme.type, interpolationProgress);
         currentTheme.string                = lerpColor(startTheme.string, endTheme.string, interpolationProgress);
@@ -154,6 +155,7 @@ void initThemes() {
         .minibuffer_prompt     = hexToColor("#4d9391"),
         .message               = hexToColor("#4d9391"),
         .region                = hexToColor("#2E403B"),
+        .region_fg             = hexToColor("#adadb9"),
         .type                  = hexToColor("#cd9575"),
         .string                = hexToColor("#6FB593"),
         .number                = hexToColor("#e4e4e8"),
@@ -190,7 +192,8 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#272C3A"),
         .minibuffer_prompt     = hexToColor("#9587DD"),
         .region                = hexToColor("#14171e"),
-        .message               = hexToColor("#9587DD"),
+        .region_fg             = hexToColor("#14171e"),
+        .message               = hexToColor("#D4D4D6"),
         .type                  = hexToColor("#11ccb2"),
         .string                = hexToColor("#62D2DB"),
         .number                = hexToColor("#d4d4d6"),
@@ -227,7 +230,8 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#32324A"),
         .minibuffer_prompt     = hexToColor("#738FD7"),
         .region                = hexToColor("#2E403B"),
-        .message               = hexToColor("#738FD7"),
+        .region_fg             = hexToColor("#2E403B"),
+        .message               = hexToColor("#E6E6E8"),
         .type                  = hexToColor("#d24b83"),
         .string                = hexToColor("#7CF083"),
         .number                = hexToColor("#e6e6e8"),
@@ -264,7 +268,8 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#4e333b"),
         .minibuffer_prompt     = hexToColor("#4EB8CA"),
         .region                = hexToColor("#402E33"),
-        .message               = hexToColor("#4EB8CA"),
+        .region_fg             = hexToColor("#402E33"),
+        .message               = hexToColor("#EEDCC1"),
         .type                  = hexToColor("#b9c791"),
         .string                = hexToColor("#fbaed2"),
         .number                = hexToColor("#EEDCC1"),
@@ -301,7 +306,8 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#4b474c"),
         .minibuffer_prompt     = hexToColor("#237AD3"),
         .region                = hexToColor("#113d69"),
-        .message               = hexToColor("#237AD3"),
+        .region_fg             = hexToColor("#113d69"),
+        .message               = hexToColor("#d4d4d4"),
         .type                  = hexToColor("#35CDAF"),
         .string                = hexToColor("#DB8E73"),
         .number                = hexToColor("#d4d4d4"),
@@ -338,7 +344,8 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#303035"),
         .minibuffer_prompt     = hexToColor("#51afef"),
         .region                = hexToColor("#42444a"),
-        .message               = hexToColor("#51afef"),
+        .region_fg             = hexToColor("#42444a"),
+        .message               = hexToColor("#BBC2CF"),
         .type                  = hexToColor("#ECBE7B"),
         .string                = hexToColor("#98be65"),
         .number                = hexToColor("#bbc2cf"),
@@ -375,7 +382,8 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#303035"),
         .minibuffer_prompt     = hexToColor("#5EC4FF"),
         .region                = hexToColor("#28323B"),
-        .message               = hexToColor("#5EC4FF"),
+        .region_fg             = hexToColor("#28323B"),
+        .message               = hexToColor("#A0B3C5"),
         .type                  = hexToColor("#EBBF83"),
         .string                = hexToColor("#539AFC"),
         .number                = hexToColor("#A0B3C5"),
@@ -412,7 +420,8 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#303035"),
         .minibuffer_prompt     = hexToColor("#fd971f"),
         .region                = hexToColor("#4e4e4e"),
-        .message               = hexToColor("#fd971f"),
+        .region_fg             = hexToColor("#4e4e4e"),
+        .message               = hexToColor("#D6D6D4"),
         .type                  = hexToColor("#66d9ef"),
         .string                = hexToColor("#e2c770"),
         .number                = hexToColor("#d6d6d4"),
@@ -449,7 +458,8 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#403838"),
         .minibuffer_prompt     = hexToColor("#f9cc6c"),
         .region                = hexToColor("#403838"),
-        .message               = hexToColor("#f9cc6c"),
+        .region_fg             = hexToColor("#403838"),
+        .message               = hexToColor("#fff1f3"),
         .type                  = hexToColor("#85dacc"),
         .string                = hexToColor("#f9cc6c"),
         .number                = hexToColor("#fff1f3"),
@@ -486,7 +496,8 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#5a7087"),
         .minibuffer_prompt     = hexToColor("#81A1C1"),
         .region                = hexToColor("#434C5E"),
-        .message               = hexToColor("#81A1C1"),
+        .region_fg             = hexToColor("#434C5E"),
+        .message               = hexToColor("#ECEFF4"),
         .type                  = hexToColor("#8FBCBB"),
         .string                = hexToColor("#A3BE8C"),
         .number                = hexToColor("#ECEFF4"),

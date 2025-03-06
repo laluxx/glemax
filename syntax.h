@@ -30,6 +30,8 @@ void adjustSyntaxRanges(Buffer *buffer, int index, int lengthChange);
 void updateSyntaxIncremental(Buffer *buffer, TSInputEdit *edit);
 TSInputEdit createInputEdit(Buffer *buffer, size_t start_byte, size_t old_end_byte, size_t new_end_byte);
 
+void traverseTreeForFunctions(TSNode node, const char *source, Buffer *buffer);
+void extractFunctions(Buffer *buffer);
 
 bool isHexColor(const char *text);
 #endif // SYNTAX_H

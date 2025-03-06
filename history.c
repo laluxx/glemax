@@ -65,7 +65,7 @@ const char* previous_history_element(NamedHistories *nh, const char *name, Buffe
 
     if (history->index > 0) {
         history->index--;
-        setBufferContent(minibuffer, history->entries[history->index]);
+        setBufferContent(minibuffer, history->entries[history->index], true);
         return history->entries[history->index];
     } else {
         message("Beginning of history; no preceding item");
@@ -86,7 +86,7 @@ const char* next_history_element(NamedHistories *nh, const char *name, Buffer *m
     if (history->index >= history->size) {
         history->index = history->size;
         if (history->currentInput) {
-            setBufferContent(minibuffer, history->currentInput);  // Restore the original content
+            setBufferContent(minibuffer, history->currentInput, true);  // Restore the original content
         } else {
             message("No more next history entries.");
         }
@@ -94,7 +94,7 @@ const char* next_history_element(NamedHistories *nh, const char *name, Buffer *m
     }
 
 
-    setBufferContent(minibuffer, history->entries[history->index]);
+    setBufferContent(minibuffer, history->entries[history->index], true);
     return history->entries[history->index];
 }
 

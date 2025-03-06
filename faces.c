@@ -1,5 +1,7 @@
-#include "faces.h"
 #include "wm.h"
+#include <stdio.h>
+#include <string.h>
+#include "faces.h"
 
 // FIXME This file is garbage
 // TODO actually implement faces we can have syntax highlighting and font weight and slant
@@ -165,3 +167,88 @@ void text_scale_decrease(BufferManager *bm, char *fontPath, WindowManager *wm, i
 /*     } */
 /* } */
 
+void text_scale_increase_by_buffer(BufferManager *bm, char *bufferName,
+                                   char *fontPath, WindowManager *wm, int sh,
+                                   int arg) {
+    // Retrieve the buffer by name
+    Buffer *buffer = getBuffer(bm, bufferName);
+    if (!buffer) {
+        message("Buffer not found");
+        return;
+    }
+
+    Scale *scale = &buffer->scale;
+    int nextIndex = scale->index + arg;
+    if (arg == 0) {
+        nextIndex = SCALE_ZERO_INDEX; // Reset to default scale if arg is 0
+    }
+
+    if (nextIndex >= SCALE_ZERO_INDEX + MIN_FONT_SCALE &&
+        nextIndex <= SCALE_ZERO_INDEX + MAX_FONT_SCALE) {
+        Font *oldFont =
+            buffer->font; // (Optional) Use oldFont if needed for calculations
+        buffer->font = updateFont(scale, nextIndex, buffer->fontPath);
+
+        // Adjust y position and height of all windows showing the same buffer
+        Window *win = wm->head;
+        while (win) {
+            if (win->buffer == buffer) {
+                int oldY = win->y; // Store old y position
+                win->y =
+                    sh - buffer->font->ascent +
+                    buffer->font->descent;  // Update y position for the new font size
+                int deltaY = oldY - win->y; // Calculate how much y has moved
+                win->height -=
+                    deltaY; // Adjust height to keep the bottom boundary fixed
+            }
+            win = win->next;
+        }
+    } else {
+        message("Cannot increase the font size any further");
+    }
+}
+
+void text_scale_decrease_by_buffer(BufferManager *bm, char *bufferName,
+                                   char *fontPath, WindowManager *wm, int sh,
+                                   int arg) {
+    // Retrieve the buffer by name
+    Buffer *buffer = getBuffer(bm, bufferName);
+    if (!buffer) {
+        message("Buffer not found");
+        return;
+    }
+
+    Scale *scale = &buffer->scale;
+    int nextIndex = scale->index - arg;
+    if (arg == 0) {
+        nextIndex = SCALE_ZERO_INDEX; // Reset to default scale if arg is 0
+    }
+
+    if (nextIndex >= SCALE_ZERO_INDEX + MIN_FONT_SCALE &&
+        nextIndex <= SCALE_ZERO_INDEX + MAX_FONT_SCALE) {
+        Font *oldFont =
+            buffer->font; // (Optional) Use oldFont if needed for calculations
+        buffer->font = updateFont(scale, nextIndex, buffer->fontPath);
+
+        // Adjust y position and height of all windows showing the same buffer
+        Window *win = wm->head;
+        while (win) {
+            if (win->buffer == buffer) {
+                int oldY = win->y; // Store old y position
+                win->y =
+                    sh - buffer->font->ascent +
+                    buffer->font->descent;  // Update y position for the new font size
+                int deltaY = win->y - oldY; // Calculate how much y has moved
+                win->height += deltaY; // Adjust height to compensate for y movement
+
+                // Correct for modeline discrepancies if necessary
+                if (deltaY < 0) {
+                    win->height -= deltaY;
+                }
+            }
+            win = win->next;
+        }
+    } else {
+        message("Cannot decrease the font size any further");
+    }
+}

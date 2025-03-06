@@ -17,6 +17,7 @@
 #include "globals.h"
 #include "syntax.h"
 
+// TODO Option to convert tabs into whitespaces or just render and handle them correctly
 void insertChar(Buffer *buffer, unsigned int codepoint) {
     // Handle negative values that came from signed chars
     if (codepoint > 0x10FFFF) {
@@ -110,17 +111,13 @@ void insertChar(Buffer *buffer, unsigned int codepoint) {
 /* } */
 
 void beginning_of_buffer(Buffer *buffer) {
-    if (buffer != NULL && buffer->content != NULL) {
-        buffer->point = 0;
-    }
-    set_mark(buffer, buffer->point);
+    if (buffer != NULL && buffer->content != NULL) buffer->point = 0;
+    if (!buffer->region.marked) set_mark(buffer, buffer->point);
 }
 
 void end_of_buffer(Buffer *buffer) {
-    if (buffer != NULL && buffer->content != NULL) {
-        buffer->point = buffer->size;
-    }
-    set_mark(buffer, buffer->point);
+    if (buffer != NULL && buffer->content != NULL) buffer->point = buffer->size;
+    if (!buffer->region.marked) set_mark(buffer, buffer->point);
 }
 
 void right_char(Buffer *buffer, bool shift, BufferManager *bm, int arg) {
@@ -245,6 +242,12 @@ void set_mark_command(Buffer *buffer) {
     }
 }
 
+void exchange_point_and_mark (Buffer *buffer) {
+    size_t save = buffer->region.mark;
+    buffer->region.mark = buffer->point;
+    buffer->point = save;
+}
+
 void mark_scope(Buffer *buffer) {
     if (buffer->scopes.count == 0) {
         message("No scopes found");
@@ -277,37 +280,6 @@ void mark_scope(Buffer *buffer) {
     }
 }
 
-/* void mark_scope(Buffer *buffer) { */
-/*     if (buffer->scopes.count == 0) { */
-/*         message("No scopes found"); */
-/*         return; */
-/*     } */
-
-/*     size_t point = buffer->point; */
-/*     Scope *innermost = NULL; */
-
-/*     // Iterate through all scopes to find the innermost containing the point */
-/*     for (size_t i = 0; i < buffer->scopes.count; i++) { */
-/*         Scope *scope = &buffer->scopes.items[i]; */
-/*         if (scope->start <= point && point <= scope->end) { */
-/*             // Check if this scope is deeper (higher level) than the current innermost */
-/*             if (innermost == NULL || scope->level > innermost->level) { */
-/*                 innermost = scope; */
-/*             } */
-/*         } */
-/*     } */
-
-/*     if (innermost != NULL) { */
-/*         buffer->region.start = innermost->start; */
-/*         buffer->region.end = innermost->end; */
-/*         buffer->region.active = true; */
-/*         buffer->region.marked = false; // Optional: adjust based on your region handling */
-/*         /\* message("Scope marked from %zu to %zu", innermost->start, innermost->end); *\/ */
-/*     } else { */
-/*         /\* message("Cursor is not within a scope"); *\/ */
-/*     } */
-/* } */
-
 void set_goal_column(Buffer *buffer) {
     // Find the start of the current line
     size_t line_start = buffer->point;
@@ -315,17 +287,16 @@ void set_goal_column(Buffer *buffer) {
         line_start--;
     }
 
-    // Calculate the current column position
     int current_column = buffer->point - line_start;
 
-    // If the goal_column is already set to the current column, reset it to -1
+    // Toggle the goal column
     if (buffer->goal_column == current_column) {
         buffer->goal_column = -1;
+        message("No goal column");
     } else {
-        // Otherwise, set the goal_column to the current column
         buffer->goal_column = current_column;
+        message("Goal column set! (use C-x C-n again to unset it)");
     }
-    message("Goal column set! (use C-x C-n again to unset it)");
 }
 
 
@@ -384,57 +355,6 @@ void next_line(Buffer *buffer, bool shift, BufferManager *bm, int goal_column) {
     }
 }
 
-// TODO Goal column
-/* void next_line(Buffer *buffer, bool shift, BufferManager *bm) { */
-/*     if (shift) { */
-/*         if (!buffer->region.active) { */
-/*             activateRegion(buffer); */
-/*         } */
-/*     } else { */
-/*         if (!buffer->region.marked) { */
-/*             buffer->region.active = false; */
-/*         } */
-/*     } */
-
-/*     int currentLineEnd = buffer->point; */
-/*     int nextLineStart = buffer->size; */
-/*     int columnPosition = 0; */
-
-/*     // Determine the end of the current line. */
-/*     for (size_t i = buffer->point; i < buffer->size; i++) { */
-/*         if (buffer->content[i] == '\n') { */
-/*             currentLineEnd = i; */
-/*             nextLineStart = i + 1; */
-/*             break; */
-/*         } */
-/*     } */
-
-/*     // Calculate column position. */
-/*     int currentLineStart = buffer->point; */
-/*     while (currentLineStart > 0 && buffer->content[currentLineStart - 1] != '\n') { */
-/*         currentLineStart--; */
-/*     } */
-/*     columnPosition = buffer->point - currentLineStart; */
-
-/*     // Calculate the point position in the next line, limited by the line's length. */
-/*     size_t targetPosition = nextLineStart + columnPosition; */
-/*     if (nextLineStart >= buffer->size) { */
-/*         // If no new line to jump to, move cursor to the end and display message */
-/*         buffer->point = buffer->size; */
-/*         message("End of buffer"); */
-/*     } else { */
-/*         for (size_t i = nextLineStart; i <= buffer->size; i++) { */
-/*             if (buffer->content[i] == '\n' || i == buffer->size) { */
-/*                 if (targetPosition > i) { */
-/*                     targetPosition = i; */
-/*                 } */
-/*                 break; */
-/*             } */
-/*         } */
-/*         buffer->point = targetPosition; */
-/*     } */
-/* } */
-
 void move_beginning_of_line(Buffer * buffer, bool shift) {
     if (shift) {
         if (!buffer->region.active) {
@@ -466,7 +386,7 @@ void move_end_of_line(Buffer *buffer, bool shift) {
     for (size_t i = buffer->point; i < buffer->size; i++) {
         if (buffer->content[i] == '\n') {
             buffer->point = i;
-            set_mark(buffer, buffer->point);
+            /* set_mark(buffer, buffer->point); */
             return;
         }
     }
@@ -610,52 +530,13 @@ void kill_line(Buffer *buffer, KillRing *kr) {
     }
 }
 
-/* void kill_line(Buffer *buffer, KillRing *kr) { */
-/*     if (buffer->point >= buffer->size) return; // Nothing to delete if at the end of the buffer */
-
-/*     size_t startOfLine = buffer->point; */
-/*     size_t endOfLine = startOfLine; */
-
-/*     // Determine the end of the current line, but do not include the newline character */
-/*     while (endOfLine < buffer->size && buffer->content[endOfLine] != '\n') { */
-/*         endOfLine++; */
-/*     } */
-
-/*     size_t numToDelete = endOfLine - startOfLine; */
-
-/*     if (numToDelete > 0) { */
-/*         // Capture the text to be killed */
-/*         char *cut_text = malloc(numToDelete + 1); */
-/*         if (cut_text) { */
-/*             memcpy(cut_text, buffer->content + startOfLine, numToDelete); */
-/*             cut_text[numToDelete] = '\0'; */
-/*             kr_kill(kr, cut_text); // Add to kr_kill ring */
-/*             free(cut_text); // Free temporary text buffer */
-/*         } */
-
-/*         // Shift remaining text in the buffer left over the killed text */
-/*         memmove(buffer->content + startOfLine, buffer->content + endOfLine, buffer->size - endOfLine + 1); // +1 for null terminator */
-
-/*         // Update buffer size */
-/*         buffer->size -= numToDelete; */
-/*     } */
-
-/*     // Handle special case for an empty line or a line where the cursor is right at the newline */
-/*     if (startOfLine == endOfLine && startOfLine < buffer->size && buffer->content[startOfLine] == '\n') { */
-/*         // Kill the newline itself */
-/*         memmove(buffer->content + startOfLine, buffer->content + startOfLine + 1, buffer->size - startOfLine); */
-/*         buffer->size--; */
-/*     } */
-/* } */
-
-
-
 
 void open_line(Buffer *buffer) {
     // Ensure there is enough capacity, and if not, expand the buffer
     if (buffer->size + 1 >= buffer->capacity) {
         buffer->capacity *= 2;
-        char *newContent = realloc(buffer->content, buffer->capacity * sizeof(char));
+        char *newContent =
+            realloc(buffer->content, buffer->capacity * sizeof(char));
         if (!newContent) {
             fprintf(stderr, "Failed to reallocate memory for buffer.\n");
             return;
@@ -663,12 +544,37 @@ void open_line(Buffer *buffer) {
         buffer->content = newContent;
     }
 
+    // Insert the newline character
     memmove(buffer->content + buffer->point + 1, buffer->content + buffer->point,
-            buffer->size - buffer->point + 1); // NOTE +1 for null terminator
-
+            buffer->size - buffer->point + 1); // +1 for null terminator
     buffer->content[buffer->point] = '\n';
     buffer->size++;
+
+    // Start the animation if lerp_line_mode is enabled
+    if (lerp_line_mode) {
+        buffer->animatedLineNumber = lineNumberAtPoint(buffer, buffer->point);
+        buffer->animationStartTime = getTime();
+    }
 }
+
+/* void open_line(Buffer *buffer) { */
+/*     // Ensure there is enough capacity, and if not, expand the buffer */
+/*     if (buffer->size + 1 >= buffer->capacity) { */
+/*         buffer->capacity *= 2; */
+/*         char *newContent = realloc(buffer->content, buffer->capacity * sizeof(char)); */
+/*         if (!newContent) { */
+/*             fprintf(stderr, "Failed to reallocate memory for buffer.\n"); */
+/*             return; */
+/*         } */
+/*         buffer->content = newContent; */
+/*     } */
+
+/*     memmove(buffer->content + buffer->point + 1, buffer->content + buffer->point, */
+/*             buffer->size - buffer->point + 1); // NOTE +1 for null terminator */
+
+/*     buffer->content[buffer->point] = '\n'; */
+/*     buffer->size++; */
+/* } */
 
 void delete_indentation(Buffer *buffer, BufferManager *bm, int arg) {
     move_beginning_of_line(buffer, false);
@@ -766,6 +672,7 @@ void copy_to_clipboard(const char* text) {
     }
 }
 
+// TODO error killing lines that contain tab
 void kr_kill(KillRing* kr, const char* text) {
     if (kr->size >= kr->capacity) {
         // Free the oldest entry if the ring is full
@@ -1526,6 +1433,15 @@ int mkdirp(const char *path, mode_t mode) {
     return 0;
 }
 
+
+void trimTrailingFile(char *path) {
+    char *lastSlash = strrchr(path, '/');
+    if (lastSlash && *(lastSlash + 1) != '\0') {
+        *(lastSlash + 1) = '\0'; // Keep the last '/' and terminate after it
+    }
+}
+
+// GOOD
 void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     Buffer *minibuffer = getBuffer(bm, "minibuffer");
     Buffer *prompt = getBuffer(bm, "prompt");
@@ -1536,12 +1452,13 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
             minibuffer->size = 0;
             minibuffer->content[0] = '\0';
             minibuffer->point = 0;
-            setBufferContent(minibuffer, bm->lastBuffer->path);
+            trimTrailingFile(bm->lastBuffer->path); // NOTE Trim trailing file
+            setBufferContent(minibuffer, bm->lastBuffer->path, true);
         }
         free(prompt->content);
         prompt->content = strdup("Find file: ");
         switchToBuffer(bm, "minibuffer");
-        return;
+        return; // NOTE
     }
 
     // Resolve path with home directory expansion
@@ -1553,7 +1470,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
 
     char fullPath[PATH_MAX];
     const char *filePath = minibuffer->content;
-    
+
     if (filePath[0] == '~') {
         snprintf(fullPath, sizeof(fullPath), "%s%s", homeDir, filePath + 1);
     } else {
@@ -1591,8 +1508,8 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
         file = fopen(fullPath, "w+");
         if (!file) {
             char errMsg[256];
-            snprintf(errMsg, sizeof(errMsg), "Failed to create file %s: %s",
-                     fullPath, strerror(errno));
+            snprintf(errMsg, sizeof(errMsg), "Failed to create file %s: %s", fullPath,
+                     strerror(errno));
             message(errMsg);
             return;
         }
@@ -1602,10 +1519,36 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     // Create display path with ~ notation if applicable
     char displayPath[PATH_MAX];
     if (strncmp(fullPath, homeDir, strlen(homeDir)) == 0) {
-        snprintf(displayPath, sizeof(displayPath), "~%s", fullPath + strlen(homeDir));
+        snprintf(displayPath, sizeof(displayPath), "~%s",
+                 fullPath + strlen(homeDir));
     } else {
         strncpy(displayPath, fullPath, sizeof(displayPath) - 1);
         displayPath[sizeof(displayPath) - 1] = '\0';
+    }
+
+    // Check if the buffer already exists
+    Buffer *existingBuffer = getBuffer(bm, displayPath);
+    if (existingBuffer) {
+        if (find_file_focus_existing) {
+            // Find the window that already displays the buffer
+            Window *win = wm->head;
+            while (win != NULL) {
+                if (win->buffer == existingBuffer) {
+                    // Make this window the active one
+                    wm->activeWindow = win;
+                    switchToBuffer(bm, displayPath);
+                    fclose(file);
+                    return;
+                }
+                win = win->next;
+            }
+        } else {
+            // Allow the same buffer to be displayed in multiple windows
+            wm->activeWindow->buffer = existingBuffer;
+            switchToBuffer(bm, displayPath);
+            fclose(file);
+            return;
+        }
     }
 
     // Create and setup the buffer
@@ -1617,22 +1560,13 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
         return;
     }
 
-    // Initialize buffer content
-    fileBuffer->content = malloc(sizeof(char) * 1024);
-    if (!fileBuffer->content) {
-        message("Failed to allocate buffer memory");
-        fclose(file);
-        return;
-    }
-
-    fileBuffer->capacity = 1024;
-    fileBuffer->size = 0;
+    recenter(wm->activeWindow, true);
 
     if (!isNewFile) {
         // Read existing file content
         char readBuffer[1024];
         size_t bytesRead;
-        
+
         while ((bytesRead = fread(readBuffer, 1, sizeof(readBuffer), file)) > 0) {
             // Ensure buffer capacity
             if (fileBuffer->size + bytesRead >= fileBuffer->capacity) {
@@ -1671,174 +1605,6 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
         message(msg);
     }
 }
-
-// IMPORTANT ORIGINAL
-/* void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) { */
-/*     Buffer *minibuffer = getBuffer(bm, "minibuffer"); */
-/*     Buffer *prompt = getBuffer(bm, "prompt"); */
-
-/*     // Handle initial minibuffer setup */
-/*     if (minibuffer->size == 0) { */
-/*         if (bm->lastBuffer && bm->lastBuffer->path) { */
-/*             minibuffer->size = 0; */
-/*             minibuffer->content[0] = '\0'; */
-/*             minibuffer->point = 0; */
-/*             setBufferContent(minibuffer, bm->lastBuffer->path); */
-/*         } */
-/*         free(prompt->content); */
-/*         prompt->content = strdup("Find file: "); */
-/*         switchToBuffer(bm, "minibuffer"); */
-/*         return; */
-/*     } */
-
-/*     // Resolve path with home directory expansion */
-/*     const char *homeDir = getenv("HOME"); */
-/*     if (!homeDir) { */
-/*         message("Environment variable HOME is not set"); */
-/*         return; */
-/*     } */
-
-/*     char fullPath[PATH_MAX]; */
-/*     const char *filePath = minibuffer->content; */
-    
-/*     if (filePath[0] == '~') { */
-/*         snprintf(fullPath, sizeof(fullPath), "%s%s", homeDir, filePath + 1); */
-/*     } else { */
-/*         strncpy(fullPath, filePath, sizeof(fullPath) - 1); */
-/*         fullPath[sizeof(fullPath) - 1] = '\0'; */
-/*     } */
-
-/*     // Create directories if they don't exist */
-/*     char *dirPath = strdup(fullPath); */
-/*     if (!dirPath) { */
-/*         message("Memory allocation failed"); */
-/*         return; */
-/*     } */
-
-/*     char *lastSlash = strrchr(dirPath, '/'); */
-/*     if (lastSlash) { */
-/*         *lastSlash = '\0'; */
-        
-/*         // Create each directory in the path */
-/*         char *p = dirPath; */
-/*         if (*p == '/') p++;  // Skip leading slash */
-        
-/*         while (*p) { */
-/*             if (*p == '/') { */
-/*                 *p = '\0'; */
-/*                 if (mkdir(dirPath, 0755) != 0 && errno != EEXIST) { */
-/*                     char errMsg[256]; */
-/*                     snprintf(errMsg, sizeof(errMsg), "Failed to create directory %s: %s", */
-/*                              dirPath, strerror(errno)); */
-/*                     message(errMsg); */
-/*                     free(dirPath); */
-/*                     return; */
-/*                 } */
-/*                 *p = '/'; */
-/*             } */
-/*             p++; */
-/*         } */
-        
-/*         // Create final directory */
-/*         if (mkdir(dirPath, 0755) != 0 && errno != EEXIST) { */
-/*             char errMsg[256]; */
-/*             snprintf(errMsg, sizeof(errMsg), "Failed to create directory %s: %s", */
-/*                      dirPath, strerror(errno)); */
-/*             message(errMsg); */
-/*             free(dirPath); */
-/*             return; */
-/*         } */
-/*     } */
-/*     free(dirPath); */
-
-/*     // Try to open existing file first */
-/*     FILE *file = fopen(fullPath, "r"); */
-/*     bool isNewFile = false; */
-
-/*     if (!file) { */
-/*         // Create new file if it doesn't exist */
-/*         file = fopen(fullPath, "w+"); */
-/*         if (!file) { */
-/*             char errMsg[256]; */
-/*             snprintf(errMsg, sizeof(errMsg), "Failed to create file %s: %s", */
-/*                      fullPath, strerror(errno)); */
-/*             message(errMsg); */
-/*             return; */
-/*         } */
-/*         isNewFile = true; */
-/*     } */
-
-/*     // Create display path with ~ notation if applicable */
-/*     char displayPath[PATH_MAX]; */
-/*     if (strncmp(fullPath, homeDir, strlen(homeDir)) == 0) { */
-/*         snprintf(displayPath, sizeof(displayPath), "~%s", fullPath + strlen(homeDir)); */
-/*     } else { */
-/*         strncpy(displayPath, fullPath, sizeof(displayPath) - 1); */
-/*         displayPath[sizeof(displayPath) - 1] = '\0'; */
-/*     } */
-
-/*     // Create and setup the buffer */
-/*     newBuffer(bm, wm, displayPath, displayPath, fontPath, sw, sh); */
-/*     Buffer *fileBuffer = getBuffer(bm, displayPath); */
-/*     if (!fileBuffer) { */
-/*         message("Failed to create buffer"); */
-/*         fclose(file); */
-/*         return; */
-/*     } */
-
-/*     // Initialize buffer content */
-/*     fileBuffer->content = malloc(sizeof(char) * 1024); */
-/*     if (!fileBuffer->content) { */
-/*         message("Failed to allocate buffer memory"); */
-/*         fclose(file); */
-/*         return; */
-/*     } */
-
-/*     fileBuffer->capacity = 1024; */
-/*     fileBuffer->size = 0; */
-
-/*     if (!isNewFile) { */
-/*         // Read existing file content */
-/*         char readBuffer[1024]; */
-/*         size_t bytesRead; */
-        
-/*         while ((bytesRead = fread(readBuffer, 1, sizeof(readBuffer), file)) > 0) { */
-/*             // Ensure buffer capacity */
-/*             if (fileBuffer->size + bytesRead >= fileBuffer->capacity) { */
-/*                 fileBuffer->capacity = (fileBuffer->size + bytesRead) * 2; */
-/*                 char *newContent = realloc(fileBuffer->content, fileBuffer->capacity); */
-/*                 if (!newContent) { */
-/*                     message("Failed to resize buffer"); */
-/*                     free(fileBuffer->content); */
-/*                     fclose(file); */
-/*                     return; */
-/*                 } */
-/*                 fileBuffer->content = newContent; */
-/*             } */
-
-/*             // Copy read data to buffer */
-/*             memcpy(fileBuffer->content + fileBuffer->size, readBuffer, bytesRead); */
-/*             fileBuffer->size += bytesRead; */
-/*         } */
-/*     } */
-
-/*     // Null terminate buffer content */
-/*     fileBuffer->content[fileBuffer->size] = '\0'; */
-/*     fclose(file); */
-
-/*     // Switch to new buffer and parse syntax */
-/*     switchToBuffer(bm, fileBuffer->name); */
-/*     parseSyntax(fileBuffer); */
-
-/*     // Show appropriate message */
-/*     if (isNewFile) { */
-/*         message("(New file)"); */
-/*     } else { */
-/*         char msg[256]; */
-/*         snprintf(msg, sizeof(msg), "Loaded %s", displayPath); */
-/*         message(msg); */
-/*     } */
-/* } */
 
 void backspace(Buffer *buffer, bool electric_pair_mode) {
     if (buffer->point > 0 && electric_pair_mode) {
@@ -1958,7 +1724,7 @@ void execute_shell_command(BufferManager *bm, char *command) {
 
         Buffer *minibuffer = getBuffer(bm, "minibuffer");
         if (minibuffer != NULL) {
-            setBufferContent(minibuffer, output);
+            setBufferContent(minibuffer, output, true);
             minibuffer->point = 0;
         } else {
             message("Minibuffer not found");
@@ -2143,7 +1909,7 @@ void eval_expression(BufferManager *bm) {
             minibuffer->content[0] = '\0';
             free(prompt->content);
             prompt->content = strdup("Eval: ");
-            setBufferContent(minibuffer, "()");
+            setBufferContent(minibuffer, "()", true);
             minibuffer->point = 1;  // Place cursor between parentheses
             switchToBuffer(bm, "minibuffer");
         } else {
@@ -2683,7 +2449,7 @@ void save_buffer(BufferManager *bm, Buffer *buffer) {
     updateDiffs(buffer);
 }
 
-void recenter(Window *window) {
+void recenter(Window *window, bool instant) {
     if (!window || !window->buffer) return;
 
     Buffer *buffer = window->buffer;
@@ -2706,15 +2472,77 @@ void recenter(Window *window) {
     float maxScroll = buffer->size * lineHeight - window->height;
     targetY = fmax(0, fmin(targetY, maxScroll));
 
-    if (scroll_lerp_mode) {
-        // Smooth scrolling: set targetScrollY and enable scrolling
+    if (instant) {
+        // Instantly set the scroll position
+        window->scroll.y = targetY;
+        window->targetScrollY = targetY;
+        window->isScrolling = false;
+    } else {
+        // Use smooth scrolling (lerping)
         window->targetScrollY = targetY;
         window->isScrolling = true;
-    } else {
-        // Instant scrolling: directly set scroll.y
-        window->scroll.y = targetY;
     }
 }
+
+/* void recenter(Window *window, bool instant) { */
+/*     if (!window || !window->buffer) return; */
+
+/*     Buffer *buffer = window->buffer; */
+/*     Font *font = buffer->font; */
+/*     float lineHeight = font->ascent + font->descent; */
+
+/*     // Calculate the vertical position of the cursor in the buffer */
+/*     int cursorLine = 0; */
+/*     for (size_t i = 0; i < buffer->point && i < buffer->size; i++) { */
+/*         if (buffer->content[i] == '\n') { */
+/*             cursorLine++; */
+/*         } */
+/*     } */
+
+/*     float cursorY = cursorLine * lineHeight; */
+/*     float verticalCenter = window->height / 2; */
+/*     float targetY = cursorY - verticalCenter; */
+
+/*     if (instant) { */
+/*         window->scroll.y = targetY; // Instantly set scroll position */
+/*     } else { */
+/*         window->targetScrollY = targetY; */
+/*         window->isScrolling = true; */
+/*     } */
+/* } */
+
+/* void recenter(Window *window) { */
+/*     if (!window || !window->buffer) return; */
+
+/*     Buffer *buffer = window->buffer; */
+/*     Font *font = buffer->font; */
+/*     float lineHeight = font->ascent + font->descent; */
+
+/*     // Calculate the vertical position of the cursor in the buffer */
+/*     int cursorLine = 0; */
+/*     for (size_t i = 0; i < buffer->point && i < buffer->size; i++) { */
+/*         if (buffer->content[i] == '\n') { */
+/*             cursorLine++; */
+/*         } */
+/*     } */
+
+/*     float cursorY = cursorLine * lineHeight; */
+/*     float verticalCenter = window->height / 2; */
+/*     float targetY = cursorY - verticalCenter + lineHeight / 2; */
+
+/*     // Clamp the target scroll position to avoid scrolling beyond the content */
+/*     float maxScroll = buffer->size * lineHeight - window->height; */
+/*     targetY = fmax(0, fmin(targetY, maxScroll)); */
+
+/*     if (scroll_lerp_mode) { */
+/*         // Smooth scrolling: set targetScrollY and enable scrolling */
+/*         window->targetScrollY = targetY; */
+/*         window->isScrolling = true; */
+/*     } else { */
+/*         // Instant scrolling: directly set scroll.y */
+/*         window->scroll.y = targetY; */
+/*     } */
+/* } */
 
 
 void capitalize_word(Buffer *buffer) {
@@ -2891,6 +2719,76 @@ void diff_hl_previous_hunk(Buffer *buffer) {
     free(hunkStarts);
 }
 
+
+
+void scroll(Window *window, int arg) {
+    float lineHeight = window->buffer->font->ascent + window->buffer->font->descent;
+    if (arg == 0) arg = 1;
+    window->scroll.y += lineHeight * arg;
+}
+
+void scroll_up(Window *window, int arg) {
+  if (!window || !window->buffer)
+    return;
+  if (arg == 0)
+    arg = 1;
+  Buffer *buffer = window->buffer;
+  Font *font = buffer->font;
+  float lineHeight = font->ascent + font->descent;
+  if (lineHeight <= 0)
+    return;
+
+  // Calculate visible lines
+  int visibleLines = (int)(window->height / lineHeight) - 1; // -1 for modeline
+
+  // Emacs behavior: Move to new page but keep last two visible lines at top
+  float scrollAmount = (visibleLines - 2) * lineHeight * arg;
+  float newScrollY = window->targetScrollY + scrollAmount;
+
+  // Bounds checking
+  float bufferHeight = buffer->size * lineHeight;
+  float maxScrollY = bufferHeight - window->height;
+  if (maxScrollY < 0)
+    maxScrollY = 0;
+  if (newScrollY > maxScrollY)
+    newScrollY = maxScrollY;
+
+  window->targetScrollY = newScrollY;
+  window->isScrolling = true;
+
+  // Position cursor in visible area - specifically on the first line of new
+  // viewport
+  int newFirstVisibleLine = (int)(newScrollY / lineHeight);
+  moveTo(buffer, newFirstVisibleLine, 0);
+}
+
+void scroll_down(Window *window, int arg) {
+    if (!window || !window->buffer) return;
+    if (arg == 0) arg = 1;
+    Buffer *buffer = window->buffer;
+    Font *font = buffer->font;
+    float lineHeight = font->ascent + font->descent;
+
+    if (lineHeight <= 0) return;
+
+    // Calculate visible lines
+    int visibleLines = (int)(window->height / lineHeight) - 1; // -1 for modeline
+
+    // Emacs behavior: Move to previous page but keep first two lines of previous
+    // view at bottom
+    float scrollAmount = (visibleLines - 2) * lineHeight * arg;
+    float newScrollY = window->targetScrollY - scrollAmount;
+
+    // Bounds checking
+    if (newScrollY < 0) newScrollY = 0;
+
+    window->targetScrollY = newScrollY;
+    window->isScrolling = true;
+
+    // Position cursor on the first line of new viewport
+    int newFirstVisibleLine = (int)(newScrollY / lineHeight);
+    moveTo(buffer, newFirstVisibleLine, 0);
+}
 
 
 
@@ -3083,22 +2981,8 @@ void insert_guile_symbols(Buffer *buffer, BufferManager *bm) {
 }
 
 
-Function *getFunctionAtPoint(Buffer *buffer, size_t point) {
-    for (size_t i = 0; i < buffer->functions.used; i++) {
-        Function *func = &buffer->functions.items[i];
-        if (point >= func->start_byte && point <= func->end_byte) {
-            return func;
-        }
-    }
-    return NULL;
-}
 
-void printBufferFunctions(Buffer *buffer) {
-    printf("Functions in %s:\n", buffer->name);
-    for (size_t i = 0; i < buffer->functions.used; i++) {
-        Function *func = &buffer->functions.items[i];
-        printf("%3d: %s (lines %d-%d)\n", 
-               i+1, func->name, func->line_number,
-               byteToPoint(buffer->content, func->end_byte).row + 1);
-    }
-}
+
+
+
+

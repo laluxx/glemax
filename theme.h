@@ -18,6 +18,7 @@ typedef struct {
     Color isearch_highlight;
     Color minibuffer_prompt;
     Color region;
+    Color region_fg;
     Color message;
     Color type;
     Color string;
@@ -46,27 +47,26 @@ typedef struct {
 extern Theme themes[];
 extern Theme currentTheme;
 extern Theme previousTheme;
-extern int currentThemeIndex;
-extern int previousThemeIndex;
+extern int   currentThemeIndex;
+extern int   previousThemeIndex;
 extern float interpolationProgress;
-extern bool theme_lerp;
+extern bool  theme_lerp;
 extern float theme_lerp_speed;
 extern float theme_lerp_threshold;
 
 #define CT (currentTheme)
 
 Color hexToColor(const char *hexStr);
-void initThemes();
-void switchToNextTheme();
-void switchToPreviousTheme();
-void load_theme(const char *themeName);
+void  initThemes();
+void  switchToNextTheme();
+void  switchToPreviousTheme();
+void  load_theme(const char *themeName);
 Color lerpColor(Color a, Color b, float t);
-void updateThemeInterpolation();
-void switchToTheme(int newIndex);
-bool colorsEqual(Color a, Color b);
+void  updateThemeInterpolation();
+void  switchToTheme(int newIndex);
+bool  colorsEqual(Color a, Color b);
 
-// Colors utility
-
+// Color utilities
 Color blendColors(Color color1, Color color2, float alpha);
 
 #endif // THEME_H

@@ -42,6 +42,8 @@ void fill_scopes(Buffer *buffer, Scopes *scopes) {
     }
 }
 
+// TODO Scope syntax highligthing
+// is this scope a function definition ?
 Color getScopeColor(int level) {
     Color colors[] = {
         CT.bg, // or CT.moderline

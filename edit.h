@@ -96,7 +96,8 @@ void keep_lines(BufferManager *bm, WindowManager *wm);
 void load_font(BufferManager *bm, WindowManager *wm, int sw, int sh);
 
 
-void recenter(Window *window);
+/* void recenter(Window *window); */
+void recenter(Window *window, bool instant);
 void capitalize_word(Buffer *buffer);
 
 bool bolp(Buffer *buffer);
@@ -116,7 +117,12 @@ static SCM collect_symbols_helper(void *data);
 void insert_guile_symbols(Buffer *buffer, BufferManager *bm);
 
 
-Function *getFunctionAtPoint(Buffer *buffer, size_t point);
-void printBufferFunctions(Buffer *buffer);
+void exchange_point_and_mark(Buffer *buffer);
+
+void scroll(Window *window, int arg);
+void scroll_up(Window *window, int arg);
+void scroll_down(Window *window, int arg);
+
+void trimTrailingFile(char *path);
 
 #endif

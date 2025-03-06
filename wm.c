@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+// TODO i want it to mange X11 windows aswell add it to lume lazy fuck
 // TODO Tags M-0..9
 
 void initWindowManager(WindowManager *wm, BufferManager *bm, Font *font, int sw, int sh) {
@@ -21,18 +22,20 @@ void initWindowManager(WindowManager *wm, BufferManager *bm, Font *font, int sw,
     wm->count = 1;
 }
 
+#include "edit.h"
+
+// TODO Extract the smart part
 void split_window_right(WindowManager *wm, Font *font, int sw, int sh) {
     Window *active = wm->activeWindow;
     Window *newWindow = malloc(sizeof(Window));
-    if (!newWindow) return;
 
-    *newWindow = *active; // NOTE Copy the settings from active window
+    *newWindow = *active; // Copy settings from active window
     newWindow->width /= 2;
     active->width -= newWindow->width;
     newWindow->x += active->width;
-    
-    active->splitOrientation = VERTICAL; // Set split orientation
-    newWindow->splitOrientation = VERTICAL; // Set split orientation
+
+    active->splitOrientation = VERTICAL;
+    newWindow->splitOrientation = VERTICAL;
 
     // Insert new window into the list
     newWindow->next = active->next;
@@ -42,12 +45,95 @@ void split_window_right(WindowManager *wm, Font *font, int sw, int sh) {
     active->next = newWindow;
     newWindow->prev = active;
 
+    // Check if the active buffer is a .c or .h file and try to open the
+    // corresponding file
+    if (active->buffer && active->buffer->path) {
+        const char *current_path = active->buffer->path;
+        size_t len = strlen(current_path);
+        char *target_path = NULL;
+
+        // Check if the current file is a .c file
+        if (len >= 2 && strcmp(current_path + len - 2, ".c") == 0) {
+            // Construct .h path
+            target_path = malloc(len + 1);
+            if (target_path) {
+                strcpy(target_path, current_path);
+                strcpy(target_path + len - 2, ".h"); // Replace .c with .h
+            }
+        }
+        // Check if the current file is a .h file
+        else if (len >= 2 && strcmp(current_path + len - 2, ".h") == 0) {
+            // Construct .c path
+            target_path = malloc(len + 1);
+            if (target_path) {
+                strcpy(target_path, current_path);
+                strcpy(target_path + len - 2, ".c"); // Replace .h with .c
+            }
+        }
+
+        if (target_path) {
+            // Temporarily store the original buffer
+            Buffer *original_buffer = active->buffer;
+
+            // Insert the target path into the minibuffer and call find_file
+            Buffer *minibuffer = getBuffer(&bm, "minibuffer");
+            if (minibuffer) {
+                setBufferContent(minibuffer, target_path, true);
+                find_file(&bm, wm, sw, sh);
+
+                // After find_file runs, the new buffer will be created and active
+                Buffer *target_buffer = getActiveBuffer(&bm);
+                if (target_buffer) {
+                    // Assign the target buffer to the new window
+                    newWindow->buffer = target_buffer;
+                    recenter(newWindow, true);
+                    // Restore the original buffer to the active window
+                    active->buffer = original_buffer;
+                    // Switch the active window back to the original window
+                    wm->activeWindow = active;
+                    active->isActive = true;
+                    newWindow->isActive = false;
+                }
+            }
+
+            free(target_path);
+        }
+    }
+
     wm->count++;
 }
+
+
+
+/* void split_window_right(WindowManager *wm, Font *font, int sw, int sh) { */
+/*     Window *active = wm->activeWindow; */
+/*     Window *newWindow = malloc(sizeof(Window)); */
+/*     if (!newWindow) return; */
+
+
+/*     *newWindow = *active; // NOTE Copy the settings from active window */
+/*     newWindow->width /= 2; */
+/*     active->width -= newWindow->width; */
+/*     newWindow->x += active->width; */
+    
+/*     active->splitOrientation = VERTICAL; // Set split orientation */
+/*     newWindow->splitOrientation = VERTICAL; // Set split orientation */
+
+/*     // Insert new window into the list */
+/*     newWindow->next = active->next; */
+/*     if (active->next) { */
+/*         active->next->prev = newWindow; */
+/*     } */
+/*     active->next = newWindow; */
+/*     newWindow->prev = active; */
+
+/*     wm->count++; */
+/* } */
 
 void split_window_below(WindowManager *wm, Font *font, int sw, int sh) {
     Window *active = wm->activeWindow;
     Window *newWindow = malloc(sizeof(Window));
+    
     if (!newWindow) return;
 
     *newWindow = *active; // Copy settings from active window
@@ -72,9 +158,7 @@ void split_window_below(WindowManager *wm, Font *font, int sw, int sh) {
 }
 
 void delete_window(WindowManager *wm) {
-    if (wm->count <= 1) {
-        return; // Cannot delete the last remaining window
-    }
+    if (wm->count <= 1) return; // Cannot delete the last window
 
     Window *active = wm->activeWindow;
 
@@ -288,6 +372,5 @@ bool isBottomWindow(WindowManager *wm, Window *window) {
     }
     return true;
 }
-
 
 
