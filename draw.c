@@ -10,7 +10,9 @@
 #include "globals.h"
 
 
+
 // NOTE We do it on ever keypress seems right, right ? 
+// TODO Scope module
 void fill_scopes(Buffer *buffer, Scopes *scopes) {
     if (!hl_scope_mode) return;
 
@@ -46,8 +48,8 @@ void fill_scopes(Buffer *buffer, Scopes *scopes) {
 // is this scope a function definition ?
 Color getScopeColor(int level) {
     Color colors[] = {
-        CT.bg, // or CT.moderline
-        CT.bg,
+        CT.bg, // or CT.moderline 
+        CT.bg, // or make those colors a config
         CT.bg,
         CT.bg,
         CT.bg,
@@ -201,6 +203,8 @@ void drawMinimapRegion(WindowManager *wm, Window *mainWindow, Buffer *buffer) {
 
     flush();
 }
+
+
 
 void drawMinimapCursor(WindowManager *wm, Window *mainWindow, Buffer *buffer) {
     if (!minimap_cursor || !wm || !mainWindow || !buffer)

@@ -3,6 +3,7 @@
 #include "commands.h"
 #include "keychords.h"
 #include "faces.h"
+#include "symbols.h"
 #include "syntax.h"
 #include <stddef.h>
 #include <stdlib.h>
@@ -17,8 +18,15 @@
 #include "globals.h"
 #include "syntax.h"
 
-// TODO Option to convert tabs into whitespaces or just render and handle them correctly
+jmp_buf env; // NOTE Global jump buffer
+
+
 void insertChar(Buffer *buffer, unsigned int codepoint) {
+    if (buffer->readOnly) {
+        message("Buffer is read-only: #<buffer FILENAME>");
+        return;
+    }
+
     // Handle negative values that came from signed chars
     if (codepoint > 0x10FFFF) {
         // Convert wrapped negative value back to control character range
@@ -94,22 +102,6 @@ void insertChar(Buffer *buffer, unsigned int codepoint) {
     buffer->content[buffer->size] = '\0';
 }
 
-/* void insertChar(Buffer *buffer, char c) { */
-/*     if (buffer->size + 1 >= buffer->capacity) { */
-/*         buffer->capacity *= 2; */
-/*         buffer->content = realloc(buffer->content, buffer->capacity * sizeof(char)); */
-/*         if (!buffer->content) { */
-/*             fprintf(stderr, "Failed to reallocate memory for buffer.\n"); */
-/*             return; */
-/*         } */
-/*     } */
-/*     memmove(buffer->content + buffer->point + 1, buffer->content + buffer->point, buffer->size - buffer->point); */
-/*     buffer->content[buffer->point] = c; */
-/*     buffer->point++; */
-/*     buffer->size++; */
-/*     buffer->content[buffer->size] = '\0'; */
-/* } */
-
 void beginning_of_buffer(Buffer *buffer) {
     if (buffer != NULL && buffer->content != NULL) buffer->point = 0;
     if (!buffer->region.marked) set_mark(buffer, buffer->point);
@@ -120,7 +112,7 @@ void end_of_buffer(Buffer *buffer) {
     if (!buffer->region.marked) set_mark(buffer, buffer->point);
 }
 
-void right_char(Buffer *buffer, bool shift, BufferManager *bm, int arg) {
+void right_char(Buffer *buffer, bool shift, int arg) {
     if (shift) {
         if (!buffer->region.active) {
             activateRegion(buffer);
@@ -140,7 +132,7 @@ void right_char(Buffer *buffer, bool shift, BufferManager *bm, int arg) {
     }
 }
 
-void left_char(Buffer *buffer, bool shift, BufferManager *bm, int arg) {
+void left_char(Buffer *buffer, bool shift, int arg) {
     if (shift) {
         if (!buffer->region.active) {
             activateRegion(buffer);
@@ -158,8 +150,7 @@ void left_char(Buffer *buffer, bool shift, BufferManager *bm, int arg) {
     }
 }
 
-void previous_line(Buffer *buffer, bool shift, BufferManager *bm,
-                   int goal_column) {
+void previous_line(Buffer *buffer, bool shift, int goal_column) {
     if (shift) {
         if (!buffer->region.active) {
             activateRegion(buffer);
@@ -242,12 +233,15 @@ void set_mark_command(Buffer *buffer) {
     }
 }
 
+// TODO CLamp it to the beginning and of buffer
 void exchange_point_and_mark (Buffer *buffer) {
     size_t save = buffer->region.mark;
     buffer->region.mark = buffer->point;
     buffer->point = save;
 }
 
+
+// TODO it doesn't work
 void mark_scope(Buffer *buffer) {
     if (buffer->scopes.count == 0) {
         message("No scopes found");
@@ -300,7 +294,7 @@ void set_goal_column(Buffer *buffer) {
 }
 
 
-void next_line(Buffer *buffer, bool shift, BufferManager *bm, int goal_column) {
+void next_line(Buffer *buffer, bool shift, int goal_column) {
     if (shift) {
         if (!buffer->region.active) {
             activateRegion(buffer);
@@ -393,7 +387,7 @@ void move_end_of_line(Buffer *buffer, bool shift) {
     buffer->point = buffer->size; // no newline was found, go to the end of buffer
 }
 
-void delete_char(Buffer *buffer, BufferManager *bm) {
+void delete_char(Buffer *buffer) {
     if (buffer->point >= buffer->size) {
         message("End of buffer");
         return;
@@ -402,16 +396,14 @@ void delete_char(Buffer *buffer, BufferManager *bm) {
     if (buffer->region.active) buffer->region.active = false;
 
     // Move all characters after the cursor left by one position
-    memmove(buffer->content + buffer->point, buffer->content + buffer->point + 1,
+    MM(buffer->content + buffer->point, buffer->content + buffer->point + 1,
             buffer->size - buffer->point - 1);
-    // Decrease the size of the buffer
-    buffer->size--;
-    // Null-terminate the string
-    buffer->content[buffer->size] = '\0';
+
+    buffer->size--; // Decrease the size of the buffer
+    buffer->content[buffer->size] = '\0'; // Null-terminate the string
 }
 
 void kill_sexp(Buffer *buffer, KillRing *kr, int arg) {
-    if (buffer == NULL || kr == NULL) return;
     if (arg == 0) arg = 1;  // Default to killing one sexp if no arg provided
     
     size_t start_point = buffer->point;
@@ -471,7 +463,7 @@ void kill_sexp(Buffer *buffer, KillRing *kr, int arg) {
     }
     
     // Remove the killed text from the buffer
-    memmove(buffer->content + start_point, buffer->content + end_point, buffer->size - end_point);
+    MM(buffer->content + start_point, buffer->content + end_point, buffer->size - end_point);
     buffer->size -= length;
     buffer->content[buffer->size] = '\0';
     
@@ -516,7 +508,7 @@ void kill_line(Buffer *buffer, KillRing *kr) {
         }
 
         // Shift remaining text in the buffer left over the killed text
-        memmove(buffer->content + startOfLine, buffer->content + endOfLine, buffer->size - endOfLine + 1); // +1 for null terminator
+        MM(buffer->content + startOfLine, buffer->content + endOfLine, buffer->size - endOfLine + 1); // +1 for null terminator
 
         // Update buffer size
         buffer->size -= numToDelete;
@@ -525,7 +517,7 @@ void kill_line(Buffer *buffer, KillRing *kr) {
     // Handle special case for an empty line
     if (startOfLine == endOfLine && startOfLine < buffer->size && buffer->content[startOfLine] == '\n') {
         // Kill the newline itself
-        memmove(buffer->content + startOfLine, buffer->content + startOfLine + 1, buffer->size - startOfLine);
+        MM(buffer->content + startOfLine, buffer->content + startOfLine + 1, buffer->size - startOfLine);
         buffer->size--;
     }
 }
@@ -545,7 +537,7 @@ void open_line(Buffer *buffer) {
     }
 
     // Insert the newline character
-    memmove(buffer->content + buffer->point + 1, buffer->content + buffer->point,
+    MM(buffer->content + buffer->point + 1, buffer->content + buffer->point,
             buffer->size - buffer->point + 1); // +1 for null terminator
     buffer->content[buffer->point] = '\n';
     buffer->size++;
@@ -557,41 +549,23 @@ void open_line(Buffer *buffer) {
     }
 }
 
-/* void open_line(Buffer *buffer) { */
-/*     // Ensure there is enough capacity, and if not, expand the buffer */
-/*     if (buffer->size + 1 >= buffer->capacity) { */
-/*         buffer->capacity *= 2; */
-/*         char *newContent = realloc(buffer->content, buffer->capacity * sizeof(char)); */
-/*         if (!newContent) { */
-/*             fprintf(stderr, "Failed to reallocate memory for buffer.\n"); */
-/*             return; */
-/*         } */
-/*         buffer->content = newContent; */
-/*     } */
-
-/*     memmove(buffer->content + buffer->point + 1, buffer->content + buffer->point, */
-/*             buffer->size - buffer->point + 1); // NOTE +1 for null terminator */
-
-/*     buffer->content[buffer->point] = '\n'; */
-/*     buffer->size++; */
-/* } */
-
 void delete_indentation(Buffer *buffer, BufferManager *bm, int arg) {
     move_beginning_of_line(buffer, false);
 
     if (buffer->point > 0) {
-        left_char(buffer, false, bm, arg);
-        delete_char(buffer, bm);
+        left_char(buffer, false, arg);
+        delete_char(buffer);
         insertChar(buffer, ' ');
-        left_char(buffer, false, bm, arg);
+        left_char(buffer, false, arg);
     }
 }
 
-/// NOTE Add one indentation from the beginning of the buffer.
-void addIndentation(Buffer *buffer, int indentation) {
-    if (buffer->size + indentation >= buffer->capacity) {
+void add_indentation(Buffer *buffer) {
+    // Ensure there's enough capacity for one more character
+    if (buffer->size + 1 >= buffer->capacity) {
         buffer->capacity *= 2;
-        char *newContent = realloc(buffer->content, buffer->capacity * sizeof(char));
+        char *newContent =
+            realloc(buffer->content, buffer->capacity * sizeof(char));
         if (!newContent) {
             fprintf(stderr, "Failed to reallocate memory for buffer.\n");
             return;
@@ -599,50 +573,46 @@ void addIndentation(Buffer *buffer, int indentation) {
         buffer->content = newContent;
     }
 
+    // Find the start of the current line
     int lineStart = buffer->point;
     while (lineStart > 0 && buffer->content[lineStart - 1] != '\n') {
         lineStart--;
     }
 
-    // Add spaces at the beginning of the line
-    memmove(buffer->content + lineStart + indentation, buffer->content + lineStart, buffer->size - lineStart + 1); // Including null terminator
-    for (int i = 0; i < indentation; i++) {
-        buffer->content[lineStart + i] = ' ';
-    }
-    buffer->size += indentation;
+    // Insert a tab character at the beginning of the line
+    memmove(buffer->content + lineStart + 1, buffer->content + lineStart,
+            buffer->size - lineStart + 1); // Include null terminator
+    buffer->content[lineStart] = '\t';
+    buffer->size += 1;
 
-    // Adjust cursor position relative to the added spaces if cursor is beyond the added spaces
+    // Adjust cursor position if it's on or after the line start
     if (buffer->point >= lineStart) {
-        buffer->point += indentation;
+        buffer->point += 1;
     }
 }
 
-/// NOTE Remove one indentation from the beginning of the buffer.
-void removeIndentation(Buffer *buffer, int indentation) {
+void remove_indentation(Buffer *buffer) {
+    // Find the start of the current line
     int lineStart = buffer->point;
     while (lineStart > 0 && buffer->content[lineStart - 1] != '\n') {
         lineStart--;
     }
 
-    // Determine the actual number of spaces we can remove
-    int count = 0;
-    for (int i = lineStart; i < lineStart + indentation && buffer->content[i] == ' '; i++) {
-        count++;
-    }
+    // Check if there's a tab character at the line start
+    if (buffer->content[lineStart] == '\t') {
+        // Remove the tab by shifting the content left
+        memmove(buffer->content + lineStart, buffer->content + lineStart + 1,
+                buffer->size - (lineStart + 1) + 1); // Include null terminator
+        buffer->size -= 1;
 
-    if (count > 0) {
-        memmove(buffer->content + lineStart, buffer->content + lineStart + count, buffer->size - (lineStart + count) + 1); // Including null terminator
-        buffer->size -= count;
-
-        // Adjust cursor position relative to the removed spaces if cursor is beyond the removed spaces
-        if (buffer->point > lineStart + count) {
-            buffer->point -= count;
-        } else if (buffer->point > lineStart) {
+        // Adjust cursor position if necessary
+        if (buffer->point > lineStart) {
+            buffer->point -= 1;
+        } else if (buffer->point >= lineStart) {
             buffer->point = lineStart;
         }
     }
 }
-
 
 void initKillRing(KillRing* kr, int capacity) {
     kr->entries = malloc(sizeof(char*) * capacity);
@@ -688,6 +658,43 @@ void kr_kill(KillRing* kr, const char* text) {
     copy_to_clipboard(text);
 }
 
+
+void delete_region(Buffer *buffer) {
+    size_t start, end;
+
+    if (buffer->region.active) {
+        start = buffer->region.start;
+        end = buffer->region.end;
+    } else {
+        // kill between mark and point if the region is not active
+        start = buffer->region.mark;
+        end = buffer->point;
+    }
+
+    // Ensure start is always less than end
+    if (start > end) {
+        size_t temp = start;
+        start = end;
+        end = temp;
+    }
+
+    if (end > buffer->size)
+        end = buffer->size; // Clamp end to buffer size
+    size_t region_length = end - start;
+
+    if (region_length == 0) {
+        message("Empty region, nothing to kill.\n");
+        return;
+    }
+
+    // Remove the region text from the buffer
+    MM(buffer->content + start, buffer->content + end, buffer->size - end + 1);
+    buffer->size -= region_length;
+    buffer->point = start; // Update cursor position to start of the killed region
+    buffer->region.active = false; // Deactivate region after killing it
+}
+
+
 void kill_region(Buffer *buffer, KillRing *kr) {
     size_t start, end;
 
@@ -726,7 +733,7 @@ void kill_region(Buffer *buffer, KillRing *kr) {
     }
 
     // Remove the region text from the buffer
-    memmove(buffer->content + start, buffer->content + end,
+    MM(buffer->content + start, buffer->content + end,
             buffer->size - end + 1);
     buffer->size -= region_length;
 
@@ -775,11 +782,11 @@ char* paste_from_clipboard() {
     return result;
 }
 
+
 // TODO use the arg to yank n times
 // or yank at n lines from the cursor line positive or negative
 // could be helpful with relative line numbers,
 // emacs doesn't seem to use the universal argument for yank
-
 void yank(Buffer *buffer, KillRing *kr, int arg) {
     char *clipboard_text = paste_from_clipboard();
     if (!clipboard_text) return;
@@ -889,7 +896,7 @@ void duplicate_line(Buffer *buffer) {
     }
 
     // Shift the text after lineEnd to make space for the duplicate line
-    memmove(buffer->content + lineEnd + lineLength, buffer->content + lineEnd, buffer->size - lineEnd);
+    MM(buffer->content + lineEnd + lineLength, buffer->content + lineEnd, buffer->size - lineEnd);
 
     // Copy the line to duplicate
     memcpy(buffer->content + lineEnd, buffer->content + lineStart, lineLength);
@@ -956,70 +963,70 @@ bool backward_word(Buffer *buffer, int count, bool shift) {
 
 // FIXME incorrect
 void transpose_subr(Buffer *buffer, bool (*mover)(Buffer *, int, bool), int arg) {
-  if (buffer == NULL || mover == NULL) return;
+    if (buffer == NULL || mover == NULL) return;
 
-  size_t pos1_start, pos1_end, pos2_start, pos2_end;
-  size_t original_point = buffer->point;
+    size_t pos1_start, pos1_end, pos2_start, pos2_end;
+    size_t original_point = buffer->point;
 
-  if (arg == 0) {
-    // TODO: Implement mark functionality
-    return;
-  } else if (arg > 0) {
-    // Determine pos1 (current word)
-    (*mover)(buffer, -1, false); // Move backward to start of current word
-    pos1_start = buffer->point;
-    (*mover)(buffer, 1, false); // Move forward to end of current word
-    pos1_end = buffer->point;
+    if (arg == 0) {
+        // TODO: Implement mark functionality
+        return;
+    } else if (arg > 0) {
+        // Determine pos1 (current word)
+        (*mover)(buffer, -1, false); // Move backward to start of current word
+        pos1_start = buffer->point;
+        (*mover)(buffer, 1, false); // Move forward to end of current word
+        pos1_end = buffer->point;
 
-    // Move to pos2 (arg words forward)
-    buffer->point = original_point;
-    for (int i = 0; i < arg; i++) {
-      (*mover)(buffer, 1, false);
+        // Move to pos2 (arg words forward)
+        buffer->point = original_point;
+        for (int i = 0; i < arg; i++) {
+            (*mover)(buffer, 1, false);
+        }
+        pos2_end = buffer->point;
+        (*mover)(buffer, -1, false); // Move back to start of the arg-th word
+        pos2_start = buffer->point;
+    } else { // arg < 0
+        // Move backward (-arg) times
+        for (int i = 0; i > arg; i--) {
+            (*mover)(buffer, -1, false);
+        }
+        pos2_start = buffer->point;
+        (*mover)(buffer, 1, false); // Move forward to end of that word
+        pos2_end = buffer->point;
+
+        // Determine pos1 (current word)
+        buffer->point = original_point;
+        (*mover)(buffer, -1, false); // Move back to start of current word
+        pos1_start = buffer->point;
+        (*mover)(buffer, 1, false); // Move forward to end of current word
+        pos1_end = buffer->point;
     }
-    pos2_end = buffer->point;
-    (*mover)(buffer, -1, false); // Move back to start of the arg-th word
-    pos2_start = buffer->point;
-  } else { // arg < 0
-    // Move backward (-arg) times
-    for (int i = 0; i > arg; i--) {
-      (*mover)(buffer, -1, false);
+
+    // Perform the transposition
+    size_t len1 = pos1_end - pos1_start;
+    size_t len2 = pos2_end - pos2_start;
+    char *text1 = malloc(len1);
+    char *text2 = malloc(len2);
+
+    if (!text1 || !text2) {
+        free(text1);
+        free(text2);
+        return;
     }
-    pos2_start = buffer->point;
-    (*mover)(buffer, 1, false); // Move forward to end of that word
-    pos2_end = buffer->point;
 
-    // Determine pos1 (current word)
-    buffer->point = original_point;
-    (*mover)(buffer, -1, false); // Move back to start of current word
-    pos1_start = buffer->point;
-    (*mover)(buffer, 1, false); // Move forward to end of current word
-    pos1_end = buffer->point;
-  }
+    memcpy(text1, buffer->content + pos1_start, len1);
+    memcpy(text2, buffer->content + pos2_start, len2);
 
-  // Perform the transposition
-  size_t len1 = pos1_end - pos1_start;
-  size_t len2 = pos2_end - pos2_start;
-  char *text1 = malloc(len1);
-  char *text2 = malloc(len2);
+    // Swap the two regions
+    MM(buffer->content + pos2_start, text1, len1);
+    MM(buffer->content + pos1_start, text2, len2);
 
-  if (!text1 || !text2) {
     free(text1);
     free(text2);
-    return;
-  }
 
-  memcpy(text1, buffer->content + pos1_start, len1);
-  memcpy(text2, buffer->content + pos2_start, len2);
-
-  // Swap the two regions
-  memmove(buffer->content + pos2_start, text1, len1);
-  memmove(buffer->content + pos1_start, text2, len2);
-
-  free(text1);
-  free(text2);
-
-  // Position point correctly after transposed regions
-  buffer->point = (arg > 0) ? (pos2_start + len1) : pos2_end;
+    // Position point correctly after transposed regions
+    buffer->point = (arg > 0) ? (pos2_start + len1) : pos2_end;
 }
 
 void transpose_words(Buffer *buffer, int arg) {
@@ -1032,7 +1039,9 @@ void transpose_words(Buffer *buffer, int arg) {
 }
 
 void transpose_chars(Buffer *buffer) {
-    if (buffer == NULL || buffer->content == NULL || buffer->size < 2) {
+    if (buffer == NULL || buffer->content == NULL
+        || buffer->readOnly || buffer->size < 2) {
+        message("Buffer is read-only: #<buffer FILENAME>");
         return;
     }
 
@@ -1055,6 +1064,36 @@ void transpose_chars(Buffer *buffer) {
     if (buffer->point < buffer->size) {
         buffer->point++;
     }
+}
+
+void kill_word(Buffer *buffer, KillRing *kr) {
+    size_t start = buffer->point;
+    size_t end = start;
+    
+    // Skip non-word characters at the current position
+    while (end < buffer->size && !isWordChar(buffer->content[end])) {
+        end++;
+    }
+    
+    // Move forward until a non-word character is encountered, marking the end of the word
+    while (end < buffer->size && isWordChar(buffer->content[end])) {
+        end++;
+    }
+    
+    size_t lengthToDelete = end - start;
+    if (lengthToDelete == 0) return; // No word to delete if length is 0
+    
+    // Copy the word that will be killed
+    char* killed_text = malloc(lengthToDelete + 1);
+    if (killed_text) {
+        memcpy(killed_text, buffer->content + start, lengthToDelete);
+        killed_text[lengthToDelete] = '\0';
+        kr_kill(kr, killed_text); // Assume this function handles the addition to the kill ring
+        free(killed_text);
+    }
+    
+    MM(buffer->content + start, buffer->content + end, buffer->size - end + 1); // Including null terminator
+    buffer->size -= lengthToDelete;
 }
 
 void backward_kill_word(Buffer *buffer, KillRing *kr) {
@@ -1090,7 +1129,7 @@ void backward_kill_word(Buffer *buffer, KillRing *kr) {
     }
 
     // Remove the word from the buffer by shifting the remaining characters
-    memmove(buffer->content + start, buffer->content + end, buffer->size - end + 1); // Including null terminator
+    MM(buffer->content + start, buffer->content + end, buffer->size - end + 1); // Including null terminator
 
     // Update the size of the buffer
     buffer->size -= lengthToDelete;
@@ -1161,7 +1200,7 @@ void backward_paragraph(Buffer *buffer, bool shift) {
 
 
 // TODO use tha arg, to indent n number of line after or before the point if negative
-void indent(Buffer *buffer, int indentation, BufferManager *bm, int arg) {
+void indent(Buffer *buffer, int indentation, int arg) {
     size_t cursor_row_start = 0, cursor_row_end = buffer->size;
     int braceLevel = 0;
     bool startsWithClosingBrace = false;
@@ -1222,7 +1261,7 @@ void indent(Buffer *buffer, int indentation, BufferManager *bm, int arg) {
         currentIndentation++;
     }
     while (currentIndentation > requiredIndentation && currentIndentation > 0) {
-        delete_char(buffer, bm); // Delete excess spaces
+        delete_char(buffer); // Delete excess spaces
         currentIndentation--;
     }
 
@@ -1235,7 +1274,7 @@ void indent(Buffer *buffer, int indentation, BufferManager *bm, int arg) {
 }
 
 
-// FIXME
+// FIXME just loop the lines and call indent ?
 void indent_region(Buffer *buffer, BufferManager *bm, int indentation, int arg) {
     if (!buffer->region.active) {
         printf("No active region to indent.\n");
@@ -1278,7 +1317,7 @@ void indent_region(Buffer *buffer, BufferManager *bm, int indentation, int arg) 
     size_t current_line_start = start;
     while (current_line_start < end) {
         buffer->point = current_line_start;
-        indent(buffer, indentation, bm, arg);  // Apply the indent function once per line
+        indent(buffer, indentation, arg);  // Apply the indent function once per line
 
         // Move to the start of the next line
         do {
@@ -1335,62 +1374,114 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
         add_to_history(nh, prompt->content, minibuffer->content);
         execute_extended_command(bm);
     } else if (strcmp(prompt->content, "Eval: ") == 0) {
-      add_to_history(nh, prompt->content, minibuffer->content);
-      eval_expression(bm); // Let eval_expression handle everything
+        add_to_history(nh, prompt->content, minibuffer->content);
+        eval_expression(bm); // Let eval_expression handle everything
     }
-    else if (strcmp(prompt->content,
-                    "Keep lines containing match for regexp: ") == 0) {
-      add_to_history(nh, prompt->content, minibuffer->content);
-      keep_lines(bm, wm);
+    else if (strcmp(prompt->content, "Keep lines containing match for regexp: ") == 0) {
+        add_to_history(nh, prompt->content, minibuffer->content);
+        keep_lines(bm);
     }
     else if (strcmp(prompt->content, "Switch font to: ") == 0) {
-      add_to_history(nh, prompt->content, minibuffer->content);
-      load_font(bm, wm, sw, sh);
+        add_to_history(nh, prompt->content, minibuffer->content);
+        load_font(bm);
     }
     else if (strcmp(prompt->content, "Goto line: ") == 0) {
-      add_to_history(nh, prompt->content, minibuffer->content);
-      goto_line(bm, wm, sw, sh);
-      minibuffer->size = 0;
-      minibuffer->point = 0;
-      minibuffer->content[0] = '\0';
-      prompt->content = strdup("");
+        add_to_history(nh, prompt->content, minibuffer->content);
+        goto_line(bm);
+        minibuffer->size = 0;
+        minibuffer->point = 0;
+        minibuffer->content[0] = '\0';
+        prompt->content = strdup("");
     }
     else if (strcmp(prompt->content, "Shell command: ") == 0) {
-      add_to_history(nh, prompt->content, minibuffer->content);
-      cleanBuffer(bm, "prompt");
-      execute_shell_command(bm, minibuffer->content);
+        add_to_history(nh, prompt->content, minibuffer->content);
+        cleanBuffer(bm, "prompt");
+        execute_shell_command(bm, minibuffer->content);
     }
+
+    else if (strcmp(prompt->content, "Symbol: ") == 0) {
+        add_to_history(nh, prompt->content, minibuffer->content);
+        cleanBuffer(bm, "prompt");
+
+        // Get the vertico content
+        char *symbol_results = findSymbolsByName(minibuffer->content);
+        setBufferContent(getBuffer(bm, "vertico"), symbol_results, false);
+
+        // Count the number of lines in the vertico output
+        int line_count = 1; // Start with 1 (minimum one line)
+        for (int i = 0; symbol_results[i] != '\0'; i++) {
+            if (symbol_results[i] == '\n') {
+                line_count++;
+            }
+        }
+
+        // Cap at the maximum allowed lines
+        size_t vertico_lines =
+            (line_count > vertico_max_lines) ? vertico_max_lines : line_count;
+
+        // Now add newlines to the minibuffer
+        Buffer *minibuffer = getBuffer(bm, "minibuffer");
+
+        // First save the original content
+        char *original_content = strdup(minibuffer->content);
+        if (!original_content) {
+            fprintf(stderr, "Failed to allocate memory for minibuffer content.\n");
+            free(symbol_results);
+            return;
+        }
+
+        // Clear the minibuffer
+        cleanBuffer(bm, "minibuffer");
+
+        // Add the original content back
+        setBufferContent(minibuffer, original_content, true);
+        free(original_content);
+
+        // Add newlines for the vertico space
+        for (size_t i = 0; i < vertico_lines; i++) {
+            // Move to the end of buffer
+            minibuffer->point = minibuffer->size;
+            // Insert a newline
+            insertChar(minibuffer, '\n');
+        }
+
+        // Reset cursor position to the beginning
+        minibuffer->point = 0;
+
+        free(symbol_results);
+    }
+
     else {
-      if (buffer->point > 0 && buffer->point < buffer->size &&
-          buffer->content[buffer->point - 1] == '{' &&
-          buffer->content[buffer->point] == '}') {
-        // Insert a newline and indent for the opening brace
-        insertChar(buffer, '\n');
-        if (electric_indent_mode) {
-          indent(buffer, indentation, bm, arg);
+        if (buffer->point > 0 && buffer->point < buffer->size &&
+            buffer->content[buffer->point - 1] == '{' && buffer->content[buffer->point] == '}') {
+            // Insert a newline and indent for the opening brace
+            insertChar(buffer, '\n');
+            if (electric_indent_mode) {
+                indent(buffer, indentation, arg);
+            }
+
+            size_t newCursorPosition = buffer->point;
+            insertChar(buffer, '\n');
+
+            if (electric_indent_mode) {
+                indent(buffer, indentation, arg);
+            }
+
+            buffer->point = newCursorPosition;
+        } else {
+            insertChar(buffer, '\n');
         }
 
-        size_t newCursorPosition = buffer->point;
-        insertChar(buffer, '\n');
-
         if (electric_indent_mode) {
-          indent(buffer, indentation, bm, arg);
+            indent(buffer, indentation, arg);
         }
-
-        buffer->point = newCursorPosition;
-      } else {
-        insertChar(buffer, '\n');
-      }
-
-      if (electric_indent_mode) {
-        indent(buffer, indentation, bm, arg);
-      }
     }
 }
 
 // TODO Dired when calling find_file on a directory
 
-// TODO Create files when they don't exist (and directories to get to that file)
+// NOTE We create files when they don't exist (and directories to get to that file)
+// automatically, add an option to do it on save-buffer instead of find-file
 int mkdirp(const char *path, mode_t mode) {
     char *p, *sep;
     char tmp[PATH_MAX];
@@ -1441,18 +1532,18 @@ void trimTrailingFile(char *path) {
     }
 }
 
-// GOOD
+// FIXME Why the first time that it's called it's empty ?
 void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     Buffer *minibuffer = getBuffer(bm, "minibuffer");
     Buffer *prompt = getBuffer(bm, "prompt");
 
-    // Handle initial minibuffer setup
+    // Initial minibuffer setup
     if (minibuffer->size == 0) {
         if (bm->lastBuffer && bm->lastBuffer->path) {
             minibuffer->size = 0;
             minibuffer->content[0] = '\0';
             minibuffer->point = 0;
-            trimTrailingFile(bm->lastBuffer->path); // NOTE Trim trailing file
+            trimTrailingFile(bm->lastBuffer->path);
             setBufferContent(minibuffer, bm->lastBuffer->path, true);
         }
         free(prompt->content);
@@ -1504,7 +1595,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     bool isNewFile = false;
 
     if (!file) {
-        // Create new file if it doesn't exist
+        // Create new file if it doesn't exist TODO DON'T
         file = fopen(fullPath, "w+");
         if (!file) {
             char errMsg[256];
@@ -1593,8 +1684,8 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
 
     // Switch to new buffer and parse syntax
     switchToBuffer(bm, fileBuffer->name);
-    parseSyntax(fileBuffer);
-    updateDiffs(fileBuffer);
+    if (major_mode_is(fileBuffer, "c")) parseSyntax(fileBuffer);
+    updateDiffs(fileBuffer); // TODO if git_dir_p()
 
     // Show appropriate message
     if (isNewFile) {
@@ -1604,6 +1695,16 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
         snprintf(msg, sizeof(msg), "Loaded %s", displayPath);
         message(msg);
     }
+}
+
+// Memmove wrapper NOTE DON'T USE DIRECTLY use MM macro instead.
+void *mm(void *dest, const void *src, size_t n) {
+    Buffer *buffer = wm.activeWindow->buffer;
+    if (buffer->readOnly) {
+        message("Buffer is read-only: #<buffer FILENAME>");
+        longjmp(env, 1); // Jump back to the MM macro
+    }
+    return memmove(dest, src, n);
 }
 
 void backspace(Buffer *buffer, bool electric_pair_mode) {
@@ -1618,7 +1719,7 @@ void backspace(Buffer *buffer, bool electric_pair_mode) {
             (currentChar == '\'' && nextChar == '\'') ||
             (currentChar == '\"' && nextChar == '\"')) {
             // Remove both characters
-            memmove(buffer->content + buffer->point - 1, buffer->content + buffer->point + 1, buffer->size - buffer->point - 1);
+            MM(buffer->content + buffer->point - 1, buffer->content + buffer->point + 1, buffer->size - buffer->point - 1);
             buffer->size -= 2;
             buffer->point--;
             buffer->content[buffer->size] = '\0';
@@ -1628,13 +1729,14 @@ void backspace(Buffer *buffer, bool electric_pair_mode) {
     // Default backspace behavior when not deleting a pair
     if (buffer->point > 0) {
         buffer->point--;
-        memmove(buffer->content + buffer->point, buffer->content + buffer->point + 1, buffer->size - buffer->point);
+        MM(buffer->content + buffer->point, buffer->content + buffer->point + 1, buffer->size - buffer->point);
         buffer->size--;
         buffer->content[buffer->size] = '\0';
     }
 }
 
 // TODO (Shell command succeeded with no output)
+// in this case clear the minibuffer then go to the previous buffer
 void execute_shell_command(BufferManager *bm, char *command) {
     char *output = NULL;
     char current_dir[PATH_MAX];
@@ -1771,55 +1873,107 @@ void shell_command(BufferManager *bm) {
     switchToBuffer(bm, bm->lastBuffer->name);
 }
 
+void helpful_symbol(BufferManager *bm) {
+    Buffer *minibuffer = getBuffer(bm, "minibuffer");
+    Buffer *prompt = getBuffer(bm, "prompt");
+
+    // TODO IMPORTANT Recursive minibuffer
+    if (minibuffer->size == 0) {
+        minibuffer->size = 0;
+        minibuffer->point = 0;
+        minibuffer->content[0] = '\0';
+        free(prompt->content);
+        prompt->content = strdup("Symbol: ");
+        switchToBuffer(bm, "minibuffer");
+        return;
+    }
+
+
+    // Clear minibuffer after operation
+    minibuffer->size = 0;
+    minibuffer->point = 0;
+    minibuffer->content[0] = '\0';
+    prompt->content = strdup("");
+    switchToBuffer(bm, bm->lastBuffer->name);
+}
+
+
+#include "commands.h"
+
 void execute_extended_command(BufferManager *bm) {
     Buffer *minibuffer = getBuffer(bm, "minibuffer");
     Buffer *prompt = getBuffer(bm, "prompt");
 
-    if (bm->lastBuffer && bm->lastBuffer->name) {
-        if (minibuffer->size == 0) {
-            // Initial setup when entering M-x mode
-            minibuffer->size = 0;
-            minibuffer->point = 0;
-            minibuffer->content[0] = '\0';
-            free(prompt->content);
-            prompt->content = strdup("M-x ");
-            switchToBuffer(bm, "minibuffer");
-        } else {
-            // Execute the command and handle cleanup
-            executeCommand(minibuffer->content);
-
-            // Reset state of the last buffer
-            bm->lastBuffer->region.active = false;
-            bm->lastBuffer->region.marked = false;
-
-            // Clean up
-            cleanBuffer(bm, "minibuffer");
-            cleanBuffer(bm, "prompt");
-            switchToBuffer(bm, bm->lastBuffer->name);
-            cleanBuffer(bm, "message");
-        }
+    if (minibuffer->size == 0) {
+        // Initial setup when entering M-x mode
+        minibuffer->size = 0;
+        minibuffer->point = 0;
+        minibuffer->content[0] = '\0';
+        free(prompt->content);
+        prompt->content = strdup("M-x ");
+        switchToBuffer(bm, "minibuffer");
     } else {
-        message("No last buffer to go to.");
+        // Look up the command to determine its type first
+        const char *cmd_name = strdup(minibuffer->content);
+        bool command_executed = false;
+
+        // Clean up
+        cleanBuffer(bm, "minibuffer");
+        cleanBuffer(bm, "prompt");
+
+        // Find the command in our commands array
+        for (size_t i = 0; i < commands.size; ++i) {
+            if (strcmp(commands.commands[i].name, cmd_name) == 0) {
+
+                switch (commands.commands[i].type) {
+                case CMD_TYPE_C_VOID:
+                    executeCommand(cmd_name);
+                    command_executed = true;
+                    break;
+                case CMD_TYPE_C_BUFFER:
+                    // Pass the current buffer to the command
+                    executeBufferCommand(cmd_name, bm->lastBuffer);
+                    command_executed = true;
+                    break;
+                case CMD_TYPE_C_BUFFERMANAGER:
+                    executeBufferManagerCommand(cmd_name, bm);
+                    command_executed = true;
+                    return;
+                    break;
+                case CMD_TYPE_SCHEME:
+                    executeCommand(cmd_name);
+                    command_executed = true;
+                    break;
+                }
+                break;
+            }
+        }
+
+        // If command wasn't found or executed, show error
+        if (!command_executed) {
+            char err_msg[256];
+            snprintf(err_msg, sizeof(err_msg), "Command '%s' not found.", cmd_name);
+            message(err_msg);
+        }
+
+        switchToBuffer(bm, bm->lastBuffer->name);
+        /* cleanBuffer(bm, "message"); */
     }
 }
 
-
-void keep_lines(BufferManager *bm, WindowManager *wm) {
+// TODO keep_lines_incremental() we like that
+void keep_lines(BufferManager *bm) {
     Buffer *minibuffer = getBuffer(bm, "minibuffer");
     Buffer *prompt = getBuffer(bm, "prompt");
 
     // Initial minibuffer setup
     if (minibuffer->size == 0) {
-        if (bm->lastBuffer && bm->lastBuffer->name) {
-            minibuffer->size = 0;
-            minibuffer->point = 0;
-            minibuffer->content[0] = '\0';
-            free(prompt->content);
-            prompt->content = strdup("Keep lines containing match for regexp: ");
-            switchToBuffer(bm, "minibuffer");
-        } else {
-            message("No last buffer to go to.");
-        }
+        minibuffer->size = 0;
+        minibuffer->point = 0;
+        minibuffer->content[0] = '\0';
+        free(prompt->content);
+        prompt->content = strdup("Keep lines containing match for regexp: ");
+        switchToBuffer(bm, "minibuffer");
         return;
     }
 
@@ -1861,7 +2015,7 @@ void keep_lines(BufferManager *bm, WindowManager *wm) {
             if (keep_line) {
                 lines_kept++;
                 if (write_pos != line_start) {
-                    memmove(buffer->content + write_pos, 
+                    MM(buffer->content + write_pos, 
                             buffer->content + line_start, 
                             read_pos - line_start + 1);
                 }
@@ -1932,7 +2086,7 @@ void eval_expression(BufferManager *bm) {
 }
 
 
-void load_font(BufferManager *bm, WindowManager *wm, int sw, int sh) {
+void load_font(BufferManager *bm) {
     Buffer *minibuffer = getBuffer(bm, "minibuffer");
     Buffer *prompt = getBuffer(bm, "prompt");
     // Initial minibuffer setup
@@ -1960,7 +2114,7 @@ void load_font(BufferManager *bm, WindowManager *wm, int sw, int sh) {
         return;
     }
     // Try to load the font at the base size first to verify it works
-    Font *testFont = loadFont(newFontPath, fontsize, "name");
+    Font *testFont = loadFont(newFontPath, fontsize, "name", tab);
     if (!testFont) {
         char error_msg[256];
         snprintf(error_msg, sizeof(error_msg), "Failed to load font: %s", minibuffer->content);
@@ -1981,13 +2135,13 @@ void load_font(BufferManager *bm, WindowManager *wm, int sw, int sh) {
         /* free(buffer->fontPath); */
         buffer->fontPath = strdup(newFontPath);
         
-        Font *newFont = loadFont(newFontPath, buffer->scale.fontSizes[buffer->scale.index], "name");
+        Font *newFont = loadFont(newFontPath, buffer->scale.fontSizes[buffer->scale.index], "name", tab);
         
         if (!newFont) {
             // If we fail to load the font for any buffer, revert all previous changes
             for (int j = 0; j < successful_updates; j++) {
                 Buffer *revert_buffer = bm->buffers[j];
-                revert_buffer->font = loadFont(newFontPath, revert_buffer->scale.fontSizes[revert_buffer->scale.index], "name");
+                revert_buffer->font = loadFont(newFontPath, revert_buffer->scale.fontSizes[revert_buffer->scale.index], "name", tab);
             }
             
             char error_msg[256];
@@ -2010,7 +2164,7 @@ void load_font(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     /* free(fontPath); */
     fontPath = strdup(newFontPath);
     // Update window positions
-    Window *win = wm->head;
+    Window *win = wm.head;
     while (win) {
         win->y = sh - win->buffer->font->ascent + win->buffer->font->descent;
         win->height = win->y;
@@ -2025,7 +2179,7 @@ void load_font(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     switchToBuffer(bm, bm->lastBuffer->name);
 }
 
-void goto_line(BufferManager *bm, WindowManager *wm, int sw, int sh) {
+void goto_line(BufferManager *bm) {
     Buffer *minibuffer = getBuffer(bm, "minibuffer");
     Buffer *prompt = getBuffer(bm, "prompt");
 
@@ -2380,7 +2534,7 @@ void delete_blank_lines(Buffer *buffer, int arg) {
 
     // Ensure to keep one blank line where the point was
     if (start < point) {
-        memmove(buffer->content + start + 1, buffer->content + end, length - end + 1); // +1 for null terminator
+        MM(buffer->content + start + 1, buffer->content + end, length - end + 1); // +1 for null terminator
         buffer->size = buffer->size - (end - start - 1);
         buffer->content[start] = '\n'; // Set a single newline at the start
         buffer->point = start; // Set point at the beginning of the preserved newline
@@ -2390,16 +2544,8 @@ void delete_blank_lines(Buffer *buffer, int arg) {
 
 #include <errno.h>
 
-// TODO (no changes need to saved)
-// NOTE How to track it internally ?
-// a dirty buffer system ?
+// TODO (no changes need to saved) How should we track it internally ?
 void save_buffer(BufferManager *bm, Buffer *buffer) {
-    // Check if the buffer is NULL or if it's read-only
-    if (buffer == NULL || buffer->readOnly) {
-        message("Cannot save a read-only buffer.");
-        return;
-    }
-
     // Check if the buffer has a valid path
     if (buffer->path == NULL || strlen(buffer->path) == 0) {
         message("No file path specified.");
@@ -2546,7 +2692,8 @@ void recenter(Window *window, bool instant) {
 
 
 void capitalize_word(Buffer *buffer) {
-    if (!buffer || !buffer->content || buffer->point >= buffer->size) {
+    if (!buffer || !buffer->content || buffer->readOnly || buffer->point >= buffer->size) {
+        message("Buffer is read-only: #<buffer FILENAME>");
         return;
     }
 
@@ -2646,7 +2793,7 @@ void diff_hl_next_hunk(Buffer *buffer) {
         moveTo(buffer, nextHunk, 0);
     }
 
-    right_char(buffer, 0, &bm, 1);
+    right_char(buffer, 0, 1);
     free(lines);
     free(hunkStarts);
 }
@@ -2713,7 +2860,7 @@ void diff_hl_previous_hunk(Buffer *buffer) {
         moveTo(buffer, prevHunk, 0);
     }
 
-    right_char(buffer, 0, &bm, 1);
+    right_char(buffer, 0, 1);
 
     free(lines);
     free(hunkStarts);
@@ -2791,6 +2938,16 @@ void scroll_down(Window *window, int arg) {
 }
 
 
+void read_only_mode(Buffer *buffer) {
+    buffer->readOnly = !buffer->readOnly;
+    if (buffer->readOnly) {
+        message("Read-Only mode enabled in current buffer");
+    } else {
+        message("Read-Only mode disabled in current buffer");
+    }
+}
+
+
 
 // EXTENSION
 
@@ -2808,10 +2965,6 @@ symbol_error_handler (void *data, SCM key, SCM args)
     return SCM_BOOL_F;
 }
 
-
-
-
-// SECOND
 static SCM collect_symbol_info(void *data) {
     (void)data;
     return scm_eval_string(scm_from_locale_string(
@@ -2979,10 +3132,4 @@ void insert_guile_symbols(Buffer *buffer, BufferManager *bm) {
     snprintf(msg, sizeof(msg), "Inserted documentation for %zu Guile functions.", count);
     message(msg);
 }
-
-
-
-
-
-
 

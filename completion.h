@@ -12,7 +12,25 @@ typedef struct {
     bool isActive;       // Is completion active
 } CompletionEngine;
 
-void fetch_completions(const char* input, CompletionEngine *ce);
+typedef struct {
+    char **binaries;  // Array of binary paths
+    int count;        // Number of binaries
+    bool initialized; // Whether the cache has been initialized
+} BinaryCache;
+
+extern BinaryCache binary_cache;
+
+void fetch_path_completions(const char* input, CompletionEngine *ce);
+void fetch_command_completions(const char* input, CompletionEngine *ce);
+
+void initialize_binary_cache();
+void fetch_shell_command_completions(const char *input, CompletionEngine *ce);
+
+void collect_buffer_words(Buffer *buffer, char ***words, size_t *count);
+void fetch_word_completions(const char *input, Buffer *target_buffer, CompletionEngine *ce);
+
+void complete_at_point(const char *prompt, const char *input, CompletionEngine *ce, WindowManager *wm);
+
 void insert_completions(Buffer *buffer, CompletionEngine *ce);
 
 

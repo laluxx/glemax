@@ -225,7 +225,8 @@ static void init_glemax_primitives(void* data) {
 #define DEFSUBR(name, func, req, opt, rst)          \
     scm_c_define_gsubr(name, req, opt, rst, func);  \
     scm_c_export(name, NULL);
-    
+
+
     // Buffer operations
     DEFSUBR("buffer-new",         scm_buffer_new, 3, 0, 0);
     DEFSUBR("buffer-switch",      scm_buffer_switch, 1, 0, 0);
@@ -239,7 +240,6 @@ static void init_glemax_primitives(void* data) {
     DEFSUBR("delete-window",      scm_delete_window, 0, 0, 0);
     
     // UI operations
-    /* DEFSUBR("message", scm_message, 1, 0, 0); */
     DEFSUBR("message", scm_message, 1, 0, 1);  // 1 required arg, variable rest args
     DEFSUBR("next-theme", scm_next_theme, 0, 0, 0);
     DEFSUBR("previous-theme", scm_previous_theme, 0, 0, 0);
@@ -249,6 +249,7 @@ static void init_glemax_primitives(void* data) {
     // Version
     DEFSUBR("glemax-version", scm_glemax_version, 0, 0, 0);
     
+
 #undef DEFSUBR
 
 }

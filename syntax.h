@@ -34,4 +34,6 @@ void traverseTreeForFunctions(TSNode node, const char *source, Buffer *buffer);
 void extractFunctions(Buffer *buffer);
 
 bool isHexColor(const char *text);
+void clearSyntaxArray(Buffer *buffer);
+
 #endif // SYNTAX_H

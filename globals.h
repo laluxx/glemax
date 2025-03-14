@@ -4,12 +4,15 @@
 #include <lume.h>
 #include <stdio.h>
 
+// TODO add all those names as commands && Guile procedures automatically if they are bool.
+// Calling that command or functions will invert the boolean variable
 extern bool   dragging;
 extern double initialMouseX;
 extern double initialMouseY;
 extern double dragThreshold;
 extern bool   eatchar;
 extern bool   electric_pair_mode;
+extern bool   mark_electric_pairs_mode;
 extern bool   auto_text_scale_mode;
 extern bool   blink_cursor_mode;
 extern float  blink_cursor_delay;
@@ -18,7 +21,9 @@ extern int    blink_cursor_blinks;
 extern double lastBlinkTime;
 extern bool   cursorVisible;
 extern int    blinkCount;
-extern int    indentation;
+/* extern int    indentation; */
+extern size_t indentation;
+extern size_t tab;
 extern bool   show_paren_mode;
 extern float  show_paren_delay;
 extern int    kill_ring_max;
@@ -63,7 +68,10 @@ extern bool   region_alpa_mode;
 extern bool   lerp_line_mode;
 extern float  lerp_line_duration;
 extern bool   vertico_mode;
+extern size_t vertico_max_lines;
 extern bool   find_file_focus_existing;
 extern size_t max_gemini_redirections;
+extern bool   revert_buffer_mode;
+
 
 #endif

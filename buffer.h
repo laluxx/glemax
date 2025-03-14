@@ -69,7 +69,7 @@ typedef struct {
     size_t capacity; // Allocated capacity
     size_t point;    // Cursor position
     char *name;      // Buffer name
-    bool readOnly;   // Read-only flag
+    bool readOnly;   // Read-only flag TODO
     char *path;      // Normalized as "~/"
     Region region;   // NOTE Each buffer has its region
     Scale scale;     // Scale struct for managing font sizes
@@ -86,7 +86,7 @@ typedef struct {
     Functions functions;       // TODO
     int animatedLineNumber;    // Line number being animated
     double animationStartTime; // Start time of the animation
-    char *url;                 // Gemini url TODO Make it a dynamic array of url(s)
+    char *url;                 // Gemini url
 } Buffer;
 
 typedef struct {
@@ -175,16 +175,15 @@ void activateRegion(Buffer *buffer);
 void updateRegion(Buffer *buffer, size_t new_point);
 void deactivateRegion(Buffer *buffer);
 
-/* void setBufferContent(Buffer *buffer, const char *newContent); */
 void setBufferContent(Buffer *buffer, const char *newContent, bool pointAtSize);
 void message(const char *message);
 void cleanBuffer(BufferManager *bm, char *name);
-
 
 Buffer *getBufferUnderCursor(WindowManager *wm);
 
 void inferMajorMode(Buffer *buffer);
 void setMajorMode(Buffer *buffer, char *mode);
+bool major_mode_is(Buffer *buffer, char *mode);
 
 // DIFF-HL
 void updateDiffs(Buffer *buffer);
@@ -203,7 +202,6 @@ int getLineNumber(Buffer *buffer);
 int lineNumberAtPoint(Buffer *buffer, size_t point);
 Color foregroundColorAtPoint(Buffer *buffer, size_t point);
 char* getCurrentLine(Buffer *buffer);
-
 
 
 #endif

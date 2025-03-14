@@ -4,7 +4,7 @@
 #include "syntax.h"
 #include "theme.h"
 
-// TODO language injection for org-mode and md-mode..
+// TODO language injection for org-mode, md-mode and gemini-mode
 
 TSParser *parser; // NOTE Global parser
 static bool printTSNodes = false;
@@ -47,8 +47,7 @@ bool isHexColor(const char *text) {
     return false;
 }
 
-// TODO Reorder them based on whats most found in a typucal c buffer
-// for a free performance boost
+// TODO Sort based on whats most found in a typical c buffer for a free performance boost
 Color *getNodeColor(TSNode node) {
     if (printTSNodes) {
         printf("%s", ts_node_string(node));
@@ -57,47 +56,58 @@ Color *getNodeColor(TSNode node) {
 
     const char *nodeType = ts_node_type(node);
 
-    if (strcmp(nodeType, "return") == 0 || strcmp(nodeType, "if") == 0 ||
-        strcmp(nodeType, "while") == 0 || strcmp(nodeType, "do") == 0 ||
-        strcmp(nodeType, "switch") == 0 || strcmp(nodeType, "break") == 0 ||
-        strcmp(nodeType, "continue") == 0 || strcmp(nodeType, "goto") == 0 ||
-        strcmp(nodeType, "typedef") == 0 || strcmp(nodeType, "extern") == 0 ||
-        strcmp(nodeType, "else") == 0 || strcmp(nodeType, "struct") == 0 ||
-        strcmp(nodeType, "for") == 0 || strcmp(nodeType, "const") == 0) {
+    if (strcmp(nodeType,    "return")   == 0 || strcmp(nodeType, "if")     == 0
+        || strcmp(nodeType, "while")    == 0 || strcmp(nodeType, "do")     == 0
+        || strcmp(nodeType, "switch")   == 0 || strcmp(nodeType, "break")  == 0
+        || strcmp(nodeType, "continue") == 0 || strcmp(nodeType, "goto")   == 0
+        || strcmp(nodeType, "typedef")  == 0 || strcmp(nodeType, "extern") == 0
+        || strcmp(nodeType, "else")     == 0 || strcmp(nodeType, "struct") == 0
+        || strcmp(nodeType, "for")      == 0 || strcmp(nodeType, "const")  == 0 || strcmp(nodeType, "static")  == 0) {
         return &CT.keyword;
-    } else if (strcmp(nodeType, "NULL") == 0 || strcmp(nodeType, "true") == 0 ||
-               strcmp(nodeType, "false") == 0) {
+
+    } else if (strcmp(nodeType,    "NULL")  == 0
+               || strcmp(nodeType, "true")  == 0
+               || strcmp(nodeType, "false") == 0) {
         return &CT.null;
+
     } else if (strcmp(nodeType, "!") == 0) {
         return &CT.negation;
-    } else if (strcmp(nodeType, "type_identifier") == 0 ||
-               strcmp(nodeType, "function_definition") == 0 ||
+
+    } else if (strcmp(nodeType, "type_identifier")      == 0 ||
+               strcmp(nodeType, "function_definition")  == 0 ||
                strcmp(nodeType, "sized_type_specifier") == 0 ||
-               strcmp(nodeType, "primitive_type") == 0 ||
-               strcmp(nodeType, "primitive_type") == 0) {
+               strcmp(nodeType, "primitive_type")       == 0 ||
+               strcmp(nodeType, "primitive_type")       == 0) {
         return &CT.type;
-    } else if (strcmp(nodeType, "string_literal") == 0 ||
-               strcmp(nodeType, "char_literal") == 0 ||
-               strcmp(nodeType, "string_content") == 0 ||
+
+    } else if (strcmp(nodeType, "string_literal")    == 0 ||
+               strcmp(nodeType, "char_literal")      == 0 ||
+               strcmp(nodeType, "string_content")    == 0 ||
                strcmp(nodeType, "system_lib_string") == 0 ||
-               strcmp(nodeType, "\"") == 0) {
+               strcmp(nodeType, "\"")                == 0) {
         return &CT.string;
+
     } else if (strcmp(nodeType, "number_literal") == 0) {
         return &CT.number;
-    } else if (strcmp(nodeType, "function_definition") == 0 ||
+
+    } else if (strcmp(nodeType, "function_definition")  == 0 ||
                strcmp(nodeType, "function_declaration") == 0) {
         return &CT.function;
+
     } else if (strcmp(nodeType, "preproc_directive") == 0 ||
-               strcmp(nodeType, "preproc_arg") == 0 ||
-               strcmp(nodeType, "preproc_def") == 0 ||
-               strcmp(nodeType, "#define") == 0 ||
-               strcmp(nodeType, "#include") == 0) {
+               strcmp(nodeType, "preproc_arg")       == 0 ||
+               strcmp(nodeType, "preproc_def")       == 0 ||
+               strcmp(nodeType, "#define")           == 0 ||
+               strcmp(nodeType, "#include")          == 0) {
         return &CT.preprocessor;
+       
+
     } else if (strcmp(nodeType, "assignment_expression") == 0 ||
                strcmp(nodeType, "arithmetic_expression") == 0 ||
-               strcmp(nodeType, "unary_expression") == 0 ||
-               strcmp(nodeType, "update_expression") == 0) {
+               strcmp(nodeType, "unary_expression")      == 0 ||
+               strcmp(nodeType, "update_expression")     == 0) {
         return &CT.cursor;
+
     } else if (strcmp(nodeType, "identifier") == 0) {
         TSNode parent = ts_node_parent(node);
         const char *parentType = ts_node_type(parent);
@@ -389,4 +399,9 @@ void extractFunctions(Buffer *buffer) {
 
     TSNode root = ts_tree_root_node(buffer->tree);
     traverseTreeForFunctions(root, buffer->content, buffer);
+}
+
+// Without freeing the memory
+void clearSyntaxArray(Buffer *buffer) {
+    buffer->syntaxArray.used = 0;
 }

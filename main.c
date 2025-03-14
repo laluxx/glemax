@@ -29,6 +29,8 @@
 #include <string.h>
 #include <unistd.h>
 #include "gemini.h"
+#include "symbols.h"
+#include "debugger.h"
 
 // [/] MAYBE One thing that we really should do, is to
 // make the minibuffer just a window, not a special
@@ -39,12 +41,22 @@
 // so the same stuff is recalculated like 6 or more times per frame
 // i hate it, but i hate refactoring more
 
+// [TODO] Start using docstrings in C we will extract them all on .. installation ?
+
+// TODO mode to make the text disappear if it's inside the region
+// and buffer->region.active is true.
+
+// TODO Music visualizer
+//  - Sync cursor blink with music
+//  - Animate anything with that frequency
 
 // TODO display-line-numbers-mode
 //  - Option to color the last line with a different color
+//  ~ Option for vim suckers
 
 // TODO IMPORTANT Don't make xclip a dependencie if you have it in path
-// use it, if you don't, don't
+// use it, if you don't, don't, then actually fix the problem
+// with a crossplatform clipboard module
 
 
 // TODO text-scale-increase() and text-scale-decrease() should increase or
@@ -166,7 +178,7 @@ static void inner_main(void *closure, int argc, char **argv) {
     registerCursorPosCallback(cursorPosCallback);
     registerMouseButtonCallback(mouseButtonCallback);
 
-    font = loadFont(fontPath, fontsize, "name");
+    font = loadFont(fontPath, fontsize, "name", tab);
     initThemes();
     load_theme(first_theme_name);
     initGlobalParser();
@@ -174,8 +186,11 @@ static void inner_main(void *closure, int argc, char **argv) {
     initBufferManager(&bm);
     initCommands();
     initOpenssl();
+    bfd_init();
+    load_debug_symbols(argv[0]); // NOTE Load our debug symbols
     newBuffer(&bm, &wm, "minibuffer", "~/", fontPath, sw, sh);
     newBuffer(&bm, &wm, "prompt",     "~/", fontPath, sw, sh);
+    newBuffer(&bm, &wm, "vertico",    "~/", fontPath, sw, sh); // TODO
     newBuffer(&bm, &wm, "message",    "~/", fontPath, sw, sh);
     newBuffer(&bm, &wm, "arg",        "~/", fontPath, sw, sh);
     newBuffer(&bm, &wm, "*scratch*",  "~/", fontPath, sw, sh);
@@ -195,8 +210,6 @@ static void inner_main(void *closure, int argc, char **argv) {
     } else {
         bm.lastBuffer = getBuffer(&bm, "*scratch*");
     }
-
-
 
     if (!fringe_mode) fringe = 0;
 
@@ -224,6 +237,7 @@ static void inner_main(void *closure, int argc, char **argv) {
         Buffer *prompt     = getBuffer(&bm, "prompt");
         Buffer *minibuffer = getBuffer(&bm, "minibuffer");
         Buffer *message    = getBuffer(&bm, "message");
+        Buffer *vertico    = getBuffer(&bm, "vertico");
         
         Window *win = wm.head;
         Window *activeWindow = wm.activeWindow;
@@ -256,7 +270,18 @@ static void inner_main(void *closure, int argc, char **argv) {
                    (minibuffer->font->ascent - minibuffer->font->descent),
                    1.0, 1.0, CT.minibuffer_prompt, CT.bg, -1, cursorVisible,
                    "text");
-        
+
+        // VERTICO TODO drawVertico()
+        drawTextEx(minibuffer->font, vertico->content, fringe,
+                   (minibufferHeight -
+                    (minibuffer->font->ascent - minibuffer->font->descent)) -
+                       lineHeight,
+                   1.0, 1.0, CT.text, CT.bg, -1, cursorVisible, "text");
+        /* drawTextEx(minibuffer->font, vertico->content, fringe, */
+        /*            (minibufferHeight - (minibuffer->font->ascent - minibuffer->font->descent)) , */
+        /*            1.0, 1.0, CT.text, CT.bg, -1, cursorVisible, */
+        /*            "text"); */
+
         if (isCurrentBuffer(&bm, "minibuffer")) {
             drawMiniCursor(minibuffer, minibuffer->font, fringe + promptWidth,
                            minibufferHeight - minibuffer->font->ascent, CT.cursor);
@@ -264,8 +289,9 @@ static void inner_main(void *closure, int argc, char **argv) {
             // DrawMiniHollowCursor() :(
             /* drawHollowCursor(minibuffer, win, CT.cursor); // And hollow it */
         }
-        
-        drawModelines(&wm, font, minibufferHeight, CT.modeline);
+
+        // NOTE not in the window loop beacuse we draw *all* modelines not one
+        drawModelines(&wm, font, minibufferHeight, CT.modeline); 
 
         for (; win != NULL; win = win->next) {
             Buffer *buffer = win->buffer;
@@ -381,6 +407,7 @@ static void inner_main(void *closure, int argc, char **argv) {
     freeKillRing(&kr);
     freeBufferManager(&bm);
     freeWindowManager(&wm);
+    freeSymbols();
     closeWindow();
 }
 
@@ -422,7 +449,7 @@ void keyCallback(int key, int action, int mods) {
             return;
         }
         
-        if (!isCurrentBuffer(&bm, "minibuffer") && !isearch.searching && (!ctrlPressed && !altPressed)) {
+        if (!isCurrentBuffer(&bm, "minibuffer") && !isearch.searching /* && (!ctrlPressed && !altPressed) */) {
             cleanBuffer(&bm, "minibuffer");
         }
         
@@ -461,7 +488,7 @@ void keyCallback(int key, int action, int mods) {
                 } else {
                     backspace(buffer, electric_pair_mode);
                     if (electric_indent_mode)
-                      indent(buffer, indentation, &bm, arg);
+                      indent(buffer, indentation, arg);
                 }
             }
             break;
@@ -549,21 +576,22 @@ void keyCallback(int key, int action, int mods) {
                 /* printf("Buffer under cursor: %s\n", getBufferUnderCursor(&wm)->name); */
                 /* (insert_guile_symbols(buffer, &bm)); */
 
-                GeminiOutput go = gemini_fetch("gemini://geminiprotocol.net/docs/", buffer);
-                setBufferContent(buffer, go.content, false);
-                setMajorMode(buffer, "gemini");
+                switch_or_split_window(&wm, font, "*eterm*", sw, sh);
+                setMajorMode(getBuffer(&bm, "*eterm*"), "eterm");
 
-                /* buffer->content = go.content; */
-                /* buffer->size = go.size; */
+
+                /* print_loaded_symbols(); */
+
                 
             } else if (altPressed) {
-                keep_lines(&bm, &wm);
+                findSymbolsByName("bfd");
             }
             break;
             
             case KEY_X:
             if (ctrlPressed && ctrl_x_pressed) {
                 exchange_point_and_mark(buffer);
+                ctrl_x_pressed = false;
             } else if (ctrlPressed) {
                 ctrl_x_pressed = true;
                 /* message("C-x-"); */ // It doesn't work with how i've
@@ -600,7 +628,11 @@ void keyCallback(int key, int action, int mods) {
             
             
         case KEY_S:
-            if (altPressed) {
+            if (ctrl_h_pressed) {
+                helpful_symbol(&bm);
+                eatchar = true;
+                ctrl_h_pressed = false;
+            } else if (altPressed) {
                 hl_scope_mode = !hl_scope_mode;
             } else if (ctrlPressed) {
                 if (ctrl_x_pressed) {
@@ -621,7 +653,6 @@ void keyCallback(int key, int action, int mods) {
                         minibuffer->point = minibuffer->size;
                     } else {
                         isearch.count += 1;
-                        printf("search count: %i\n", isearch.count);
                     }
                     isearch.startIndex = buffer->point;  // Update to ensure search starts from next position
                     isearch_forward(buffer, &bm, minibuffer, true);  // Continue search from new start index
@@ -669,6 +700,8 @@ void keyCallback(int key, int action, int mods) {
             case KEY_G:
             if (ctrlPressed){
                 ctrl_x_pressed = false;
+                ctrl_c_pressed = false;
+                ctrl_h_pressed = false;
                 
                 resetHistoryIndex(&nh, prompt->content); // NOTE prompt->content is the history name
                 if (isearch.searching) {
@@ -682,12 +715,13 @@ void keyCallback(int key, int action, int mods) {
                     buffer->region.marked = false;
                     cleanBuffer(&bm, "minibuffer");
                     cleanBuffer(&bm, "prompt");
+                    cleanBuffer(&bm, "vertico");
                     switchToBuffer(&bm, bm.lastBuffer->name);
                     cleanBuffer(&bm, "message");
                 }
                 
             } else if (altPressed) {
-                goto_line(&bm, &wm, sw, sh);
+                goto_line(&bm);
             }
             break;
             
@@ -695,9 +729,9 @@ void keyCallback(int key, int action, int mods) {
             case KEY_I:
             if (ctrlPressed) {
                 if (shiftPressed) {
-                    removeIndentation(buffer, indentation);                    
+                    remove_indentation(buffer);
                 } else {
-                    addIndentation(buffer, indentation);                    
+                    add_indentation(buffer);
                 }
             }
             break;
@@ -705,9 +739,9 @@ void keyCallback(int key, int action, int mods) {
             if (altPressed && shiftPressed) delete_indentation(buffer, &bm, arg);
             break;
             case KEY_TAB:
-            if (isCurrentBuffer(&bm, "minibuffer") && strcmp(prompt->content, "Find file: ") == 0) {
+            if (isCurrentBuffer(&bm, "minibuffer")) {
                 if (!ce.isActive || strcmp(minibuffer->content, ce.items[ce.currentIndex]) != 0) {
-                    fetch_completions(minibuffer->content, &ce);
+                    complete_at_point(prompt->content, minibuffer->content, &ce, &wm);
                     ce.currentIndex = 0; // Start from the first ce.
                     insert_completions(minibuffer, &ce);
                 } else {
@@ -732,7 +766,8 @@ void keyCallback(int key, int action, int mods) {
                 if (buffer->region.active) {
                     indent_region(buffer, &bm, indentation, arg);
                 } else {
-                    indent(buffer, indentation, &bm, arg);
+                    indent(buffer, indentation, arg);
+                    set_mark(buffer, buffer->point);
                 }
             }
             break;
@@ -740,32 +775,32 @@ void keyCallback(int key, int action, int mods) {
             if (ctrlPressed) {
                 forward_paragraph(buffer, shiftPressed);
             } else {
-                next_line(buffer, shiftPressed, &bm, buffer->goal_column);
+                next_line(buffer, shiftPressed, buffer->goal_column);
             }
             break;
             case KEY_UP:
             if (ctrlPressed) {
                 backward_paragraph(buffer, shiftPressed);
             } else {
-                previous_line(buffer, shiftPressed, &bm, buffer->goal_column);
+                previous_line(buffer, shiftPressed, buffer->goal_column);
             }
             break;
             case KEY_LEFT:
             if (ctrlPressed) {
                 backward_word(buffer, 1, shiftPressed);
             } else {
-                left_char(buffer, shiftPressed, &bm, arg);
+                left_char(buffer, shiftPressed, arg);
             }
             break;
             case KEY_RIGHT:
             if (ctrlPressed) {
                 forward_word(buffer, 1, shiftPressed);
             } else {
-                right_char(buffer, shiftPressed, &bm, arg);
+                right_char(buffer, shiftPressed, arg);
             }
             break;
             case KEY_DELETE:
-            delete_char(buffer, &bm);
+            delete_char(buffer);
             break;
             case KEY_N:
             if (ctrlPressed && altPressed) {
@@ -777,7 +812,7 @@ void keyCallback(int key, int action, int mods) {
                 } else if (ctrl_x_pressed) {
                     set_goal_column(buffer);
                 } else {
-                  next_line(buffer, shiftPressed, &bm, buffer->goal_column);
+                  next_line(buffer, shiftPressed, buffer->goal_column);
                 }
             } else if (altPressed) {
                 if (isCurrentBuffer(&bm, "minibuffer")) {
@@ -799,7 +834,7 @@ void keyCallback(int key, int action, int mods) {
                     diff_hl_previous_hunk(buffer);
                     ctrl_c_pressed = false;
                 } else {
-                    previous_line(buffer, shiftPressed, &bm, buffer->goal_column);
+                    previous_line(buffer, shiftPressed, buffer->goal_column);
                 }
             } else if (altPressed) {
                 if (isCurrentBuffer(&bm, "minibuffer")) {
@@ -818,8 +853,9 @@ void keyCallback(int key, int action, int mods) {
                 forward_sexp(buffer, 1);
             } else if (ctrlPressed && ctrl_x_pressed) {
                 find_file(&bm, &wm, sw, sh);
+                ctrl_x_pressed = false;
             } else if (ctrlPressed) {
-                right_char(buffer, shiftPressed, &bm, arg);
+                right_char(buffer, shiftPressed, arg);
             } else if (altPressed) {
                 forward_word(buffer, 1, shiftPressed);
             }
@@ -828,9 +864,12 @@ void keyCallback(int key, int action, int mods) {
             if (ctrlPressed && altPressed) {
                 backward_sexp(buffer, arg);
             } else if (ctrlPressed) {
-                left_char(buffer, shiftPressed, &bm, arg);
+                left_char(buffer, shiftPressed, arg);
             } else if (altPressed) {
                 backward_word(buffer, 1, shiftPressed);
+            } else if (ctrl_x_pressed) {
+                // TODO HERE
+                ctrl_x_pressed = false;
             }
             break;
             case KEY_E:
@@ -850,21 +889,28 @@ void keyCallback(int key, int action, int mods) {
             break;
             case KEY_D:
                 if (altPressed) {
-                    diff_hl_mode = !diff_hl_mode;
+                    kill_word(buffer, &kr);
+                    /* diff_hl_mode = !diff_hl_mode; */
                 } else if (ctrlPressed) {
-                if (buffer->region.active) {
-                    kill_region(buffer, &kr);
+                    if (buffer->region.active) {
+                    delete_region(buffer);
                 } else {
-                    delete_char(buffer, &bm);
+                    delete_char(buffer);
                 }
             }
             break;
+
             case KEY_Q:
-            if (altPressed) {
-                delete_window(&wm);
-                /* updateWindows(&wm, font, sw, sh); */
-            }
+                if (ctrl_x_pressed) {
+                    if (ctrlPressed) {
+                        read_only_mode(buffer);
+                    }
+                } else if (altPressed) {
+                    delete_window(&wm);
+                    /* updateWindows(&wm, font, sw, sh); */
+                }
             break;
+
             case KEY_O:
             if (altPressed) {
                 other_window(&wm, 1);
@@ -917,7 +963,12 @@ void keyCallback(int key, int action, int mods) {
                     other_window(&wm, 1);
                 } else if (ctrlPressed) {
                     recenter(win, false);
+                } else  if (ctrl_c_pressed) {
+                    keep_lines(&bm);
+                    ctrl_c_pressed = false;
+                    eatchar = true;
                 }
+
             break;
             case KEY_J:
                 if (altPressed && wm.count <= 1)  {
@@ -935,6 +986,8 @@ void keyCallback(int key, int action, int mods) {
         case KEY_H:
             if (ctrlPressed && altPressed) {
                 mark_scope(buffer);
+            } else if (ctrlPressed) {
+                ctrl_h_pressed = true;
             } else if (altPressed && wm.count <= 1) {
                 split_window_right(&wm, font, sw, sw);
             }
@@ -990,8 +1043,10 @@ void keyCallback(int key, int action, int mods) {
 
     // Update syntax for all key presses
     if (!isCurrentBuffer(&bm, "minibuffer") && buffer->tree != NULL) {
-        TSInputEdit edit = createInputEdit(buffer, 0, buffer->size, buffer->size);
-        updateSyntaxIncremental(buffer, &edit);
+        if (major_mode_is(buffer, "c")) {
+            TSInputEdit edit = createInputEdit(buffer, 0, buffer->size, buffer->size);
+            updateSyntaxIncremental(buffer, &edit);
+        }
     }
 
     // Reset eatchar after key is processed
@@ -1042,7 +1097,7 @@ void textCallback(unsigned int codepoint) {
                  codepoint == '>' || codepoint == '\'' || codepoint == '\"') &&
                 buffer->point < buffer->size &&
                 buffer->content[buffer->point] == codepoint) {
-                right_char(buffer, false, &bm, arg);
+                right_char(buffer, false, arg);
             } else {
                 if (isCurrentBuffer(&bm, "minibuffer")) {
                     insertChar(minibuffer, codepoint);
@@ -1053,16 +1108,19 @@ void textCallback(unsigned int codepoint) {
                             insertChar(buffer, '(');
                             insertChar(buffer, ')');
                             buffer->point--;
+                            if (mark_electric_pairs_mode) set_mark(buffer, buffer->point);
                             break;
                         case '[':
                             insertChar(buffer, '[');
                             insertChar(buffer, ']');
                             buffer->point--;
+                            if (mark_electric_pairs_mode) set_mark(buffer, buffer->point);
                             break;
                         case '{':
                             insertChar(buffer, '{');
                             insertChar(buffer, '}');
                             buffer->point--;
+                            if (mark_electric_pairs_mode) set_mark(buffer, buffer->point);
                             break;
                         case '<':
                             // Check for #include context
@@ -1075,6 +1133,7 @@ void textCallback(unsigned int codepoint) {
                                 insertChar(buffer, '<');
                                 insertChar(buffer, '>');
                                 buffer->point--;
+                                if (mark_electric_pairs_mode) set_mark(buffer, buffer->point);
                             } else {
                                 insertChar(buffer, '<');
                             }
@@ -1085,6 +1144,7 @@ void textCallback(unsigned int codepoint) {
                                   buffer->content[buffer->point - 2] == '\'')) {
                                 insertChar(buffer, '\'');
                                 buffer->point--;
+                                if (mark_electric_pairs_mode) set_mark(buffer, buffer->point);
                             }
                             break;
                         case '\"':
@@ -1093,6 +1153,7 @@ void textCallback(unsigned int codepoint) {
                                   buffer->content[buffer->point - 2] == '\"')) {
                                 insertChar(buffer, '\"');
                                 buffer->point--;
+                                if (mark_electric_pairs_mode) set_mark(buffer, buffer->point);
                             }
                             break;
                         default:
@@ -1104,17 +1165,17 @@ void textCallback(unsigned int codepoint) {
 
                     // Update syntax and scopes only once after insertion
                     if (buffer->tree != NULL) {
-                        size_t inserted_length = buffer->size - old_size;
-                        TSInputEdit edit =
-                            createInputEdit(buffer, original_point, original_point,
-                                            original_point + inserted_length);
-                        updateSyntaxIncremental(buffer, &edit);
+                        if (major_mode_is(buffer, "c")) {
+                            size_t inserted_length = buffer->size - old_size;
+                            TSInputEdit edit = createInputEdit(buffer, original_point, original_point, original_point + inserted_length);
+                            updateSyntaxIncremental(buffer, &edit);
+                        }
                     }
                     fill_scopes(buffer, &buffer->scopes);
                 }
 
                 if (electric_indent_mode && (codepoint == '}' || codepoint == ';')) {
-                    indent(buffer, indentation, &bm, arg);
+                    indent(buffer, indentation, arg);
                 }
             }
         }
@@ -1316,6 +1377,7 @@ void drawRegion(WindowManager *wm, Font *font, Color regionColor) {
     }
 }
 
+// TODO Modeline *modeline = &win->modeline;
 void drawModelines(WindowManager *wm, Font *font, float minibufferHeight, Color color) {
     for (Window *win = wm->head; win != NULL; win = win->next) {
         bool isBottom = true;
@@ -1342,12 +1404,15 @@ void drawModelines(WindowManager *wm, Font *font, float minibufferHeight, Color 
         useShader("text");
         float spaceWidth = getCharacterWidth(font, ' ');
         float segmentX = fringe + spaceWidth + win->x;
-        
-        // Update modeline segments with the correct buffer data
+
+        // Update modeline segments NOTE We should not do it every frame N times
+        // where N is the number of modelines we have
         updateSegments(&win->modeline, win->buffer);
         
         for (size_t i = 0; i < win->modeline.segments.count; i++) {
             Segment segment = win->modeline.segments.segment[i];
+            if (strlen(segment.content) == 0) continue; // Skip drawing if the segment is empty
+            
             float textY = modelineBaseY + (font->ascent - font->descent);
             
             for (size_t j = 0; j < strlen(segment.content); j++) {

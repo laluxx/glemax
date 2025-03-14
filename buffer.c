@@ -33,11 +33,6 @@ void initDiffs(BufferManager *bm) {
 
 
 void initBuffer(Buffer *buffer, const char *name, const char *path) {
-    if (!parser) {  // Ensure the global parser is initialized
-        fprintf(stderr, "Parser not initialized.\n");
-        exit(EXIT_FAILURE);
-    }
-
     buffer->capacity = 1024;
     buffer->content = malloc(buffer->capacity);
 
@@ -55,6 +50,7 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
     buffer->region.active = false;
     buffer->scale.index = 0;
     buffer->goal_column = -1;
+    buffer->region.mark = 0;
 
     buffer->animatedLineNumber = -1;
     buffer->animationStartTime = 0.0f;
@@ -75,7 +71,7 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
 
     setMajorMode(buffer, "fundamental");
     
-    buffer->url = strdup("NaU");
+    buffer->url = strdup(""); // NaU
     buffer->fontPath = strdup(fontPath);  // Use the global fontPath initially
 
     // Initialize syntax tree
@@ -107,7 +103,7 @@ void newBuffer(BufferManager *manager, WindowManager *wm, const char *name,
     // Use the global font cache
     if (!globalFontCache[buffer->scale.index]) {
         globalFontCache[buffer->scale.index] =
-            loadFont(fontPath, fontsize, "name");
+            loadFont(fontPath, fontsize, "name", tab);
     }
     buffer->font = globalFontCache[buffer->scale.index];
 
@@ -169,10 +165,6 @@ void freeBufferManager(BufferManager *manager) {
     }
     free(manager->buffers);
     free(manager->activeName);
-    manager->buffers = NULL;
-    manager->buffers = NULL;
-    manager->buffers = NULL;
-    manager->buffers = NULL;
     manager->buffers = NULL;
     manager->activeName = NULL;
     manager->count = 0;
@@ -290,8 +282,7 @@ void setBufferContent(Buffer *buffer, const char *newContent, bool pointAtSize) 
 
 #include "editor.h"
 
-
-// TODO Make it variadic also on the C side
+// TODO Make it variadic on the C side too
 void message(const char *message) {
     Buffer *minibuffer = getBuffer(&bm, "minibuffer");
     Buffer *messageBuffer = getBuffer(&bm, "message");
@@ -337,6 +328,7 @@ Buffer *getBufferUnderCursor(WindowManager *wm) {
 
 void setMajorMode(Buffer *buffer, char *mode) {
     buffer->major_mode = strdup(mode);
+    // TODO Clear SyntaxArray or assume each major mode does it
 }
 
 void inferMajorMode(Buffer *buffer) {
@@ -358,6 +350,10 @@ void inferMajorMode(Buffer *buffer) {
     }
 }
 
+bool major_mode_is(Buffer *buffer, char *mode) {
+    return strstr(buffer->major_mode, mode) != NULL;
+}
+
 // MODELINE
 
 void addSegment(Segments *segments, const char *name, const char *content) {
@@ -370,13 +366,18 @@ void addSegment(Segments *segments, const char *name, const char *content) {
 void initSegments(Segments *segments) {
     segments->segment = NULL;
     segments->count = 0;
-    addSegment(segments, "logo",        "C");
-    addSegment(segments, "name",        "NAME");
-    addSegment(segments, "line-number", "LINE-NUMBER");
-    addSegment(segments, "scroll",      "Top");
-    addSegment(segments, "mode",        "Maybe");
-    addSegment(segments, "scale",       "Nan");
-    addSegment(segments, "branch",      "Nab");
+    addSegment(segments, "logo",         "NaL");
+    addSegment(segments, "readonly",     "NaR");
+    addSegment(segments, "name",         "NAME");
+    addSegment(segments, "url",          "NaU");
+    addSegment(segments, "line-number",  "LINE-NUMBER");
+    addSegment(segments, "scroll",       "Top");
+    addSegment(segments, "region-chars", "NaRC");
+    addSegment(segments, "region-lines", "NaRL");
+    addSegment(segments, "isearch",      "[NaC]");
+    addSegment(segments, "mode",         "Maybe");
+    addSegment(segments, "scale",        "NaN");
+    addSegment(segments, "branch",       "NaB");
 }
 
 void updateSegments(Modeline *modeline, Buffer *buffer) {
@@ -399,6 +400,11 @@ void updateSegments(Modeline *modeline, Buffer *buffer) {
             free(segment->content);
             segment->content = strdup(buffer->name);
         }
+        else if (strcmp(segment->name, "url") == 0) {
+            free(segment->content);
+            segment->content = strdup(buffer->url);
+        }
+
         else if (strcmp(segment->name, "mode") == 0) {
             free(segment->content);
             segment->content = strdup(buffer->major_mode);
@@ -409,16 +415,70 @@ void updateSegments(Modeline *modeline, Buffer *buffer) {
             snprintf(scaleStr, sizeof(scaleStr), "%d", buffer->scale.index);
             segment->content = strdup(scaleStr);
         }
+        else if (strcmp(segment->name, "isearch") == 0) {
+            free(segment->content);
+            if (isearch.count > 0) {
+                char countStr[32];
+                snprintf(countStr, sizeof(countStr), "[%zu]", isearch.count);
+                segment->content = strdup(countStr);
+            } else {
+                segment->content = strdup("");
+            }
+        }
+
+        else if (strcmp(segment->name, "readonly") == 0) {
+            free(segment->content);
+            if (buffer->readOnly) {
+                segment->content = strdup("R");
+            } else {
+                segment->content = strdup("");
+            }
+        }
+
+        else if (strcmp(segment->name, "region-chars") == 0) {
+            if (buffer->region.active) {
+                free(segment ->content);
+                // Calculate the number of characters selected
+                size_t chars_selected = buffer->region.end - buffer->region.start;
+                char chars_str[32];
+                snprintf(chars_str, sizeof(chars_str), "%zu", chars_selected);
+                segment->content = strdup(chars_str);
+            } else {
+                segment->content = strdup("");
+            }
+            // removed
+        }
+
+        else if (strcmp(segment->name, "region-lines") == 0) {
+            if (buffer->region.active) {
+                free(segment ->content);
+                // Calculate the number of lines selected
+                size_t lines_selected = 0;
+                for (size_t i = buffer->region.start; i < buffer->region.end; i++) {
+                    if (buffer->content[i] == '\n') {
+                        lines_selected++;
+                    }
+                }
+                char lines_str[32];
+                snprintf(lines_str, sizeof(lines_str), "%zu", lines_selected);
+                segment->content = strdup(lines_str);
+            } else {
+                segment->content = strdup("");
+            }
+        }
+
         else if (strcmp(segment->name, "logo") == 0) {
             free(segment->content);
             if (strcmp(buffer->major_mode, "c") == 0) {
                 segment->content = strdup("C");
             } else if (strcmp(buffer->major_mode, "scm") == 0) {
                 segment->content = strdup("G");
+            } else if (strcmp(buffer->major_mode, "eterm") == 0) {
+                segment->content = strdup("TERM");
             } else if (strcmp(buffer->major_mode, "gemini") == 0) {
                 segment->content = strdup("Gem");
             } else {
-              segment->content = strdup("F");
+                segment->content = strdup("F");
             }
         }
     }
@@ -512,5 +572,4 @@ char* getCurrentLine(Buffer *buffer) {
     line[len] = '\0';
     return line;
 }
-
 

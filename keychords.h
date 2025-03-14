@@ -5,6 +5,7 @@
 
 extern bool ctrl_x_pressed;
 extern bool ctrl_c_pressed;
+extern bool ctrl_h_pressed;
 
 
 #endif

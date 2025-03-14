@@ -7,6 +7,9 @@ ISearch isearch = {0};
 // TODO It should show in Red the ending substring that doesn't match
 // Like 'isearch' does in emacs
 
+// TODO C-r should search on the history in shell-command
+// TODO C-r shoudl wrap
+
 void isearch_forward(Buffer *buffer, BufferManager *bm, Buffer *minibuffer, bool updateStartIndex) {
     const char *start = buffer->content + isearch.startIndex;
     const char *found = strstr(start, minibuffer->content);
@@ -89,5 +92,3 @@ void jumpLastOccurrence(Buffer *buffer, const char *word) {
         }
     }
 }
-
-

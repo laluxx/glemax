@@ -103,31 +103,64 @@ void split_window_right(WindowManager *wm, Font *font, int sw, int sh) {
     wm->count++;
 }
 
+void switch_or_split_window(WindowManager *wm, Font *font, char *buffer_name,
+                            int sw, int sh) {
+    // Check if a window already displays the buffer
+    Window *current = wm->head;
+    while (current != NULL) {
+        if (current->buffer && strcmp(current->buffer->name, buffer_name) == 0) {
+            // Switch focus to the window that already displays the buffer
+            wm->activeWindow->isActive = false;
+            wm->activeWindow = current;
+            current->isActive = true;
+            return;
+        }
+        current = current->next;
+    }
 
+    // If no window displays the buffer, split the window
+    split_window_right(wm, font, sw, sh);
+    other_window(wm, 1);
 
-/* void split_window_right(WindowManager *wm, Font *font, int sw, int sh) { */
-/*     Window *active = wm->activeWindow; */
-/*     Window *newWindow = malloc(sizeof(Window)); */
-/*     if (!newWindow) return; */
+    // Check if the buffer exists in the BufferManager
+    Buffer *existing = getBuffer(&bm, buffer_name);
+    if (existing) {
+        // Assign existing buffer to the new window and switch
+        wm->activeWindow->buffer = existing;
+        switchToBuffer(&bm, buffer_name);
+    } else {
+        // Create and switch to the new buffer
+        char *fontPath = wm->activeWindow->buffer->fontPath;
+        newBuffer(&bm, wm, buffer_name, "~/", fontPath, sw, sh);
+        switchToBuffer(&bm, buffer_name);
+    }
+}
 
-
-/*     *newWindow = *active; // NOTE Copy the settings from active window */
-/*     newWindow->width /= 2; */
-/*     active->width -= newWindow->width; */
-/*     newWindow->x += active->width; */
-    
-/*     active->splitOrientation = VERTICAL; // Set split orientation */
-/*     newWindow->splitOrientation = VERTICAL; // Set split orientation */
-
-/*     // Insert new window into the list */
-/*     newWindow->next = active->next; */
-/*     if (active->next) { */
-/*         active->next->prev = newWindow; */
+// TODO if the buffer is already in the BufferManager just make it the wm->activeBuffer
+// NOTE Same fix as find-file
+/* void switch_or_split_window(WindowManager *wm, Font *font, char *buffer_name, */
+/*                             int sw, int sh) { */
+/*     // Check if a window already displays the buffer */
+/*     Window *current = wm->head; */
+/*     while (current != NULL) { */
+/*         if (current->buffer && strcmp(current->buffer->name, buffer_name) == 0) { */
+/*             // Switch focus to the window that already displays the buffer */
+/*             wm->activeWindow->isActive = false; */
+/*             wm->activeWindow = current; */
+/*             current->isActive = true; */
+/*             return; */
+/*         } */
+/*         current = current->next; */
 /*     } */
-/*     active->next = newWindow; */
-/*     newWindow->prev = active; */
 
-/*     wm->count++; */
+/*     // If no window displays the buffer, split the window and create a new buffer */
+/*     split_window_right(wm, font, sw, sh); */
+/*     other_window(wm, 1); */
+
+/*     // Create and switch to the new buffer */
+/*     char *fontPath = wm->activeWindow->buffer->fontPath; */
+/*     newBuffer(&bm, wm, buffer_name, "~/", fontPath, sw, sh); // Corrected &bm to bm */
+/*     switchToBuffer(&bm, buffer_name); // Ensure the active window uses the new buffer */
 /* } */
 
 void split_window_below(WindowManager *wm, Font *font, int sw, int sh) {

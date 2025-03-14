@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "faces.h"
+#include "globals.h"
 
 // FIXME This file is garbage
 // TODO actually implement faces we can have syntax highlighting and font weight and slant
@@ -41,7 +42,7 @@ Font* updateFont(Scale *scale, int newIndex, char *fontPath) {
         if (globalFontCache[scale->index]) {
             freeFont(globalFontCache[scale->index]);
         }
-        globalFontCache[scale->index] = loadFont(fontPath, scale->fontSizes[scale->index], "name");
+        globalFontCache[scale->index] = loadFont(fontPath, scale->fontSizes[scale->index], "name", tab);
     }
     
     return globalFontCache[scale->index];

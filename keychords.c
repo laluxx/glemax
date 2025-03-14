@@ -5,3 +5,4 @@
 
 bool ctrl_x_pressed = false;
 bool ctrl_c_pressed = false;
+bool ctrl_h_pressed = false;

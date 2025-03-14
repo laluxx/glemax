@@ -17,6 +17,137 @@
 
 static SSL_CTX *ssl_ctx = NULL;
 
+
+bool gemini_redirect_other_window(Buffer *buffer) {
+    char *line = getCurrentLine(buffer);
+    char *url = NULL;
+    char *link_text = NULL;
+
+    // Look for "=>" which marks a link in Gemini format
+    char *link_marker = strstr(line, "=>");
+    if (!link_marker) {
+        message("No link found in current line");
+        return false;
+    }
+
+    // Move past the "=>" marker and any whitespace
+    link_text = link_marker + 2;
+    while (isspace(*link_text) && *link_text)
+        link_text++;
+
+    // Look for tab character which separates link and description
+    char *tab = strchr(link_text, '\t');
+    if (tab) {
+        *tab = '\0'; // Temporarily terminate string at tab
+
+        // Strip trailing whitespace from link
+        char *end = tab - 1;
+        while (end > link_text && isspace(*end))
+            *end-- = '\0';
+
+        if (*link_text) {
+            url = strdup(link_text);
+            if (!url) {
+                message("Memory allocation failed");
+                *tab = '\t'; // Restore tab character
+                return false;
+            }
+        }
+        *tab = '\t'; // Restore tab character
+    } else {
+        // No tab - extract first word as the URL
+        char *end = link_text;
+        while (*end && !isspace(*end))
+            end++;
+
+        // Temporarily terminate
+        char saved = *end;
+        *end = '\0';
+
+        url = strdup(link_text);
+
+        // Restore
+        *end = saved;
+
+        if (!url) {
+            message("Memory allocation failed");
+            return false;
+        }
+    }
+
+    if (!url) {
+        message("No link found in current line");
+        return false;
+    }
+
+    // Check if this is a relative URL
+    char *full_url = NULL;
+    if (strstr(url, "://") == NULL) {
+        // This is a relative URL, need to combine with base URL
+        char *current_url = buffer->url;
+        if (!current_url) {
+            message("No base URL for relative link");
+            free(url);
+            return false;
+        }
+
+        // Find the last slash in the current URL
+        char *last_slash = strrchr(current_url, '/');
+        if (!last_slash) {
+            // If no slash, just append the relative URL to the current URL
+            size_t base_len = strlen(current_url);
+            size_t rel_len = strlen(url);
+            full_url =
+                malloc(base_len + rel_len + 2); // +2 for '/' and null terminator
+
+            if (!full_url) {
+                message("Memory allocation failed");
+                free(url);
+                return false;
+            }
+
+            sprintf(full_url, "%s/%s", current_url, url);
+        } else {
+            // Replace everything after the last slash with the new URL
+            size_t base_len = last_slash - current_url + 1; // +1 to include the slash
+            size_t full_len = base_len + strlen(url) + 1;   // +1 for null terminator
+
+            full_url = malloc(full_len);
+            if (!full_url) {
+                message("Memory allocation failed");
+                free(url);
+                return false;
+            }
+
+            strncpy(full_url, current_url, base_len);
+            strcpy(full_url + base_len, url);
+        }
+
+        free(url);
+        url = full_url;
+    }
+
+    message("Fetching link...");
+    GeminiOutput go = gemini_fetch(url, buffer);
+
+    if (go.size == 0) {
+        message("Failed to fetch content");
+        free(url);
+        return false;
+    }
+
+    setBufferContent(buffer, go.content, false);
+
+    // Update the buffer's URL to the new URL
+    if (buffer->url) {
+        free(buffer->url);
+    }
+    buffer->url = url; // Transfer ownership of url
+
+    return true;
+}
+
+
 // TODO Extract the is_gemini_link(char *text) function
 // We still can't render HTML, so we might want to see the raw HTML.
 bool gemini_redirect(Buffer *buffer) {
