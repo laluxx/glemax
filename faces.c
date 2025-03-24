@@ -12,6 +12,10 @@ Font *minifont;
 int fontsize = 15;
 int minifontsize = 15;
 
+Font *commentfont;
+int commentfontsize = 15;
+char *commentfontPath = "./assets/fonts/CartographCF/CartographCF-BoldItalic.otf";
+
 /* char *fontPath = "fan.otf"; */
 char *fontPath = "jet-nerd-medium.ttf";
 Font* nerdFont;

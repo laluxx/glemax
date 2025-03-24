@@ -2,14 +2,30 @@
 #define SYNTAX_H
 
 #include <tree_sitter/api.h>
+#include <uthash.h>
 #include "buffer.h"
 
 // NOTE Syntax and SyntaxArray structs are defined inside buffer.h
 // to avoid circular header dependency
 
 typedef struct {
+    const char *nodeType; // Key
+    Color *color;         // Value
+    UT_hash_handle hh;    // Hash table handle
+} NodeColorMap;
+
+extern NodeColorMap *nodeColorMap;
+
+void addNodeColorMapping(NodeColorMap **map, const char *nodeType, Color *color);
+
+Color *getNodeColorFromMap(const char *nodeType);
+void initNodeColorMappings();
+
+
+typedef struct {
     const char *language; // Language name (e.g., "c", "scheme")
     TSParser *parser;     // Tree-sitter parser for this language
+    NodeColorMap *nodeColorMap;
 } LanguageParser;
 
 typedef struct {
@@ -23,7 +39,6 @@ extern LanguageParsers lps; // NOTE Global ring of LanguageParser(s)
 void initLanguageParsers();
 TSParser *inferParserForLanguage(const char *language);
 void freeLanguageParsers();
-
 
 
 void initSyntax(Buffer *buffer);
@@ -63,5 +78,5 @@ void highlightColumns(Buffer *buffer, int numColors, ...);
 
 void msm(Buffer *buffer, int index, int lengthChange);
 
-
+bool major_mode_is_supported(char *grammar);
 #endif // SYNTAX_H

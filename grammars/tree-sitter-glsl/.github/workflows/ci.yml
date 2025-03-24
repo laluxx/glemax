@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+  pull_request:
+
+jobs:
+  build:
+    name: Run tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: tree-sitter/setup-action@v1
+        with:
+          install-lib: false
+      - uses: tree-sitter/parser-test-action@v2
+        with:
+          test-rust: true
+          test-node: true
+          test-python: true
+          test-go: true
+          test-swift: true

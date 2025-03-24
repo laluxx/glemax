@@ -32,6 +32,6 @@ void fetch_word_completions(const char *input, Buffer *target_buffer, Completion
 void complete_at_point(const char *prompt, const char *input, CompletionEngine *ce, WindowManager *wm);
 
 void insert_completions(Buffer *buffer, CompletionEngine *ce);
-
+void free_completion_engine(CompletionEngine *ce);
 
 #endif

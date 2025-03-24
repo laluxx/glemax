@@ -70,4 +70,6 @@ bool  colorsEqual(Color a, Color b);
 // Color utilities
 Color blendColors(Color color1, Color color2, float alpha);
 
+
+
 #endif // THEME_H

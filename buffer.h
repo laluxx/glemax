@@ -31,7 +31,7 @@ typedef struct {
     size_t end;     // End position of the region
     size_t mark;    // NOTE Could become a dynamic array of marks
     bool active;    // Whether the region is currently active
-    bool marked;    // HACK Whether the region was activated by pressing C-SPC
+    bool marked;    // HACK Whether  the region was activated by pressing C-SPC
 } Region;
 
 // NOTE we could attach more informations to Scopes like
@@ -106,11 +106,13 @@ typedef struct {
     char *path;      // Normalized as "~/"
     Region region;   // NOTE Each buffer has its region
     Scale scale;     // Scale struct for managing font sizes
-    Font *font;      // NOTE Each buffer has its fonts
     TSTree *tree;    // Tree sitter tree
     SyntaxArray syntaxArray; // Array of syntax highlighting ranges
     char *major_mode;
-    char* fontPath;
+
+    Font *font; // NOTE Each buffer has its fonts
+    char *fontPath;
+
     Scopes scopes;
     Diffs diffs;
     char *originalContent;     // Store the original file content
@@ -120,16 +122,16 @@ typedef struct {
     int animatedLineNumber;    // Line number being animated
     double animationStartTime; // Start time of the animation
     char *url;                 // Gemini url TODO History
-    BufferWindows displayWindows;
+    BufferWindows displayWindows; // Windows where this buffer is displayed
 } Buffer;
 
 typedef struct {
-    Buffer **buffers;    // Array of buffer pointers
-    int count;           // Number of buffers
-    int capacity;        // Capacity of the buffer list
-    int activeIndex;     // Index of the active buffer
-    char *activeName;    // Name of the active buffer
-    Buffer *lastBuffer;  // For going back from the minibuffer
+    Buffer **buffers;   // Array of buffer pointers
+    int    count;       // Number of buffers
+    int    capacity;    // Capacity of the buffer list
+    int    activeIndex; // Index of the active buffer
+    char   *activeName; // Name of the active buffer
+    /* Buffer *lastBuffer; // For going back from the minibuffer */
 } BufferManager;
 
 typedef enum {
@@ -155,10 +157,18 @@ typedef struct {
     struct Window *window; // Pointer to the owning window TODO
 } Modeline;
 
+
+
+#include "uthash.h"
+
 typedef struct {
-    bool noOtherWindow;
-    bool scrollBar;
-    bool truncateLines;
+    bool  noOtherWindow;
+    bool  scrollBar;
+    bool  truncateLines;
+    bool  minimap;              // TODO
+    float minimap_width;        // Current width of the minimap
+    float minimap_target_width; // Target width for easing
+    bool  minimap_lerp_active;  // Whether easing is active
 } WindowParameters;
 
 typedef struct Window {
@@ -179,17 +189,33 @@ typedef struct Window {
     float targetScrollX;
     bool isScrolling;
     bool isMouseWheelScrolling;
-    /* bool noOtherWindow; */
-    /* bool truncateLines; // TODO Move into parameters  */
     size_t leftPadding; // TODO
-    WindowParameters parameters; // TODO add bool scroll_bar tro WindowParameters
+    WindowParameters parameters; // Window parameters
 } Window;
 
+typedef struct WindowMap {
+    char *key;         // Buffer name
+    Window *window;
+    UT_hash_handle hh;
+} WindowMap;
+
 typedef struct {
-    Window *head;         // Head of the window list
-    Window *activeWindow; // Currently active window
-    int count;            // Number of windows
+    Window *head;
+    Window *activeWindow;       // Currently active window
+    int count;                  // Number of active windows
+    WindowMap *graveyard;       // Pool of inactive windows
+    int inactive_count;         // Number of inactive windows
+    char *lastKilledBufferName; // Buffers are keys to windows
 } WindowManager;
+
+/* typedef struct { */
+/*     Window *head;         // Head of the rendered window list */
+/*     Window *inactive;     // Pool of unused windows */
+/*     Window *activeWindow;  */
+/*     int count;            // Number of windows */
+/*     int inactive_count;   // Number of inactive windows */
+/*     WindowMap *name_map; */
+/* } WindowManager; */
 
 
 extern WindowManager wm;
@@ -201,9 +227,12 @@ extern double mouseY;
 
 void initBuffer(Buffer *buffer, const char *name, const char *path);
 
+/* void newBuffer(BufferManager *manager, WindowManager *wm, */
+/*                const char *name, const char *path, char *fontPath, */
+/*                int sw, int sh); */
+
 void newBuffer(BufferManager *manager, WindowManager *wm,
-               const char *name, const char *path, char *fontPath,
-               int sw, int sh);
+               const char *name, const char *path, char *fontPath);
 
 
 
@@ -258,5 +287,17 @@ void addDisplayWindowToBuffer(Buffer *buffer, Window *window);
 void removeDisplayWindowFromBuffer(Buffer *buffer, Window *window);
 
 
+void abort_recursive_edit();
+
+Buffer *getPreviousBuffer(BufferManager *bm);
+Buffer *getNextBuffer(BufferManager *bm);
+
+char *getPreviousBufferName(BufferManager *bm);
+char *getNextBufferName(BufferManager *bm);
+
+char *getPreviousBufferPath(BufferManager *bm);
+char *getNextBufferPath(BufferManager *bm);
+
+bool major_mode_supported(Buffer *buffer);
 
 #endif

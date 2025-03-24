@@ -67,7 +67,7 @@ SCM scm_buffer_new(SCM name, SCM path, SCM fontPath) {
         c_font = strdup("jetb.ttf");  // Use the actual font name as fallback
     }
 
-    newBuffer(&bm, &wm, c_name, c_path, c_font, sw, sh);
+    newBuffer(&bm, &wm, c_name, c_path, c_font);
     
     free(c_name); free(c_path); free(c_font);
     return SCM_BOOL_T;

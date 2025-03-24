@@ -521,8 +521,6 @@ bool loadDebugSymbols(const char *filename) {
     return true;
 }
 
-/* Internal helper functions */
-
 static void handleDebugSignal(int signo, siginfo_t *info, void *context) {
     if (!g_debugger.initialized) {
         /* Pass to original handler */

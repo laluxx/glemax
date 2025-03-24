@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include "lsp.h"
 #include "syntax.h"
 #include "isearch.h"
 #include "globals.h"
@@ -89,9 +90,11 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
     buffer->scale.index = 0;
     buffer->goal_column = -1;
     buffer->region.mark = 0;
+    buffer->region.marked = false;
 
     buffer->animatedLineNumber = -1;
     buffer->animationStartTime = 0.0f;
+
 
     // Initialize BufferWindows structure
     buffer->displayWindows.windows = NULL;
@@ -103,12 +106,18 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
         fseek(file, 0, SEEK_END);
         buffer->originalSize = ftell(file);
         fseek(file, 0, SEEK_SET);
+
         buffer->originalContent = malloc(buffer->originalSize + 1);
         fread(buffer->originalContent, 1, buffer->originalSize, file);
         buffer->originalContent[buffer->originalSize] = '\0';
         fclose(file);
+
     } else {
-        buffer->originalContent = NULL;
+        // FIXME This else is reached
+        /* buffer->originalContent = NULL; */
+        /* buffer->originalSize = 0; */
+
+        buffer->originalContent = strdup(buffer->content);
         buffer->originalSize = 0;
     }
 
@@ -128,8 +137,8 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
     buffer->diffs = (Diffs){NULL, 0, 0};
 }
 
-void newBuffer(BufferManager *manager, WindowManager *wm, const char *name,
-               const char *path, char *fontPath, int sw, int sh) {
+void newBuffer(BufferManager *bm, WindowManager *wm, const char *name,
+               const char *path, char *fontPath) {
     Buffer *buffer = malloc(sizeof(Buffer));
     if (buffer == NULL) {
         fprintf(stderr, "Failed to allocate memory for new buffer.\n");
@@ -153,19 +162,19 @@ void newBuffer(BufferManager *manager, WindowManager *wm, const char *name,
     }
     buffer->font = globalFontCache[buffer->scale.index];
 
-    if (manager->count >= manager->capacity) {
-        manager->capacity *= 2;
+    if (bm->count >= bm->capacity) {
+        bm->capacity *= 2;
         Buffer **newBuffers =
-            realloc(manager->buffers, sizeof(Buffer *) * manager->capacity);
+            realloc(bm->buffers, sizeof(Buffer *) * bm->capacity);
         if (newBuffers == NULL) {
-            fprintf(stderr, "Failed to expand buffer manager capacity.\n");
+            fprintf(stderr, "Failed to expand buffer bm capacity.\n");
             free(buffer); // Free allocated buffer on failure
             return;
         }
-        manager->buffers = newBuffers;
+        bm->buffers = newBuffers;
     }
 
-    manager->buffers[manager->count++] = buffer;
+    bm->buffers[bm->count++] = buffer;
 
     // Set the buffer in the active window, ensuring it is immediately visible and
     // correctly positioned
@@ -177,9 +186,9 @@ void newBuffer(BufferManager *manager, WindowManager *wm, const char *name,
     }
 
     // Optionally set the global active buffer if needed
-    manager->activeIndex = manager->count - 1;
-    free(manager->activeName);
-    manager->activeName = strdup(name);
+    bm->activeIndex = bm->count - 1;
+    free(bm->activeName);
+    bm->activeName = strdup(name);
 }
 
 void freeBuffer(Buffer *buffer) {
@@ -202,44 +211,74 @@ void freeBuffer(Buffer *buffer) {
     
 }
 
-void initBufferManager(BufferManager *manager) {
-    manager->capacity = 10;
-    manager->buffers = malloc(sizeof(Buffer*) * manager->capacity);
-    manager->count = 0;
-    manager->activeIndex = -1;
-    manager->activeName = NULL;
+// TODO Graveyard
+void initBufferManager(BufferManager *bm) {
+    bm->capacity = 10;
+    bm->buffers = malloc(sizeof(Buffer*) * bm->capacity);
+    bm->count = 0;
+    bm->activeIndex = -1;
+    bm->activeName = NULL;
 }
 
-void freeBufferManager(BufferManager *manager) {
-    for (int i = 0; i < manager->count; i++) {
-        freeBuffer(manager->buffers[i]);
-        free(manager->buffers[i]);
+// TODO Implement Graveyard then Free it here
+void freeBufferManager(BufferManager *bm) {
+    for (int i = 0; i < bm->count; i++) {
+        freeBuffer(bm->buffers[i]);
+        free(bm->buffers[i]);
     }
-    free(manager->buffers);
-    free(manager->activeName);
-    manager->buffers = NULL;
-    manager->activeName = NULL;
-    manager->count = 0;
-    manager->capacity = 0;
-    manager->activeIndex = -1;
+    free(bm->buffers);
+    free(bm->activeName);
+    bm->buffers = NULL;
+    bm->activeName = NULL;
+    bm->count = 0;
+    bm->capacity = 0;
+    bm->activeIndex = -1;
 }
+
 
 void switchToBuffer(BufferManager *bm, const char *bufferName) {
+    // If the option is enabled, check if any window is already displaying the buffer
+    if (focus_window_if_buffer_displayed && !isCurrentBuffer(bm, "minibuffer")) {
+        Window *current = wm.head;
+        while (current != NULL) {
+            if (current->buffer && strcmp(current->buffer->name, bufferName) == 0) {
+                // Focus the window that already displays the buffer
+                wm.activeWindow->isActive = false;
+                wm.activeWindow = current;
+                current->isActive = true;
+                return; // Exit early to avoid switching the buffer in the original window
+            }
+            current = current->next;
+        }
+    }
+
+    // If no window is displaying the buffer, proceed with the original logic
     for (int i = 0; i < bm->count; i++) {
         if (strcmp(bm->buffers[i]->name, bufferName) == 0) {
-            if (strcmp(getActiveBuffer(bm)->name, "minibuffer") != 0) {
-                bm->lastBuffer = getActiveBuffer(bm);
-            }
             bm->activeIndex = i;
             fill_scopes(bm->buffers[i], &bm->buffers[i]->scopes);
             return;
         }
     }
+
+    // If the buffer doesn't exist, show an error message
+    message("Buffer not found.");
 }
 
-bool makeActiveBuffer(Buffer *buffer) {
-    // TODO
-}
+
+// TODO Option to just focus the window if it's displaying that buffer
+/* void switchToBuffer(BufferManager *bm, const char *bufferName) { */
+/*     for (int i = 0; i < bm->count; i++) { */
+/*         if (strcmp(bm->buffers[i]->name, bufferName) == 0) { */
+/*             if (strcmp(getActiveBuffer(bm)->name, "minibuffer") != 0) { */
+/*                 bm->lastBuffer = getActiveBuffer(bm); */
+/*             } */
+/*             bm->activeIndex = i; */
+/*             fill_scopes(bm->buffers[i], &bm->buffers[i]->scopes); */
+/*             return; */
+/*         } */
+/*     } */
+/* } */
 
 
 Buffer *getActiveBuffer(BufferManager *bm) {
@@ -249,38 +288,38 @@ Buffer *getActiveBuffer(BufferManager *bm) {
     return NULL;
 }
 
-Buffer *getBuffer(BufferManager *manager, const char *name) {
-    for (int i = 0; i < manager->count; i++) {
-        if (strcmp(manager->buffers[i]->name, name) == 0) {
-            return manager->buffers[i];
+Buffer *getBuffer(BufferManager *bm, const char *name) {
+    for (int i = 0; i < bm->count; i++) {
+        if (strcmp(bm->buffers[i]->name, name) == 0) {
+            return bm->buffers[i];
         }
     }
     return NULL; // Return NULL if no buffer is found
 }
 
-bool isCurrentBuffer(BufferManager *manager, const char *bufferName) {
-    Buffer *currentBuffer = getActiveBuffer(manager);
+bool isCurrentBuffer(BufferManager *bm, const char *bufferName) {
+    Buffer *currentBuffer = getActiveBuffer(bm);
     if (currentBuffer != NULL && strcmp(currentBuffer->name, bufferName) == 0) {
         return true;
     }
     return false;
 }
 
-void nextBuffer(BufferManager *manager) {
-    if (manager->count > 0) {
-        manager->activeIndex = (manager->activeIndex + 1) % manager->count;
-        free(manager->activeName);
-        manager->activeName = strdup(manager->buffers[manager->activeIndex]->name);
-        printf("Switched to next buffer: %s\n", manager->activeName);
+void nextBuffer(BufferManager *bm) {
+    if (bm->count > 0) {
+        bm->activeIndex = (bm->activeIndex + 1) % bm->count;
+        free(bm->activeName);
+        bm->activeName = strdup(bm->buffers[bm->activeIndex]->name);
+        printf("Switched to next buffer: %s\n", bm->activeName);
     }
 }
 
-void previousBuffer(BufferManager *manager) {
-    if (manager->count > 0) {
-        manager->activeIndex = (manager->activeIndex - 1 + manager->count) % manager->count;
-        free(manager->activeName);
-        manager->activeName = strdup(manager->buffers[manager->activeIndex]->name);
-        printf("Switched to previous buffer: %s\n", manager->activeName);
+void previousBuffer(BufferManager *bm) {
+    if (bm->count > 0) {
+        bm->activeIndex = (bm->activeIndex - 1 + bm->count) % bm->count;
+        free(bm->activeName);
+        bm->activeName = strdup(bm->buffers[bm->activeIndex]->name);
+        printf("Switched to previous buffer: %s\n", bm->activeName);
     }
 }
 
@@ -431,59 +470,22 @@ void message(const char *format, ...) {
     free(formattedText);
 }
 
-/* void message(const char *format, ...) { */
-/*     Buffer *minibuffer    = getBuffer(&bm, "minibuffer"); */
-/*     Buffer *messageBuffer = getBuffer(&bm, "message"); */
-
-/*     // First, format the message with variable arguments */
-/*     va_list args; */
-/*     va_start(args, format); */
-
-/*     // Determine the required buffer size */
-/*     va_list args_copy; */
-/*     va_copy(args_copy, args); */
-/*     int needed = */
-/*         vsnprintf(NULL, 0, format, args_copy) + 1; // +1 for null terminator */
-/*     va_end(args_copy); */
-
-/*     if (needed <= 0) { */
-/*         va_end(args); */
-/*         fprintf(stderr, "Error in formatting message.\n"); */
-/*         return; */
-/*     } */
-
-/*     // Allocate memory for the formatted message */
-/*     char *formattedText = malloc(needed); */
-/*     if (!formattedText) { */
-/*         va_end(args); */
-/*         fprintf(stderr, "Failed to allocate memory for message.\n"); */
-/*         return; */
-/*     } */
-
-/*     // Format the message */
-/*     vsnprintf(formattedText, needed, format, args); */
-/*     va_end(args); */
-
-/*     // Then add the square brackets */
-/*     size_t totalLen = needed + 2; // For '[' and ']' */
-/*     char *bracketedMessage = malloc(totalLen); */
-
-/*     if (bracketedMessage) { */
-/*         snprintf(bracketedMessage, totalLen, "[%s]", formattedText); */
-
-/*         if (isCurrentBuffer(&bm, "minibuffer") || isearch.searching) { */
-/*             setBufferContent(messageBuffer, bracketedMessage, true); */
-/*         } else { */
-/*             setBufferContent(minibuffer, formattedText, true); */
-/*         } */
-
-/*         free(bracketedMessage); */
-/*     } else { */
-/*         fprintf(stderr, "Failed to allocate memory for bracketed message.\n"); */
-/*     } */
-
-/*     free(formattedText); */
-/* } */
+// Abort the command that requested this recursive edit or minibuffer input.
+// TODO Do the SAME as C-g
+void abort_recursive_edit() {
+    Buffer *minibuffer = getBuffer(&bm, "minibuffer");
+    Buffer *prompt = getBuffer(&bm, "prompt");
+    minibuffer->size = 0;
+    minibuffer->point = 0;
+    minibuffer->content[0] = '\0';
+    if (prompt->content) {
+      free(prompt->content);
+    } else {
+        message("abort_recursive_edit() :: Tried to free NULL prompt->content");
+    }
+    prompt->content = strdup("");
+    previousBuffer(&bm); // NOTE It might also be a recursive minibuffer.
+}
 
 void cleanBuffer(BufferManager *bm, char *name) {
     Buffer *buffer = getBuffer(bm, name);
@@ -501,6 +503,8 @@ Buffer *getBufferUnderCursor(WindowManager *wm) {
         }
         win = win->next;
     }
+    
+    return NULL;
 }
 
 void setMajorMode(Buffer *buffer, char *mode) {
@@ -515,15 +519,114 @@ void inferMajorMode(Buffer *buffer) {
             free(buffer->major_mode);
             setMajorMode(buffer, "c");
         }
-
         if (strcmp(extension, ".scm") == 0)  {
             free(buffer->major_mode);
             setMajorMode(buffer, "scheme");
         }
+        if (strcmp(extension, ".html") == 0)  {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "html");
+        }
+        if (strcmp(extension, ".query") == 0)  {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "query");
+        }
+        if (   strcmp(extension, ".glsl") == 0
+            || strcmp(extension, ".frag") == 0
+            || strcmp(extension, ".vert") == 0)  {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "glsl");
+        }
+        if (strcmp(extension, ".zig") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "zig");
+        }
+        if (strcmp(extension, ".odin") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "odin");
+        }
+        if (strcmp(extension, ".lisp") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "commonlisp");
+        }
+        if (strcmp(extension, ".scss") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "scss");
+        }
+        if (strcmp(extension, ".hs") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "haskell");
+        }
+        if (strcmp(extension, ".lua") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "lua");
+        }
+        if (strcmp(extension, ".rs") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "rust");
+        }
 
-        // Add more major-modes...
+        if (   strcmp(extension,    ".sh"  )   == 0
+            || strcmp(extension,    ".bash")   == 0
+            || strcmp(buffer->name, "~/.bashrc") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "bash");
+        }
+
+        if (strcmp(extension, ".el") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "elisp");
+        }
+
+        if (strcmp(extension, ".py") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "python");
+        }
+        if (strcmp(extension, ".ml") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "ocaml");
+        }
+        if (strcmp(extension, ".css") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "css");
+        }
+        if (strcmp(extension, ".js") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "javascript");
+        }
+        if (strcmp(extension, ".jl") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "julia");
+        }
+        if (   strcmp(extension, ".cc")  == 0
+            || strcmp(extension, ".cpp") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "cpp");
+        }
+        if (strcmp(extension, ".go") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "go");
+        }
+        if (strcmp(extension, ".json") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "json");
+        }
+        if (   strcmp(extension, ".regex") == 0
+            || strcmp(extension, ".rgx"  ) == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "regex");
+        }
+
+        // Add more major-modes... and make this O(1)
     } else {
-        // we could also check the buffer->content here for modes that can't be determined by file extension alone
+        // This can't be O(1) ?
+        // we could also check the first line of buffer->content here checking for
+        // modes that can't be determined by file extension alone
+        if (strcmp(getFilename(buffer->name), "Makefile") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "make");
+        }
+
     }
 }
 
@@ -531,7 +634,7 @@ bool major_mode_is(Buffer *buffer, char *mode) {
     return strstr(buffer->major_mode, mode) != NULL;
 }
 
-// MODELINE
+// MODELINE TODO Whatever it's doing make it faster
 
 void addSegment(Segments *segments, const char *name, const char *content) {
     segments->segment = realloc(segments->segment, (segments->count + 1) * sizeof(Segment));
@@ -544,12 +647,15 @@ void initSegments(Segments *segments) {
     segments->segment = NULL;
     segments->count = 0;
     addSegment(segments, "logo",          "NaL");
+    addSegment(segments, "changed",       "Nothing");
     addSegment(segments, "readonly",      "NaR");
     addSegment(segments, "noOtherWindow", "NoW");
     addSegment(segments, "name",          "NAME");
     addSegment(segments, "url",           "NaU");
     addSegment(segments, "line-number",   "LINE-NUMBER");
     addSegment(segments, "scroll",        "Top");
+    addSegment(segments, "lsp",           "NOLSP");
+    addSegment(segments, "path",          "NaP");
     addSegment(segments, "region-chars",  "NaRC");
     addSegment(segments, "region-lines",  "NaRL");
     addSegment(segments, "isearch",       "[NaC]");
@@ -582,7 +688,33 @@ void updateSegments(Modeline *modeline, Buffer *buffer) {
             free(segment->content);
             segment->content = strdup(buffer->url);
         }
+        else if (strcmp(segment->name, "lsp") == 0) {
+            free(segment->content);
+            char *bufferDir = getBufferDirectory(buffer->path);
+            if (strcmp(bufferDir, "~/xos/projects/c/glemax") == 0 && lspp(lspClient)) {
+                segment->content = strdup("LSP");
+            } else {
+                segment->content = strdup("");
+            }
+        }
 
+        else if (strcmp(segment->name, "path") == 0) {
+            free(segment->content);
+            if (strcmp(buffer->name, buffer->path) != 0) {
+                segment->content = strdup(buffer->path);
+            } else {
+                segment->content = strdup("");
+            }
+        }
+
+        else if (strcmp(segment->name, "changed") == 0) {
+            free(segment->content);
+            if (strstr(buffer->content, buffer->originalContent)) {
+                segment->content = strdup("");
+            } else {
+              segment->content = strdup("C");
+            }
+        }
         else if (strcmp(segment->name, "mode") == 0) {
             free(segment->content);
             segment->content = strdup(buffer->major_mode);
@@ -659,20 +791,67 @@ void updateSegments(Modeline *modeline, Buffer *buffer) {
             free(segment->content);
             if (strcmp(buffer->major_mode, "c") == 0) {
                 segment->content = strdup("C");
+            } else if (strcmp(buffer->major_mode, "html") == 0) {
+                segment->content = strdup("H");
             } else if (strcmp(buffer->major_mode, "scheme") == 0) {
+                segment->content = strdup("S");
+            } else if (strcmp(buffer->major_mode, "glsl") == 0) {
                 segment->content = strdup("G");
             } else if (strcmp(buffer->major_mode, "eterm") == 0) {
                 segment->content = strdup("TERM");
             } else if (strcmp(buffer->major_mode, "gemini") == 0) {
                 segment->content = strdup("Gem");
+            } else if (strcmp(buffer->major_mode, "query") == 0) {
+                segment->content = strdup("Q");
+            } else if (strcmp(buffer->major_mode, "zig") == 0) {
+                segment->content = strdup("Z");
+            } else if (strcmp(buffer->major_mode, "odin") == 0) {
+                segment->content = strdup("O");
+            } else if (strcmp(buffer->major_mode, "make") == 0) {
+                segment->content = strdup("M");
+            } else if (strcmp(buffer->major_mode, "commonlisp") == 0) {
+                segment->content = strdup("C");
+            } else if (strcmp(buffer->major_mode, "scss") == 0) {
+                segment->content = strdup("SCSS");
+            } else if (strcmp(buffer->major_mode, "haskell") == 0) {
+                segment->content = strdup("H");
+            } else if (strcmp(buffer->major_mode, "lua") == 0) {
+                segment->content = strdup("L");
+            } else if (strcmp(buffer->major_mode, "rust") == 0) {
+                segment->content = strdup("R");
+            } else if (strcmp(buffer->major_mode, "bash") == 0) {
+                segment->content = strdup("B");
+            } else if (strcmp(buffer->major_mode, "elisp") == 0) {
+                segment->content = strdup("E");
+            } else if (strcmp(buffer->major_mode, "python") == 0) {
+                segment->content = strdup("P");
+            } else if (strcmp(buffer->major_mode, "ocaml") == 0) {
+                segment->content = strdup("ML");
+            } else if (strcmp(buffer->major_mode, "css") == 0) {
+                segment->content = strdup("CSS");
+            } else if (strcmp(buffer->major_mode, "javascript") == 0) {
+                segment->content = strdup("JS");
+            } else if (strcmp(buffer->major_mode, "julia") == 0) {
+                segment->content = strdup("JULIA");
+            } else if (strcmp(buffer->major_mode, "cpp") == 0) {
+                segment->content = strdup("CPP");
+            } else if (strcmp(buffer->major_mode, "go") == 0) {
+                segment->content = strdup("GO");
+            } else if (strcmp(buffer->major_mode, "json") == 0) {
+                segment->content = strdup("JSON");
+            } else if (strcmp(buffer->major_mode, "regex") == 0) {
+                segment->content = strdup("REGEX");
             } else {
-                segment->content = strdup("F");
+              segment->content = strdup("F");
             }
         }
     }
 }
 
 
+// TODO HANDLE global_visual_line_mode and the window parameter
+// also take a win instead of buffer can we please have only one function
+// split in 2 function getVisualLineNumber() and getLogicLineNumber()
 int getLineNumber(Buffer *buffer) {
     int lineNumber = 1;
     for (size_t i = 0; i < buffer->point && i < buffer->size; i++) {
@@ -761,3 +940,78 @@ char* getCurrentLine(Buffer *buffer) {
     return line;
 }
 
+Buffer *getPreviousBuffer(BufferManager *bm) {
+    if (bm->count > 0) {
+        int previousIndex = (bm->activeIndex - 1 + bm->count) % bm->count;
+        return bm->buffers[previousIndex];
+    }
+    return NULL; // No buffers available
+}
+
+Buffer *getNextBuffer(BufferManager *bm) {
+    if (bm->count > 0) {
+        int nextIndex = (bm->activeIndex + 1) % bm->count;
+        return bm->buffers[nextIndex];
+    }
+    return NULL; // No buffers available
+}
+
+char* getPreviousBufferName(BufferManager *bm) {
+    if (bm->count > 0) {
+        int previousIndex = (bm->activeIndex - 1 + bm->count) % bm->count;
+        return bm->buffers[previousIndex]->name;
+    }
+    return NULL; // No buffers available
+}
+
+char* getNextBufferName(BufferManager *bm) {
+    if (bm->count > 0) {
+        int nextIndex = (bm->activeIndex + 1) % bm->count;
+        return bm->buffers[nextIndex]->name;
+    }
+    return NULL; // No buffers available
+}
+
+char* getPreviousBufferPath(BufferManager *bm) {
+    if (bm->count > 0) {
+        int previousIndex = (bm->activeIndex - 1 + bm->count) % bm->count;
+        return bm->buffers[previousIndex]->path;
+    }
+    return NULL;
+}
+
+char* getNextBufferPath(BufferManager *bm) {
+    if (bm->count > 0) {
+        int nextIndex = (bm->activeIndex + 1) % bm->count;
+        return bm->buffers[nextIndex]->path;
+    }
+    return NULL;
+}
+
+
+bool major_mode_supported(Buffer *buffer) {
+    if (   strcmp(buffer->major_mode, "c"     ) == 0
+        || strcmp(buffer->major_mode, "html"  ) == 0
+        || strcmp(buffer->major_mode, "query" ) == 0
+        || strcmp(buffer->major_mode, "glsl"  ) == 0
+        || strcmp(buffer->major_mode, "zig"   ) == 0
+        || strcmp(buffer->major_mode, "odin"  ) == 0
+        || strcmp(buffer->major_mode, "make"  ) == 0
+        || strcmp(buffer->major_mode, "commonlisp"  ) == 0
+        || strcmp(buffer->major_mode, "scss"  ) == 0
+        || strcmp(buffer->major_mode, "haskell"  ) == 0
+        || strcmp(buffer->major_mode, "lua"  ) == 0
+        || strcmp(buffer->major_mode, "rust"  ) == 0
+        || strcmp(buffer->major_mode, "bash"  ) == 0
+        || strcmp(buffer->major_mode, "elisp"  ) == 0
+        || strcmp(buffer->major_mode, "python"  ) == 0
+        || strcmp(buffer->major_mode, "ocaml"  ) == 0
+        || strcmp(buffer->major_mode, "css"  ) == 0
+        || strcmp(buffer->major_mode, "javascript"  ) == 0
+        || strcmp(buffer->major_mode, "julia"  ) == 0
+        || strcmp(buffer->major_mode, "cpp"  ) == 0
+        || strcmp(buffer->major_mode, "go"  ) == 0
+        || strcmp(buffer->major_mode, "json"  ) == 0
+        || strcmp(buffer->major_mode, "regex"  ) == 0
+        || strcmp(buffer->major_mode, "scheme") == 0) { return true; } else { return false; }
+}

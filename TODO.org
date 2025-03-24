@@ -3,6 +3,9 @@
 #+DATE: [2024-12-29]
 #+OPTIONS: toc:2
 
+* TODO Auto generate this file
+
+
 * 5.5 Defining New Foreign Object Types
 
 The “foreign object type” facility is Guile's mechanism for importing

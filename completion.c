@@ -8,12 +8,9 @@
 #include <stdio.h>
 #include <unistd.h>
 
-// TODO Vertico style completion
-// TODO - Named completions
-// TODO   - Orderless style completion
 
-// TODO Word completion based on all other words in other buffers dabbrev_expand()
-
+// TODO If we insert a completion with tab and it's a sole completion, then next tab
+// should start completing again not try to cycle between 1 completion.
 
 
 BinaryCache binary_cache = {NULL, 0, false};

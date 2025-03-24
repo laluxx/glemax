@@ -1,0 +1,58 @@
+{
+  "name": "tree-sitter-elisp",
+  "version": "1.6.0",
+  "description": "tree-sitter grammar for Emacs Lisp",
+  "main": "bindings/node",
+  "types": "bindings/node",
+  "keywords": [
+    "parser",
+    "lexer"
+  ],
+  "files": [
+    "grammar.js",
+    "binding.gyp",
+    "prebuilds/**",
+    "bindings/node/*",
+    "queries/*",
+    "src/**"
+  ],
+  "scripts": {
+    "generate": "tree-sitter generate",
+    "highlight": "tree-sitter highlight",
+    "parse": "tree-sitter parse",
+    "test": "tree-sitter test",
+    "install": "node-gyp-build",
+    "prebuildify": "prebuildify --napi --strip"
+  },
+  "author": "Wilfred Hughes <me@wilfred.me.uk>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Wilfred/tree-sitter-elisp.git"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "node-addon-api": "^7.1.0",
+    "node-gyp-build": "^4.8.0"
+  },
+  "peerDependencies": {
+    "tree-sitter": "^0.21.0"
+  },
+  "peerDependenciesMeta": {
+    "tree_sitter": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "tree-sitter-cli": "^0.22.6",
+    "prebuildify": "^6.0.0"
+  },
+  "tree-sitter": [
+    {
+      "scope": "source.emacs.lisp",
+      "highlights": "queries/highlights.scm",
+      "file-types": [
+        "el"
+      ]
+    }
+  ]
+}

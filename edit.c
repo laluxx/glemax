@@ -1,6 +1,8 @@
 #include "edit.h"
+#include "editor.h"
 #include "buffer.h"
 #include "commands.h"
+#include "draw.h"
 #include "keychords.h"
 #include "faces.h"
 #include "symbols.h"
@@ -17,6 +19,7 @@
 #include <unistd.h>
 #include "globals.h"
 #include "syntax.h"
+
 
 jmp_buf env; // NOTE Global jump buffer
 
@@ -38,9 +41,9 @@ void insertChar(Buffer *buffer, unsigned int codepoint) {
     if (codepoint > 0x10FFFF) {
         // Convert wrapped negative value back to control character range
         codepoint = (signed char)(codepoint & 0xFF);
-        if (codepoint < 0) {
-            codepoint = (unsigned char)codepoint;
-        }
+        /* if (codepoint < 0) { */
+        /*     codepoint = (unsigned char)codepoint; */
+        /* } */
     }
 
     // First ensure we have enough capacity
@@ -212,6 +215,9 @@ void end_of_buffer(Buffer *buffer) {
     if (!buffer->region.marked) set_mark(buffer, buffer->point);
 }
 
+/**
+   Move point N characters to the right (to the left if N is negative).
+*/
 void right_char(Buffer *buffer, bool shift, int arg) {
     if (shift) {
         if (!buffer->region.active) {
@@ -232,6 +238,9 @@ void right_char(Buffer *buffer, bool shift, int arg) {
     }
 }
 
+/**
+   Move point N characters to the left (to the right if N is negative).
+*/
 void left_char(Buffer *buffer, bool shift, int arg) {
     if (shift) {
         if (!buffer->region.active) {
@@ -250,7 +259,54 @@ void left_char(Buffer *buffer, bool shift, int arg) {
     }
 }
 
-void previous_line(Buffer *buffer, bool shift, int goal_column) {
+size_t find_visual_line_end(Buffer *buffer, Window *win, size_t start_pos) {
+    float available_width = win->width - fringe;
+    if (win->parameters.minimap) {
+        available_width -= win->parameters.minimap_width + minimap_left_padding;
+    }
+    float current_width = 0.0;
+    size_t pos = start_pos;
+    while (pos < buffer->size && buffer->content[pos] != '\n') {
+        char c = buffer->content[pos];
+        float char_width = getCharacterWidth(buffer->font, c);
+        if (current_width + char_width > available_width) {
+            break;
+        }
+        current_width += char_width;
+        pos++;
+    }
+    return pos;
+}
+
+size_t find_visual_line_start(Buffer *buffer, Window *win, size_t pos) {
+    size_t start = pos;
+    // Move to the start of the logical line
+    while (start > 0 && buffer->content[start - 1] != '\n') {
+        start--;
+    }
+    float available_width = win->width - fringe;
+    if (win->parameters.minimap) {
+        available_width -= win->parameters.minimap_width + minimap_left_padding;
+    }
+    float current_width = 0.0;
+    size_t current_pos = start;
+    size_t last_break = start;
+    while (current_pos < pos) {
+        char c = buffer->content[current_pos];
+        float char_width = getCharacterWidth(buffer->font, c);
+        if (current_width + char_width > available_width) {
+            last_break = current_pos;
+            current_width = 0.0;
+        }
+        current_width += char_width;
+        current_pos++;
+    }
+    return last_break;
+}
+
+void next_line(Window *win, bool shift, int arg) {
+    Buffer *buffer = win->buffer;
+
     if (shift) {
         if (!buffer->region.active) {
             activateRegion(buffer);
@@ -261,61 +317,515 @@ void previous_line(Buffer *buffer, bool shift, int goal_column) {
         }
     }
 
-    if (buffer->point == 0) {
-        message("Beginning of buffer");
-        return;
-    }
+    if (line_move_visual) {
+        // Check if the current line is wrapped
+        size_t visual_line_end = find_visual_line_end(buffer, win, buffer->point);
+        size_t logical_line_end = buffer->point;
 
-    int previousLineEnd = 0;
-    int previousLineStart = 0;
-    int currentLineStart = 0;
-
-    // Find the start of the current line
-    for (int i = buffer->point - 1; i >= 0; i--) {
-        if (buffer->content[i] == '\n') {
-            currentLineStart = i + 1;
-            break;
+        // Find the logical line end
+        for (size_t i = buffer->point; i < buffer->size; i++) {
+            if (buffer->content[i] == '\n') {
+                logical_line_end = i;
+                break;
+            }
         }
-    }
 
-    if (currentLineStart == 0) {
-        buffer->point = 0;
-        message("Beginning of buffer");
-        return;
-    }
+        if (visual_line_end == logical_line_end) {
+            // Line is not wrapped, behave like logical line movement
+            int nextLineStart = logical_line_end + 1;
+            int columnPosition = buffer->point - (logical_line_end - (logical_line_end - buffer->point));
 
-    // Find the start of the previous line
-    for (int i = currentLineStart - 2; i >= 0; i--) {
-        if (buffer->content[i] == '\n') {
-            previousLineStart = i + 1;
-            break;
+            if (buffer->goal_column >= 0) {
+                columnPosition = buffer->goal_column;
+            }
+
+            size_t targetPosition = nextLineStart + columnPosition;
+            if (nextLineStart >= buffer->size) {
+                buffer->point = buffer->size;
+                message("End of buffer");
+            } else {
+                for (size_t i = nextLineStart; i <= buffer->size; i++) {
+                    if (buffer->content[i] == '\n' || i == buffer->size) {
+                        if (targetPosition > i) {
+                            targetPosition = i;
+                        }
+                        break;
+                    }
+                }
+                buffer->point = targetPosition;
+            }
+        } else {
+            // Line is wrapped, move to the next visual line
+            if (visual_line_end >= buffer->size) {
+                buffer->point = buffer->size;
+                message("End of buffer");
+            } else {
+                buffer->point = visual_line_end;
+            }
         }
-    }
-
-    // Find the end of the previous line
-    for (int i = currentLineStart - 1; i >= 0; i--) {
-        if (buffer->content[i] == '\n') {
-            previousLineEnd = i;
-            break;
-        }
-    }
-
-    // Calculate the current column position
-    int column = buffer->point - currentLineStart;
-
-    // If goal_column is set, use it instead of the current column position
-    if (goal_column >= 0) {
-        column = goal_column;
-    }
-
-    // Calculate the target position in the previous line
-    int previousLineLength = previousLineEnd - previousLineStart;
-    if (column >= previousLineLength) {
-        buffer->point = previousLineEnd; // Move to the end of the previous line
     } else {
-        buffer->point = previousLineStart + column; // Move to the goal column
+        // Original logical line movement
+        int currentLineEnd = buffer->point;
+        int nextLineStart = buffer->size;
+        int columnPosition = 0;
+
+        for (size_t i = buffer->point; i < buffer->size; i++) {
+            if (buffer->content[i] == '\n') {
+                currentLineEnd = i;
+                nextLineStart = i + 1;
+                break;
+            }
+        }
+
+        int currentLineStart = buffer->point;
+        while (currentLineStart > 0 && buffer->content[currentLineStart - 1] != '\n') {
+            currentLineStart--;
+        }
+        columnPosition = buffer->point - currentLineStart;
+
+        if (buffer->goal_column >= 0) {
+            columnPosition = buffer->goal_column;
+        }
+
+        size_t targetPosition = nextLineStart + columnPosition;
+        if (nextLineStart >= buffer->size) {
+            buffer->point = buffer->size;
+            message("End of buffer");
+        } else {
+            for (size_t i = nextLineStart; i <= buffer->size; i++) {
+                if (buffer->content[i] == '\n' || i == buffer->size) {
+                    if (targetPosition > i) {
+                        targetPosition = i;
+                    }
+                    break;
+                }
+            }
+            buffer->point = targetPosition;
+        }
     }
 }
+
+void previous_line(Window *win, bool shift, int arg) {
+    Buffer *buffer = win->buffer;
+
+    if (shift) {
+        if (!buffer->region.active) {
+            activateRegion(buffer);
+        }
+    } else {
+        if (!buffer->region.marked) {
+            buffer->region.active = false;
+        }
+    }
+
+    if (line_move_visual) {
+        // Check if the current line is wrapped
+        size_t visual_line_start = find_visual_line_start(buffer, win, buffer->point);
+        size_t logical_line_start = buffer->point;
+
+        // Find the logical line start
+        while (logical_line_start > 0 && buffer->content[logical_line_start - 1] != '\n') {
+            logical_line_start--;
+        }
+
+        if (visual_line_start == logical_line_start) {
+            // Line is not wrapped, behave like logical line movement
+            if (buffer->point == 0) {
+                message("Beginning of buffer");
+                return;
+            }
+
+            int previousLineEnd = 0;
+            int previousLineStart = 0;
+            int currentLineStart = 0;
+
+            for (int i = buffer->point - 1; i >= 0; i--) {
+                if (buffer->content[i] == '\n') {
+                    currentLineStart = i + 1;
+                    break;
+                }
+            }
+
+            if (currentLineStart == 0) {
+                buffer->point = 0;
+                message("Beginning of buffer");
+                return;
+            }
+
+            for (int i = currentLineStart - 2; i >= 0; i--) {
+                if (buffer->content[i] == '\n') {
+                    previousLineStart = i + 1;
+                    break;
+                }
+            }
+
+            for (int i = currentLineStart - 1; i >= 0; i--) {
+                if (buffer->content[i] == '\n') {
+                    previousLineEnd = i;
+                    break;
+                }
+            }
+
+            int column = buffer->point - currentLineStart;
+            if (buffer->goal_column >= 0) {
+                column = buffer->goal_column;
+            }
+
+            int previousLineLength = previousLineEnd - previousLineStart;
+            if (column >= previousLineLength) {
+                buffer->point = previousLineEnd;
+            } else {
+                buffer->point = previousLineStart + column;
+            }
+        } else {
+            // Line is wrapped, move to the previous visual line while preserving the column
+            size_t current_visual_line_start = find_visual_line_start(buffer, win, buffer->point);
+            int column = buffer->point - current_visual_line_start;
+
+            // Find the start of the previous visual line
+            size_t previous_visual_line_start = find_visual_line_start(buffer, win, current_visual_line_start - 1);
+
+            // Calculate the target position in the previous visual line
+            size_t target_position = previous_visual_line_start + column;
+
+            // Ensure the target position does not exceed the previous visual line's end
+            size_t previous_visual_line_end = find_visual_line_end(buffer, win, previous_visual_line_start);
+            if (target_position > previous_visual_line_end) {
+                target_position = previous_visual_line_end;
+            }
+
+            buffer->point = target_position;
+        }
+    } else {
+        // Original logical line movement
+        if (buffer->point == 0) {
+            message("Beginning of buffer");
+            return;
+        }
+
+        int previousLineEnd = 0;
+        int previousLineStart = 0;
+        int currentLineStart = 0;
+
+        for (int i = buffer->point - 1; i >= 0; i--) {
+            if (buffer->content[i] == '\n') {
+                currentLineStart = i + 1;
+                break;
+            }
+        }
+
+        if (currentLineStart == 0) {
+            buffer->point = 0;
+            message("Beginning of buffer");
+            return;
+        }
+
+        for (int i = currentLineStart - 2; i >= 0; i--) {
+            if (buffer->content[i] == '\n') {
+                previousLineStart = i + 1;
+                break;
+            }
+        }
+
+        for (int i = currentLineStart - 1; i >= 0; i--) {
+            if (buffer->content[i] == '\n') {
+                previousLineEnd = i;
+                break;
+            }
+        }
+
+        int column = buffer->point - currentLineStart;
+        if (buffer->goal_column >= 0) {
+            column = buffer->goal_column;
+        }
+
+        int previousLineLength = previousLineEnd - previousLineStart;
+        if (column >= previousLineLength) {
+            buffer->point = previousLineEnd;
+        } else {
+            buffer->point = previousLineStart + column;
+        }
+    }
+}
+
+// NOTE BASE
+/* void next_line(Window *win, bool shift) { */
+/*     Buffer *buffer = win->buffer; */
+
+/*     if (shift) { */
+/*         if (!buffer->region.active) { */
+/*             activateRegion(buffer); */
+/*         } */
+/*     } else { */
+/*         if (!buffer->region.marked) { */
+/*             buffer->region.active = false; */
+/*         } */
+/*     } */
+
+/*     if (line_move_visual) { */
+/*         // Visual line movement */
+/*         size_t visual_line_end = find_visual_line_end(buffer, win, buffer->point); */
+/*         if (visual_line_end >= buffer->size) { */
+/*             buffer->point = buffer->size; */
+/*             message("End of buffer"); */
+/*             return; */
+/*         } */
+/*         buffer->point = visual_line_end; */
+/*     } else { */
+/*         // Logical line movement (original behavior) */
+/*         int currentLineEnd = buffer->point; */
+/*         int nextLineStart = buffer->size; */
+/*         int columnPosition = 0; */
+
+/*         // Determine the end of the current line. */
+/*         for (size_t i = buffer->point; i < buffer->size; i++) { */
+/*             if (buffer->content[i] == '\n') { */
+/*                 currentLineEnd = i; */
+/*                 nextLineStart = i + 1; */
+/*                 break; */
+/*             } */
+/*         } */
+
+/*         // Calculate column position. */
+/*         int currentLineStart = buffer->point; */
+/*         while (currentLineStart > 0 && */
+/*                buffer->content[currentLineStart - 1] != '\n') { */
+/*             currentLineStart--; */
+/*         } */
+/*         columnPosition = buffer->point - currentLineStart; */
+
+/*         // If goal_column is set, use it instead of the current column position. */
+/*         if (buffer->goal_column >= 0) { */
+/*             columnPosition = buffer->goal_column; */
+/*         } */
+
+/*         // Calculate the point position in the next line, limited by the line's */
+/*         // length. */
+/*         size_t targetPosition = nextLineStart + columnPosition; */
+/*         if (nextLineStart >= buffer->size) { */
+/*             // If no new line to jump to, move cursor to the end and display message */
+/*             buffer->point = buffer->size; */
+/*             message("End of buffer"); */
+/*         } else { */
+/*             for (size_t i = nextLineStart; i <= buffer->size; i++) { */
+/*                 if (buffer->content[i] == '\n' || i == buffer->size) { */
+/*                     if (targetPosition > i) { */
+/*                         targetPosition = i; */
+/*                     } */
+/*                     break; */
+/*                 } */
+/*             } */
+/*             buffer->point = targetPosition; */
+/*         } */
+/*     } */
+/* } */
+
+/* void previous_line(Window *win, bool shift) { */
+/*     Buffer *buffer = win->buffer; */
+
+/*     if (shift) { */
+/*         if (!buffer->region.active) { */
+/*             activateRegion(buffer); */
+/*         } */
+/*     } else { */
+/*         if (!buffer->region.marked) { */
+/*             buffer->region.active = false; */
+/*         } */
+/*     } */
+
+/*     if (line_move_visual) { */
+/*         // Visual line movement */
+/*         size_t visual_line_start = find_visual_line_start(buffer, win, buffer->point); */
+/*         if (visual_line_start == 0) { */
+/*             buffer->point = 0; */
+/*             message("Beginning of buffer"); */
+/*             return; */
+/*         } */
+/*         buffer->point = visual_line_start; */
+/*     } else { */
+/*         // Logical line movement (original behavior) */
+/*         if (buffer->point == 0) { */
+/*             message("Beginning of buffer"); */
+/*             return; */
+/*         } */
+
+/*         int previousLineEnd = 0; */
+/*         int previousLineStart = 0; */
+/*         int currentLineStart = 0; */
+
+/*         // Find the start of the current line */
+/*         for (int i = buffer->point - 1; i >= 0; i--) { */
+/*             if (buffer->content[i] == '\n') { */
+/*                 currentLineStart = i + 1; */
+/*                 break; */
+/*             } */
+/*         } */
+
+/*         if (currentLineStart == 0) { */
+/*             buffer->point = 0; */
+/*             message("Beginning of buffer"); */
+/*             return; */
+/*         } */
+
+/*         // Find the start of the previous line */
+/*         for (int i = currentLineStart - 2; i >= 0; i--) { */
+/*             if (buffer->content[i] == '\n') { */
+/*                 previousLineStart = i + 1; */
+/*                 break; */
+/*             } */
+/*         } */
+
+/*         // Find the end of the previous line */
+/*         for (int i = currentLineStart - 1; i >= 0; i--) { */
+/*             if (buffer->content[i] == '\n') { */
+/*                 previousLineEnd = i; */
+/*                 break; */
+/*             } */
+/*         } */
+
+/*         // Calculate the current column position */
+/*         int column = buffer->point - currentLineStart; */
+
+/*         // If goal_column is set, use it instead of the current column position */
+/*         if (buffer->goal_column >= 0) { */
+/*             column = buffer->goal_column; */
+/*         } */
+
+/*         // Calculate the target position in the previous line */
+/*         int previousLineLength = previousLineEnd - previousLineStart; */
+/*         if (column >= previousLineLength) { */
+/*             buffer->point = previousLineEnd; // Move to the end of the previous line */
+/*         } else { */
+/*             buffer->point = previousLineStart + column; // Move to the goal column */
+/*         } */
+/*     } */
+/* } */
+
+
+// OLD
+/* void previous_line(Buffer *buffer, bool shift, int goal_column) { */
+/*     if (shift) { */
+/*         if (!buffer->region.active) { */
+/*             activateRegion(buffer); */
+/*         } */
+/*     } else { */
+/*         if (!buffer->region.marked) { */
+/*             buffer->region.active = false; */
+/*         } */
+/*     } */
+
+/*     if (buffer->point == 0) { */
+/*         message("Beginning of buffer"); */
+/*         return; */
+/*     } */
+
+/*     int previousLineEnd = 0; */
+/*     int previousLineStart = 0; */
+/*     int currentLineStart = 0; */
+
+/*     // Find the start of the current line */
+/*     for (int i = buffer->point - 1; i >= 0; i--) { */
+/*         if (buffer->content[i] == '\n') { */
+/*             currentLineStart = i + 1; */
+/*             break; */
+/*         } */
+/*     } */
+
+/*     if (currentLineStart == 0) { */
+/*         buffer->point = 0; */
+/*         message("Beginning of buffer"); */
+/*         return; */
+/*     } */
+
+/*     // Find the start of the previous line */
+/*     for (int i = currentLineStart - 2; i >= 0; i--) { */
+/*         if (buffer->content[i] == '\n') { */
+/*             previousLineStart = i + 1; */
+/*             break; */
+/*         } */
+/*     } */
+
+/*     // Find the end of the previous line */
+/*     for (int i = currentLineStart - 1; i >= 0; i--) { */
+/*         if (buffer->content[i] == '\n') { */
+/*             previousLineEnd = i; */
+/*             break; */
+/*         } */
+/*     } */
+
+/*     // Calculate the current column position */
+/*     int column = buffer->point - currentLineStart; */
+
+/*     // If goal_column is set, use it instead of the current column position */
+/*     if (goal_column >= 0) { */
+/*         column = goal_column; */
+/*     } */
+
+/*     // Calculate the target position in the previous line */
+/*     int previousLineLength = previousLineEnd - previousLineStart; */
+/*     if (column >= previousLineLength) { */
+/*         buffer->point = previousLineEnd; // Move to the end of the previous line */
+/*     } else { */
+/*         buffer->point = previousLineStart + column; // Move to the goal column */
+/*     } */
+/* } */
+
+/* void next_line(Buffer *buffer, bool shift, int goal_column) { */
+/*     if (shift) { */
+/*         if (!buffer->region.active) { */
+/*             activateRegion(buffer); */
+/*         } */
+/*     } else { */
+/*         if (!buffer->region.marked) { */
+/*             buffer->region.active = false; */
+/*         } */
+/*     } */
+
+/*     int currentLineEnd = buffer->point; */
+/*     int nextLineStart = buffer->size; */
+/*     int columnPosition = 0; */
+
+/*     // Determine the end of the current line. */
+/*     for (size_t i = buffer->point; i < buffer->size; i++) { */
+/*         if (buffer->content[i] == '\n') { */
+/*             currentLineEnd = i; */
+/*             nextLineStart = i + 1; */
+/*             break; */
+/*         } */
+/*     } */
+
+/*     // Calculate column position. */
+/*     int currentLineStart = buffer->point; */
+/*     while (currentLineStart > 0 && */
+/*            buffer->content[currentLineStart - 1] != '\n') { */
+/*         currentLineStart--; */
+/*     } */
+/*     columnPosition = buffer->point - currentLineStart; */
+
+/*     // If goal_column is set, use it instead of the current column position. */
+/*     if (goal_column >= 0) { */
+/*         columnPosition = goal_column; */
+/*     } */
+
+/*     // Calculate the point position in the next line, limited by the line's */
+/*     // length. */
+/*     size_t targetPosition = nextLineStart + columnPosition; */
+/*     if (nextLineStart >= buffer->size) { */
+/*         // If no new line to jump to, move cursor to the end and display message */
+/*         buffer->point = buffer->size; */
+/*         message("End of buffer"); */
+/*     } else { */
+/*         for (size_t i = nextLineStart; i <= buffer->size; i++) { */
+/*             if (buffer->content[i] == '\n' || i == buffer->size) { */
+/*                 if (targetPosition > i) { */
+/*                     targetPosition = i; */
+/*                 } */
+/*                 break; */
+/*             } */
+/*         } */
+/*         buffer->point = targetPosition; */
+/*     } */
+/* } */
 
 void set_mark(Buffer *buffer, size_t pos) {
     buffer->region.mark = pos;
@@ -402,62 +912,40 @@ void set_goal_column(Buffer *buffer) {
 }
 
 
-void next_line(Buffer *buffer, bool shift, int goal_column) {
+
+
+
+// NOTE almost supports global_visual_line_mode     TODO  ⌄
+void move_beginning_of_line(Window *win, bool shift, int arg) {
+    Buffer *buffer = win->buffer;
     if (shift) {
         if (!buffer->region.active) {
             activateRegion(buffer);
         }
     } else {
-        if (!buffer->region.marked) {
-            buffer->region.active = false;
-        }
+        if (!buffer->region.marked) buffer->region.active = false;
     }
 
-    int currentLineEnd = buffer->point;
-    int nextLineStart = buffer->size;
-    int columnPosition = 0;
-
-    // Determine the end of the current line.
-    for (size_t i = buffer->point; i < buffer->size; i++) {
-        if (buffer->content[i] == '\n') {
-            currentLineEnd = i;
-            nextLineStart = i + 1;
-            break;
-        }
-    }
-
-    // Calculate column position.
-    int currentLineStart = buffer->point;
-    while (currentLineStart > 0 && buffer->content[currentLineStart - 1] != '\n') {
-        currentLineStart--;
-    }
-    columnPosition = buffer->point - currentLineStart;
-
-    // If goal_column is set, use it instead of the current column position.
-    if (goal_column >= 0) {
-        columnPosition = goal_column;
-    }
-
-    // Calculate the point position in the next line, limited by the line's length.
-    size_t targetPosition = nextLineStart + columnPosition;
-    if (nextLineStart >= buffer->size) {
-        // If no new line to jump to, move cursor to the end and display message
-        buffer->point = buffer->size;
-        message("End of buffer");
+    if (global_visual_line_mode) {
+        // Move to the beginning of the current visual line
+        size_t visual_line_start = find_visual_line_start(buffer, win, buffer->point);
+        buffer->point = visual_line_start;
     } else {
-        for (size_t i = nextLineStart; i <= buffer->size; i++) {
-            if (buffer->content[i] == '\n' || i == buffer->size) {
-                if (targetPosition > i) {
-                    targetPosition = i;
-                }
-                break;
+        // Move to the beginning of the logical line
+        for (int i = buffer->point - 1; i >= 0; i--) {
+            if (buffer->content[i] == '\n') {
+                buffer->point = i + 1; // Set point right after the newline.
+                set_mark(buffer, buffer->point);
+                return;
             }
         }
-        buffer->point = targetPosition;
+        buffer->point = 0; // No newline was found, go to the beginning of the buffer
     }
 }
 
-void move_beginning_of_line(Buffer * buffer, bool shift) {
+// NOTE almost supports global_visual_line_mode TODO ⌄ 
+void move_end_of_line(Window *win, bool shift, int arg) {
+    Buffer *buffer = win->buffer;
     if (shift) {
         if (!buffer->region.active) {
             activateRegion(buffer);
@@ -466,34 +954,66 @@ void move_beginning_of_line(Buffer * buffer, bool shift) {
         if (!buffer->region.marked) buffer->region.active = false;
     }
 
-    for (int i = buffer->point - 1; i >= 0; i--) {
-        if (buffer->content[i] == '\n') {
-            buffer->point = i + 1; // Set point right after the newline.
-            set_mark(buffer, buffer->point);
-            return;
-        }
-    }
-    buffer->point = 0; // no newline was found, go to the beginning of buffer
-}
+    if (global_visual_line_mode) {
+        // Move to the end of the current visual line
+        size_t visual_line_end = find_visual_line_end(buffer, win, buffer->point);
 
-void move_end_of_line(Buffer *buffer, bool shift) {
-    if (shift) {
-        if (!buffer->region.active) {
-            activateRegion(buffer);
+        // If the visual line is wrapped, move to the beginning of the next visual line
+        if (visual_line_end < buffer->size && buffer->content[visual_line_end] != '\n') {
+            buffer->point = visual_line_end;
+        } else {
+            buffer->point = visual_line_end; // Move to the end of the visual line
         }
     } else {
-        if (!buffer->region.marked) buffer->region.active = false;
-    }
-
-    for (size_t i = buffer->point; i < buffer->size; i++) {
-        if (buffer->content[i] == '\n') {
-            buffer->point = i;
-            /* set_mark(buffer, buffer->point); */
-            return;
+        // Move to the end of the logical line
+        for (size_t i = buffer->point; i < buffer->size; i++) {
+            if (buffer->content[i] == '\n') {
+                buffer->point = i;
+                return;
+            }
         }
+        buffer->point = buffer->size; // No newline was found, go to the end of the buffer
     }
-    buffer->point = buffer->size; // no newline was found, go to the end of buffer
 }
+
+// NOTE ORIGINAL
+/* void move_beginning_of_line(Buffer * buffer, bool shift) { */
+/*     if (shift) { */
+/*         if (!buffer->region.active) { */
+/*             activateRegion(buffer); */
+/*         } */
+/*     } else { */
+/*         if (!buffer->region.marked) buffer->region.active = false; */
+/*     } */
+
+/*     for (int i = buffer->point - 1; i >= 0; i--) { */
+/*         if (buffer->content[i] == '\n') { */
+/*             buffer->point = i + 1; // Set point right after the newline. */
+/*             set_mark(buffer, buffer->point); */
+/*             return; */
+/*         } */
+/*     } */
+/*     buffer->point = 0; // no newline was found, go to the beginning of buffer */
+/* } */
+
+/* void move_end_of_line(Buffer *buffer, bool shift) { */
+/*     if (shift) { */
+/*         if (!buffer->region.active) { */
+/*             activateRegion(buffer); */
+/*         } */
+/*     } else { */
+/*         if (!buffer->region.marked) buffer->region.active = false; */
+/*     } */
+
+/*     for (size_t i = buffer->point; i < buffer->size; i++) { */
+/*         if (buffer->content[i] == '\n') { */
+/*             buffer->point = i; */
+/*             /\* set_mark(buffer, buffer->point); *\/ */
+/*             return; */
+/*         } */
+/*     } */
+/*     buffer->point = buffer->size; // no newline was found, go to the end of buffer */
+/* } */
 
 /**
    Delete the following N characters (previous if N is negative).
@@ -516,23 +1036,13 @@ void delete_char(Buffer *buffer) {
     buffer->content[buffer->size] = '\0'; // Null-terminate the string
 }
 
-/* void delete_char(Buffer *buffer) { */
-/*     if (buffer->point >= buffer->size) { */
-/*         message("End of buffer"); */
-/*         return; */
-/*     } */
 
-/*     if (buffer->region.active) buffer->region.active = false; */
 
-/*     // Move all characters after the cursor left by one position */
-/*     MM(buffer->content + buffer->point, buffer->content + buffer->point + 1, */
-/*             buffer->size - buffer->point - 1); */
-
-/*     buffer->size--; // Decrease the size of the buffer */
-/*     buffer->content[buffer->size] = '\0'; // Null-terminate the string */
-/* } */
-
-void kill_sexp(Buffer *buffer, KillRing *kr, int arg) {
+/**
+   Kill the sexp (balanced expression) following point.
+*/
+void kill_sexp(Buffer *buffer) {
+    int arg = 1;
     if (arg == 0) arg = 1;  // Default to killing one sexp if no arg provided
     
     size_t start_point = buffer->point;
@@ -587,13 +1097,10 @@ void kill_sexp(Buffer *buffer, KillRing *kr, int arg) {
     if (killed_text) {
         memcpy(killed_text, buffer->content + start_point, length);
         killed_text[length] = '\0';
-        kr_kill(kr, killed_text);
+        kr_kill(&kr, killed_text);
         free(killed_text);
     }
     
-    // Remove the killed text from the buffer
-    /* MM(buffer->content + start_point, buffer->content + end_point, buffer->size - end_point); */
-
     // Remove the killed text from the buffer
     MM(buffer->content + start_point, 
        buffer->content + end_point, 
@@ -608,12 +1115,23 @@ void kill_sexp(Buffer *buffer, KillRing *kr, int arg) {
     buffer->point = start_point;
 }
 
+// TODO Use it in move-beginning-of-line
 bool bolp(Buffer *buffer) {
+    if (wm.activeWindow->parameters.truncateLines == false || global_visual_line_mode) {
+        if (buffer->point == 0) return true;
+        size_t visual_line_start = find_visual_line_start(buffer, wm.activeWindow, buffer->point);
+        return buffer->point == visual_line_start;
+    }
+
     if (buffer->point == 0) return true;
     return buffer->content[buffer->point - 1] == '\n';
 }
 
-void kill_line(Buffer *buffer, KillRing *kr) {
+/**
+   Kill the rest of the current line; if no nonblanks there, kill thru newline.
+*/
+// FIXME SEGFAULT when it's only one wrapped line
+void kill_line(Buffer *buffer) {
     if (buffer->point >= buffer->size) return; // Nothing to delete if at the end of the buffer
 
     size_t startOfLine = buffer->point;
@@ -640,7 +1158,7 @@ void kill_line(Buffer *buffer, KillRing *kr) {
         if (cut_text) {
             memcpy(cut_text, buffer->content + startOfLine, numToDelete);
             cut_text[numToDelete] = '\0';
-            kr_kill(kr, cut_text); // Add to kill ring
+            kr_kill(&kr, cut_text); // Add to kill ring
             free(cut_text); // Free temporary text buffer
         }
 
@@ -702,14 +1220,14 @@ void open_line(Buffer *buffer) {
     buffer->size++;
 
     // Start the animation if lerp_line_mode is enabled
-    if (lerp_line_mode) {
+    if (lerp_line) {
         buffer->animatedLineNumber = lineNumberAtPoint(buffer, buffer->point);
         buffer->animationStartTime = getTime();
     }
 }
 
-void delete_indentation(Buffer *buffer, BufferManager *bm, int arg) {
-    move_beginning_of_line(buffer, false);
+void delete_indentation(Buffer *buffer, int arg) {
+    move_beginning_of_line(wm.activeWindow, false, arg);
 
     if (buffer->point > 0) {
         left_char(buffer, false, arg);
@@ -736,7 +1254,7 @@ void add_indentation(Buffer *buffer) {
     }
 
     // Find the start of the current line
-    int lineStart = buffer->point;
+    size_t lineStart = buffer->point;
     while (lineStart > 0 && buffer->content[lineStart - 1] != '\n') {
         lineStart--;
     }
@@ -758,7 +1276,7 @@ void add_indentation(Buffer *buffer) {
 */
 void remove_indentation(Buffer *buffer) {
     // Find the start of the current line
-    int lineStart = buffer->point;
+    size_t lineStart = buffer->point;
     while (lineStart > 0 && buffer->content[lineStart - 1] != '\n') {
         lineStart--;
     }
@@ -866,8 +1384,10 @@ void delete_region(Buffer *buffer) {
     buffer->region.active = false; // Deactivate region after killing it
 }
 
-
-void kill_region(Buffer *buffer, KillRing *kr) {
+/**
+   Kill (cut) text between point and mark.
+*/
+void kill_region(Buffer *buffer) {
     size_t start, end;
 
     if (buffer->region.active) {
@@ -900,13 +1420,9 @@ void kill_region(Buffer *buffer, KillRing *kr) {
     if (cut_text) {
         memcpy(cut_text, buffer->content + start, region_length);
         cut_text[region_length] = '\0';
-        kr_kill(kr, cut_text); // Add to kill ring
+        kr_kill(&kr, cut_text); // Add to kill ring
         free(cut_text);        // Free temporary text buffer
     }
-
-    // Remove the region text from the buffer
-    /* MM(buffer->content + start, buffer->content + end, */
-    /*         buffer->size - end + 1); */
 
     // Remove the region text from the buffer
     MM(buffer->content + start, 
@@ -963,7 +1479,7 @@ char* paste_from_clipboard() {
 // could be helpful with relative line numbers,
 // emacs doesn't seem to use the universal argument for yank
 
-void yank(Buffer *buffer, KillRing *kr, int arg) {
+void yank(Buffer *buffer, int arg) {
     char *clipboard_text = paste_from_clipboard();
     if (!clipboard_text) return;
 
@@ -987,8 +1503,10 @@ void yank(Buffer *buffer, KillRing *kr, int arg) {
     free(clipboard_text);
 }
 
-
-void kill_ring_save(Buffer *buffer, KillRing *kr) {
+/**
+   Save the region as if killed, but don't kill it.
+*/
+void kill_ring_save(Buffer *buffer) {
     size_t start, end;
 
     if (buffer->region.active) {
@@ -1018,7 +1536,7 @@ void kill_ring_save(Buffer *buffer, KillRing *kr) {
     if (text_to_save) {
         memcpy(text_to_save, buffer->content + start, region_length);
         text_to_save[region_length] = '\0';
-        kr_kill(kr, text_to_save);
+        kr_kill(&kr, text_to_save);
         free(text_to_save);
     } else {
         fprintf(stderr, "Failed to allocate memory for kill ring save.\n");
@@ -1105,13 +1623,15 @@ bool isWordChar(char c) {
 }
 
 bool isPunctuationChar(char c) {
-    // Checks common punctuation used in programming and text
     return strchr(",.;:!?'\"(){}[]<>-+*/&|^%$#@~", c) != NULL;
 }
 
-bool forward_word(Buffer *buffer, int count, bool shift) {
-    if (buffer == NULL || buffer->content == NULL || count == 0)
-        return false;
+/**
+   Move point forward ARG words (backward if ARG is negative).
+*/
+void forward_word(Buffer *buffer, bool shift, int arg) {
+    if (buffer == NULL || buffer->content == NULL || arg == 0)
+        return;
 
     if (shift && !buffer->region.active) {
         activateRegion(buffer);
@@ -1121,10 +1641,10 @@ bool forward_word(Buffer *buffer, int count, bool shift) {
 
     size_t pos = buffer->point;
     size_t end = buffer->size;
-    int direction = count > 0 ? 1 : -1;
-    count = abs(count);
+    int direction = arg > 0 ? 1 : -1;
+    arg = abs(arg);
 
-    while (count > 0 && ((direction > 0 && pos < end) || (direction < 0 && pos > 0))) {
+    while (arg > 0 && ((direction > 0 && pos < end) || (direction < 0 && pos > 0))) {
         if (direction > 0) {
             // Skip non-word characters
             while (pos < end && !isWordChar(buffer->content[pos]))
@@ -1139,19 +1659,21 @@ bool forward_word(Buffer *buffer, int count, bool shift) {
             while (pos > 0 && isWordChar(buffer->content[pos - 1]))
                 pos--;
         }
-        count--;
+        arg--;
       }
 
     buffer->point = pos;
-    return true;
 }
 
-bool backward_word(Buffer *buffer, int count, bool shift) {
-    return forward_word(buffer, -count, shift);
+/**
+   Move backward until encountering the beginning of a word.
+*/
+void backward_word(Buffer *buffer, bool shift, int arg) {
+    forward_word(buffer, -arg, shift);
 }
 
 // FIXME incorrect
-void transpose_subr(Buffer *buffer, bool (*mover)(Buffer *, int, bool), int arg) {
+void transpose_subr(Buffer *buffer, void (*mover)(Buffer *, bool, int), int arg) {
     if (buffer == NULL || mover == NULL) return;
 
     size_t pos1_start, pos1_end, pos2_start, pos2_end;
@@ -1255,7 +1777,10 @@ void transpose_chars(Buffer *buffer) {
     }
 }
 
-void kill_word(Buffer *buffer, KillRing *kr) {
+/**
+   Kill characters forward until encountering the end of a word.
+*/
+void kill_word(Buffer *buffer) {
     size_t start = buffer->point;
     size_t end = start;
     
@@ -1277,12 +1802,10 @@ void kill_word(Buffer *buffer, KillRing *kr) {
     if (killed_text) {
         memcpy(killed_text, buffer->content + start, lengthToDelete);
         killed_text[lengthToDelete] = '\0';
-        kr_kill(kr, killed_text); // Assume this function handles the addition to the kill ring
+        kr_kill(&kr, killed_text);
         free(killed_text);
     }
     
-    /* MM(buffer->content + start, buffer->content + end, buffer->size - end + 1); // Including null terminator */
-
     // Remove the word from the buffer
     MM(buffer->content + start, 
        buffer->content + end, 
@@ -1292,7 +1815,10 @@ void kill_word(Buffer *buffer, KillRing *kr) {
     buffer->size -= lengthToDelete;
 }
 
-void backward_kill_word(Buffer *buffer, KillRing *kr) {
+/**
+   Kill characters backward until encountering the beginning of a word.
+*/
+void backward_kill_word(Buffer *buffer) {
     if (buffer == NULL || buffer->content == NULL || buffer->point == 0) return;
 
     size_t end = buffer->point;
@@ -1316,16 +1842,11 @@ void backward_kill_word(Buffer *buffer, KillRing *kr) {
     if (killed_text) {
         memcpy(killed_text, buffer->content + start, lengthToDelete);
         killed_text[lengthToDelete] = '\0';
-
         // Add the killed text to the kr_kill ring
-        kr_kill(kr, killed_text); // Assume this function handles the addition to the kr_kill ring
-
+        kr_kill(&kr, killed_text);
         // Free the allocated memory for killed text
         free(killed_text);
     }
-
-    // Remove the word from the buffer by shifting the remaining characters
-    /* MM(buffer->content + start, buffer->content + end, buffer->size - end + 1); // Including null terminator */
 
     // Remove the word from the buffer by shifting the remaining characters
     MM(buffer->content + start, 
@@ -1333,10 +1854,7 @@ void backward_kill_word(Buffer *buffer, KillRing *kr) {
        buffer->size - end + 1, // +1 for null terminator
        buffer, start, -(int)lengthToDelete); // Adjust syntax ranges after deletion
 
-    // Update the size of the buffer
     buffer->size -= lengthToDelete;
-
-    // Update the cursor position
     buffer->point = start;
 }
 
@@ -1351,7 +1869,6 @@ void forward_paragraph(Buffer *buffer, bool shift) {
     } else {
         if (!buffer->region.marked) buffer->region.active = false;
     }
-
 
     size_t pos = buffer->point;
     bool is_empty_line = false;
@@ -1402,7 +1919,8 @@ void backward_paragraph(Buffer *buffer, bool shift) {
 
 
 // TODO use tha arg, to indent n number of line after or before the point if negative
-void indent(Buffer *buffer, int indentation, int arg) {
+// TODO indent correctly for *ALL* supported major modes
+void indent_line(Buffer *buffer, bool shift, int arg) {
     size_t cursor_row_start = 0, cursor_row_end = buffer->size;
     int braceLevel = 0;
     bool startsWithClosingBrace = false;
@@ -1476,80 +1994,52 @@ void indent(Buffer *buffer, int indentation, int arg) {
 }
 
 
-// FIXME just loop the lines and call indent ?
-void indent_region(Buffer *buffer, BufferManager *bm, int indentation, int arg) {
-    if (!buffer->region.active) {
-        printf("No active region to indent.\n");
-        return; // No region active, nothing to indent
-    }
+// TODO Point should not move
+// FIXME It doesn't work from bottom to top
+void indent_region(Buffer *buffer, bool shift, int arg) {
+    size_t start = buffer->region.start; // Assuming region.start is the mark
+    size_t end = buffer->point;
 
-    size_t start = buffer->region.start;
-    size_t end = buffer->region.end;
-
-    // Ensure start is less than end
+    // Swap if needed to get ordered positions
     if (start > end) {
         size_t temp = start;
         start = end;
         end = temp;
     }
 
-    // Normalize start to the beginning of the first line in the region
-    while (start > 0 && buffer->content[start - 1] != '\n') {
-        start--;
+    // Normalize to line boundaries
+    while (start > 0 && buffer->content[start - 1] != '\n') start--;
+    while (end < buffer->size && buffer->content[end] != '\n') end++;
+    if (end < buffer->size) end++; // Include newline if present
+
+    // Collect all lines in the region
+    size_t *lines = NULL;
+    size_t num_lines = 0;
+    size_t pos = start;
+    
+    while (pos < end) {
+        // Record line start
+        lines = realloc(lines, (num_lines + 1) * sizeof(size_t));
+        lines[num_lines++] = pos;
+
+        // Find next newline
+        while (pos < end && buffer->content[pos] != '\n') pos++;
+        if (pos < end) pos++; // Move past newline
     }
 
-    // Normalize end to the end of the last line in the region
-    while (end < buffer->size && buffer->content[end] != '\n') {
-        end++;
+    // Indent from bottom to top to maintain positions
+    for (int i = num_lines - 1; i >= 0; i--) {
+        buffer->point = lines[i];
+        indent_line(buffer, shift, arg);
     }
 
-    // Save cursor's original line and column
-    size_t cursor_line = 0;
-    size_t line_start = 0;
-    int cursor_column = 0;
-    for (size_t i = 0; i < buffer->point; i++) {
-        if (buffer->content[i] == '\n') {
-            cursor_line++;
-            line_start = i + 1;
-        }
-    }
-    cursor_column = buffer->point - line_start;
-
-    // Process each line within the region
-    size_t current_line_start = start;
-    while (current_line_start < end) {
-        buffer->point = current_line_start;
-        indent(buffer, indentation, arg);  // Apply the indent function once per line
-
-        // Move to the start of the next line
-        do {
-            current_line_start++;
-        } while (current_line_start < buffer->size && buffer->content[current_line_start] != '\n');
-        current_line_start++; // Move past the newline character, if not at the end of buffer
-    }
-
-    // Restore cursor's original line and column
-    size_t new_line_start = start;
-    size_t current_line = 0;
-    while (current_line < cursor_line && new_line_start < buffer->size) {
-        if (buffer->content[new_line_start] == '\n') {
-            current_line++;
-        }
-        new_line_start++;
-    }
-
-    // Find the start of the cursor's original line
-    size_t cursor_new_position = new_line_start;
-    while (cursor_column > 0 && cursor_new_position < buffer->size && buffer->content[cursor_new_position] != '\n') {
-        cursor_new_position++;
-        cursor_column--;
-    }
-
-    buffer->point = cursor_new_position;
+    // Cleanup and set final cursor position
+    free(lines);
+    buffer->point = buffer->region.start; // Reset to original mark position
+    buffer->region.active = false;
 }
 
-#include "theme.h"
-
+// TODO Commands pool
 void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
            Buffer *minibuffer, Buffer *prompt,
            int indentation, bool electric_indent_mode,
@@ -1567,7 +2057,7 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
         prompt->content = strdup("");
     } else if (strcmp(prompt->content, "Find file: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
-        find_file(bm, wm, sw, sh);
+        find_file(bm, wm);
         minibuffer->size = 0;
         minibuffer->point = 0;
         minibuffer->content[0] = '\0';
@@ -1589,6 +2079,15 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
         add_to_history(nh, prompt->content, minibuffer->content);
         load_font(bm);
     }
+    else if (strcmp(prompt->content, "Switch to buffer: ") == 0) {
+        add_to_history(nh, prompt->content, minibuffer->content);
+        switch_to_buffer(bm);
+    }
+    else if (strcmp(prompt->content, "Change major mode: ") == 0) {
+        add_to_history(nh, prompt->content, minibuffer->content);
+        wm->activeWindow->buffer->major_mode = strdup(buffer->content);
+    }
+
     else if (strcmp(prompt->content, "Goto line: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
         goto_line(bm);
@@ -1663,14 +2162,14 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
             // Insert a newline and indent for the opening brace
             insertChar(buffer, '\n');
             if (electric_indent_mode) {
-                indent(buffer, indentation, arg);
+                indent_line(buffer, shiftPressed, arg);
             }
 
             size_t newCursorPosition = buffer->point;
             insertChar(buffer, '\n');
 
             if (electric_indent_mode) {
-                indent(buffer, indentation, arg);
+                indent_line(buffer, shiftPressed, arg);
             }
 
             buffer->point = newCursorPosition;
@@ -1679,7 +2178,7 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
         }
 
         if (electric_indent_mode) {
-            indent(buffer, indentation, arg);
+            indent_line(buffer, shiftPressed, arg);
         }
     }
 }
@@ -1730,6 +2229,31 @@ int mkdirp(const char *path, mode_t mode) {
 }
 
 
+const char *getFilename(const char *path) {
+    const char *lastSlash = strrchr(path, '/');
+    if (lastSlash) {
+        return lastSlash + 1;
+    }
+    return path;
+}
+
+char *getBufferDirectory(const char *path) {
+    if (path == NULL) return NULL;
+
+    const char *lastSlash = strrchr(path, '/');
+
+    if (lastSlash == NULL) return strdup(".");
+
+    size_t dirLength = lastSlash - path;
+    char *result = malloc(dirLength + 1);
+    if (result == NULL) return NULL;
+
+    strncpy(result, path, dirLength);
+    result[dirLength] = '\0';
+
+    return result;
+}
+
 void trimTrailingFile(char *path) {
     char *lastSlash = strrchr(path, '/');
     if (lastSlash && *(lastSlash + 1) != '\0') {
@@ -1737,24 +2261,30 @@ void trimTrailingFile(char *path) {
     }
 }
 
-// TODO Dired when calling find_file on a directory
-void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
+void find_file(BufferManager *bm, WindowManager *wm) {
     Buffer *minibuffer = getBuffer(bm, "minibuffer");
     Buffer *prompt = getBuffer(bm, "prompt");
 
     // Initial minibuffer setup
     if (minibuffer->size == 0) {
-        if (bm->lastBuffer && bm->lastBuffer->path) {
-            minibuffer->size = 0;
-            minibuffer->content[0] = '\0';
-            minibuffer->point = 0;
-            trimTrailingFile(bm->lastBuffer->path);
-            setBufferContent(minibuffer, bm->lastBuffer->path, true);
+        minibuffer->size = 0;
+        minibuffer->content[0] = '\0';
+        minibuffer->point = 0;
+
+        // Use the path of the buffer in the active window
+        if (wm->activeWindow && wm->activeWindow->buffer && wm->activeWindow->buffer->path) {
+            char *pathForMinibuffer = strdup(wm->activeWindow->buffer->path);
+            if (pathForMinibuffer) {
+                trimTrailingFile(pathForMinibuffer);
+                setBufferContent(minibuffer, pathForMinibuffer, true);
+                free(pathForMinibuffer);
+            }
         }
+
         free(prompt->content);
         prompt->content = strdup("Find file: ");
         switchToBuffer(bm, "minibuffer");
-        return; // NOTE
+        return;
     }
 
     // Resolve path with home directory expansion
@@ -1800,7 +2330,7 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     bool isNewFile = false;
 
     if (!file) {
-        // Create new file if it doesn't exist TODO DON'T
+        // Create new file if it doesn't exist
         file = fopen(fullPath, "w+");
         if (!file) {
             char errMsg[256];
@@ -1848,8 +2378,9 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
     }
 
     // Create and setup the buffer
-    newBuffer(bm, wm, displayPath, displayPath, fontPath, sw, sh);
+    newBuffer(bm, wm, displayPath, displayPath, fontPath);
     Buffer *fileBuffer = getBuffer(bm, displayPath);
+    
     if (!fileBuffer) {
         message("Failed to create buffer");
         fclose(file);
@@ -1889,9 +2420,10 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
 
     // Switch to new buffer and parse syntax
     switchToBuffer(bm, fileBuffer->name);
-    if (major_mode_is(fileBuffer, "c") || major_mode_is(fileBuffer, "scheme")) {
+    if (major_mode_supported(fileBuffer)) {
         parseSyntax(fileBuffer);  // idk
     }
+    fill_scopes(fileBuffer, &fileBuffer->scopes);
     updateDiffs(fileBuffer); // TODO if git_dir_p()
 
     // Show appropriate message
@@ -1905,26 +2437,198 @@ void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) {
 }
 
 
+
+// FIXME
+/* void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh) { */
+/*     Buffer *minibuffer = getBuffer(bm, "minibuffer"); */
+/*     Buffer *prompt = getBuffer(bm, "prompt"); */
+/*     Buffer *previousBuffer = getPreviousBuffer(bm); */
+
+/*     // Initial minibuffer setup */
+/*     if (minibuffer->size == 0) { */
+/*         /\* if (previousBuffer && previousBuffer->path) { *\/ */
+/*             minibuffer->size = 0; */
+/*             minibuffer->content[0] = '\0'; */
+/*             minibuffer->point = 0; */
+/*             char *pathForMinibuffer = strdup(previousBuffer->path); */
+/*             trimTrailingFile(pathForMinibuffer); */
+/*             setBufferContent(minibuffer, pathForMinibuffer, true); */
+/*         /\* } *\/ */
+/*         free(prompt->content); */
+/*         prompt->content = strdup("Find file: "); */
+/*         switchToBuffer(bm, "minibuffer"); */
+/*         return; // NOTE */
+/*     } */
+
+/*     // Resolve path with home directory expansion */
+/*     const char *homeDir = getenv("HOME"); */
+/*     if (!homeDir) { */
+/*         message("Environment variable HOME is not set"); */
+/*         return; */
+/*     } */
+
+/*     char fullPath[PATH_MAX]; */
+/*     const char *filePath = minibuffer->content; */
+
+/*     if (filePath[0] == '~') { */
+/*         snprintf(fullPath, sizeof(fullPath), "%s%s", homeDir, filePath + 1); */
+/*     } else { */
+/*         strncpy(fullPath, filePath, sizeof(fullPath) - 1); */
+/*         fullPath[sizeof(fullPath) - 1] = '\0'; */
+/*     } */
+
+/*     // Create directories if they don't exist */
+/*     char *dirPath = strdup(fullPath); */
+/*     if (!dirPath) { */
+/*         message("Memory allocation failed"); */
+/*         return; */
+/*     } */
+
+/*     char *lastSlash = strrchr(dirPath, '/'); */
+/*     if (lastSlash) { */
+/*         *lastSlash = '\0'; */
+/*         if (mkdirp(dirPath, 0755) != 0) { */
+/*             char errMsg[256]; */
+/*             snprintf(errMsg, sizeof(errMsg), "Failed to create directory %s: %s", */
+/*                      dirPath, strerror(errno)); */
+/*             message(errMsg); */
+/*             free(dirPath); */
+/*             return; */
+/*         } */
+/*     } */
+/*     free(dirPath); */
+
+/*     // Try to open existing file first */
+/*     FILE *file = fopen(fullPath, "r"); */
+/*     bool isNewFile = false; */
+
+/*     if (!file) { */
+/*         // Create new file if it doesn't exist TODO DON'T */
+/*         file = fopen(fullPath, "w+"); */
+/*         if (!file) { */
+/*             char errMsg[256]; */
+/*             snprintf(errMsg, sizeof(errMsg), "Failed to create file %s: %s", fullPath, */
+/*                      strerror(errno)); */
+/*             message(errMsg); */
+/*             return; */
+/*         } */
+/*         isNewFile = true; */
+/*     } */
+
+/*     // Create display path with ~ notation if applicable */
+/*     char displayPath[PATH_MAX]; */
+/*     if (strncmp(fullPath, homeDir, strlen(homeDir)) == 0) { */
+/*         snprintf(displayPath, sizeof(displayPath), "~%s", */
+/*                  fullPath + strlen(homeDir)); */
+/*     } else { */
+/*         strncpy(displayPath, fullPath, sizeof(displayPath) - 1); */
+/*         displayPath[sizeof(displayPath) - 1] = '\0'; */
+/*     } */
+
+/*     // Check if the buffer already exists */
+/*     Buffer *existingBuffer = getBuffer(bm, displayPath); */
+/*     if (existingBuffer) { */
+/*         if (find_file_focus_existing) { */
+/*             // Find the window that already displays the buffer */
+/*             Window *win = wm->head; */
+/*             while (win != NULL) { */
+/*                 if (win->buffer == existingBuffer) { */
+/*                     // Make this window the active one */
+/*                     wm->activeWindow = win; */
+/*                     switchToBuffer(bm, displayPath); */
+/*                     fclose(file); */
+/*                     return; */
+/*                 } */
+/*                 win = win->next; */
+/*             } */
+/*         } else { */
+/*             // Allow the same buffer to be displayed in multiple windows */
+/*             wm->activeWindow->buffer = existingBuffer; */
+/*             switchToBuffer(bm, displayPath); */
+/*             fclose(file); */
+/*             return; */
+/*         } */
+/*     } */
+
+/*     // Create and setup the buffer */
+/*     newBuffer(bm, wm, displayPath, displayPath, fontPath, sw, sh); */
+/*     Buffer *fileBuffer = getBuffer(bm, displayPath); */
+/*     if (!fileBuffer) { */
+/*         message("Failed to create buffer"); */
+/*         fclose(file); */
+/*         return; */
+/*     } */
+
+/*     recenter(wm->activeWindow, true); */
+
+/*     if (!isNewFile) { */
+/*         // Read existing file content */
+/*         char readBuffer[1024]; */
+/*         size_t bytesRead; */
+
+/*         while ((bytesRead = fread(readBuffer, 1, sizeof(readBuffer), file)) > 0) { */
+/*             // Ensure buffer capacity */
+/*             if (fileBuffer->size + bytesRead >= fileBuffer->capacity) { */
+/*                 fileBuffer->capacity = (fileBuffer->size + bytesRead) * 2; */
+/*                 char *newContent = realloc(fileBuffer->content, fileBuffer->capacity); */
+/*                 if (!newContent) { */
+/*                     message("Failed to resize buffer"); */
+/*                     free(fileBuffer->content); */
+/*                     fclose(file); */
+/*                     return; */
+/*                 } */
+/*                 fileBuffer->content = newContent; */
+/*             } */
+
+/*             // Copy read data to buffer */
+/*             memcpy(fileBuffer->content + fileBuffer->size, readBuffer, bytesRead); */
+/*             fileBuffer->size += bytesRead; */
+/*         } */
+/*     } */
+
+/*     // Null terminate buffer content */
+/*     fileBuffer->content[fileBuffer->size] = '\0'; */
+/*     fclose(file); */
+
+/*     // Switch to new buffer and parse syntax */
+/*     switchToBuffer(bm, fileBuffer->name); */
+/*     if (major_mode_is(fileBuffer, "c") || major_mode_is(fileBuffer, "scheme")) { */
+/*         parseSyntax(fileBuffer);  // idk */
+/*     } */
+/*     updateDiffs(fileBuffer); // TODO if git_dir_p() */
+
+/*     // Show appropriate message */
+/*     if (isNewFile) { */
+/*         message("(New file)"); */
+/*     } else { */
+/*         char msg[256]; */
+/*         snprintf(msg, sizeof(msg), "Loaded %s", displayPath); */
+/*         message(msg); */
+/*     } */
+/* } */
+
+
 /**
- * Internal: Updates syntax highlighting incrementally for buffers in C or Scheme mode.
+ * Internal: Updates syntax highlighting incrementally for buffers with supported major-modes.
  * This is called when the buffer content is modified.
  */
 void updateSyntaxHighlighting(Buffer *buffer, int index, int lengthChange) {
     Buffer *minibuffer = getBuffer(&bm, "minibuffer");
-    if (!isCurrentBuffer(&bm, "minibuffer") && buffer->tree != NULL) {
-        if (major_mode_is(buffer, "c") || major_mode_is(buffer, "scheme")) {
-          TSInputEdit edit = createInputEdit(buffer, 0, buffer->size, buffer->size);
-          updateSyntaxIncremental(buffer, &edit);
+    if (/* !isCurrentBuffer(&bm, "minibuffer") && */ buffer->tree != NULL) {
+        if (major_mode_supported(buffer)) {
+            TSInputEdit edit = createInputEdit(buffer, 0, buffer->size, buffer->size);
+            updateSyntaxIncremental(buffer, &edit);
 
-          /* size_t start_byte = index; */
-          /* size_t old_end_byte = index + (lengthChange < 0 ? -lengthChange : 0); */
-          /* size_t new_end_byte = index + (lengthChange > 0 ? lengthChange : 0); */
-          /* TSInputEdit edit = createInputEdit(buffer, start_byte, old_end_byte, new_end_byte); */
-          /* updateSyntaxIncremental(buffer, &edit); */
+            /* size_t start_byte = index; */
+            /* size_t old_end_byte = index + (lengthChange < 0 ? -lengthChange : 0); */
+            /* size_t new_end_byte = index + (lengthChange > 0 ? lengthChange : 0); */
+            /* TSInputEdit edit = createInputEdit(buffer, start_byte, old_end_byte, new_end_byte); */
+            /* updateSyntaxIncremental(buffer, &edit); */
         }
     }
 }
 
+// TODO do the mark wrap thing DOIT
 /**
  * Moves memory within a buffer and adjusts syntax ranges or highlighting as needed.
  * This function is a wrapper around memmove, with additional logic for buffer management.
@@ -1956,8 +2660,14 @@ void *mm(void *dest, const void *src, size_t n, Buffer *buffer, int index, int l
     if (major_mode_is(buffer, "fundamental")) msm(buffer, index, lengthChange);
 
 
-    // Update syntax highlighting for C or Scheme mode
+    // Update syntax highlighting for supported major modes
     updateSyntaxHighlighting(buffer, index, lengthChange);
+
+    if (mmm) {
+        if (buffer->point < buffer->region.mark) {
+            buffer->region.mark += lengthChange;
+        }
+    }
 
     return result;
 }
@@ -2037,40 +2747,38 @@ void execute_shell_command(BufferManager *bm, char *command) {
     }
 
     // If we have a last buffer with a path, change to its directory
-    if (bm->lastBuffer && bm->lastBuffer->path) {
-        const char *homeDir = getenv("HOME");
-        char fullPath[PATH_MAX];
-        const char *filePath = bm->lastBuffer->path;
+    const char *homeDir = getenv("HOME");
+    char fullPath[PATH_MAX];
+    const char *filePath = wm.activeWindow->buffer->path;
 
-        // Resolve full path from buffer path
-        if (filePath[0] == '~') {
-            if (homeDir) {
-                snprintf(fullPath, sizeof(fullPath), "%s%s", homeDir, filePath + 1);
-            } else {
-                message("HOME environment variable not set");
-                return;
-            }
+    // Resolve full path from buffer path
+    if (filePath[0] == '~') {
+        if (homeDir) {
+            snprintf(fullPath, sizeof(fullPath), "%s%s", homeDir, filePath + 1);
         } else {
-            strncpy(fullPath, filePath, sizeof(fullPath) - 1);
-            fullPath[sizeof(fullPath) - 1] = '\0';
+            message("HOME environment variable not set");
+            return;
         }
+    } else {
+        strncpy(fullPath, filePath, sizeof(fullPath) - 1);
+        fullPath[sizeof(fullPath) - 1] = '\0';
+    }
 
-        // Get directory part of the path
-        strncpy(target_dir, fullPath, sizeof(target_dir) - 1);
-        target_dir[sizeof(target_dir) - 1] = '\0';
-        char *last_slash = strrchr(target_dir, '/');
-        if (last_slash) {
-            *last_slash = '\0';  // Truncate at last slash to get directory path
+    // Get directory part of the path
+    strncpy(target_dir, fullPath, sizeof(target_dir) - 1);
+    target_dir[sizeof(target_dir) - 1] = '\0';
+    char *last_slash = strrchr(target_dir, '/');
+    if (last_slash) {
+        *last_slash = '\0';  // Truncate at last slash to get directory path
             
-            // Change to target directory
-            if (chdir(target_dir) == 0) {
-                dir_changed = true;
-            } else {
-                char errMsg[256];
-                snprintf(errMsg, sizeof(errMsg), "Failed to change directory: %s", strerror(errno));
-                message(errMsg);
-                return;
-            }
+        // Change to target directory
+        if (chdir(target_dir) == 0) {
+            dir_changed = true;
+        } else {
+            char errMsg[256];
+            snprintf(errMsg, sizeof(errMsg), "Failed to change directory: %s", strerror(errno));
+            message(errMsg);
+            return;
         }
     }
 
@@ -2134,21 +2842,17 @@ void execute_shell_command(BufferManager *bm, char *command) {
    Execute string COMMAND in inferior shell; display output, if any.
 */
 void shell_command(BufferManager *bm) {
-    Buffer *minibuffer = getBuffer(bm, "minibuffer");
-    Buffer *prompt = getBuffer(bm, "prompt");
+    Buffer *minibuffer     = getBuffer(bm, "minibuffer");
+    Buffer *prompt         = getBuffer(bm, "prompt");
 
     // TODO IMPORTANT Recursive minibuffer
     /* if (minibuffer->size == 0) { */
-        if (bm->lastBuffer && bm->lastBuffer->name) {
-            minibuffer->size = 0;
-            minibuffer->point = 0;
-            minibuffer->content[0] = '\0';
-            free(prompt->content);
-            prompt->content = strdup("Shell command: ");
-            switchToBuffer(bm, "minibuffer");
-        } else {
-            message("No last buffer to go to.");
-        }
+        minibuffer->size = 0;
+        minibuffer->point = 0;
+        minibuffer->content[0] = '\0';
+        free(prompt->content);
+        prompt->content = strdup("Shell command: ");
+        switchToBuffer(bm, "minibuffer");
         return;
     /* } */
 
@@ -2158,12 +2862,37 @@ void shell_command(BufferManager *bm) {
     minibuffer->point = 0;
     minibuffer->content[0] = '\0';
     prompt->content = strdup("");
-    switchToBuffer(bm, bm->lastBuffer->name);
+    switchToBuffer(bm, wm.activeWindow->buffer->name);
+}
+
+void change_major_mode(BufferManager *bm) {
+    Buffer *minibuffer    = getBuffer(bm, "minibuffer");
+    Buffer *prompt         = getBuffer(bm, "prompt");
+    Buffer *previousBuffer = getPreviousBuffer(bm);
+
+    if (minibuffer->size == 0) {
+        minibuffer->size = 0;
+        minibuffer->point = 0;
+        minibuffer->content[0] = '\0';
+        free(prompt->content);
+        prompt->content = strdup("Change major mode: "); // TODO Show the default, in the modeline maybe.
+        switchToBuffer(bm, "minibuffer");
+        return;
+    }
+
+
+    // Clear minibuffer after operation
+    minibuffer->size = 0;
+    minibuffer->point = 0;
+    minibuffer->content[0] = '\0';
+    prompt->content = strdup("");
+    switchToBuffer(bm, previousBuffer->name);
 }
 
 void switch_to_buffer(BufferManager *bm) {
-    Buffer *minibuffer = getBuffer(bm, "minibuffer");
-    Buffer *prompt = getBuffer(bm, "prompt");
+    Buffer *minibuffer     = getBuffer(bm, "minibuffer");
+    Buffer *prompt         = getBuffer(bm, "prompt");
+    Buffer *previousBuffer = getPreviousBuffer(bm);
 
     // TODO IMPORTANT Recursive minibuffer
     if (minibuffer->size == 0) {
@@ -2182,7 +2911,7 @@ void switch_to_buffer(BufferManager *bm) {
     minibuffer->point = 0;
     minibuffer->content[0] = '\0';
     prompt->content = strdup("");
-    switchToBuffer(bm, bm->lastBuffer->name);
+    switchToBuffer(bm, previousBuffer->name);
 }
 
 
@@ -2190,8 +2919,9 @@ void switch_to_buffer(BufferManager *bm) {
    Show help for SYMBOL, a variable, function, macro, or face.
 */
 void helpful_symbol(BufferManager *bm) {
-    Buffer *minibuffer = getBuffer(bm, "minibuffer");
-    Buffer *prompt = getBuffer(bm, "prompt");
+    Buffer *minibuffer     = getBuffer(bm, "minibuffer");
+    Buffer *prompt         = getBuffer(bm, "prompt");
+    Buffer *previousBuffer = getPreviousBuffer(bm);
 
     // TODO IMPORTANT Recursive minibuffer
     if (minibuffer->size == 0) {
@@ -2210,7 +2940,7 @@ void helpful_symbol(BufferManager *bm) {
     minibuffer->point = 0;
     minibuffer->content[0] = '\0';
     prompt->content = strdup("");
-    switchToBuffer(bm, bm->lastBuffer->name);
+    switchToBuffer(bm, previousBuffer->name);
 }
 
 
@@ -2219,9 +2949,14 @@ void helpful_symbol(BufferManager *bm) {
 /**
    Read a command name, them read the arguments and call the command.
 */
+// TODO save the last run command name maybe in the buffer ?
+// and then implement a function to run the last command N times
+// TODO Take arg and run the command N times if positive
+// else execute the command you ran N times before
 void execute_extended_command(BufferManager *bm) {
-    Buffer *minibuffer = getBuffer(bm, "minibuffer");
-    Buffer *prompt = getBuffer(bm, "prompt");
+    Buffer *minibuffer     = getBuffer(bm, "minibuffer");
+    Buffer *prompt         = getBuffer(bm, "prompt");
+    Buffer *previousBuffer = getPreviousBuffer(bm);
 
     if (minibuffer->size == 0) {
         // Initial setup when entering M-x mode
@@ -2251,7 +2986,17 @@ void execute_extended_command(BufferManager *bm) {
                     break;
                 case CMD_TYPE_C_BUFFER:
                     // Pass the current buffer to the command
-                    executeBufferCommand(cmd_name, bm->lastBuffer);
+                    executeBufferCommand(cmd_name, wm.activeWindow->buffer);
+                    command_executed = true;
+                    break;
+                case CMD_TYPE_C_BUFFERSHIFTARG:
+                    // Pass the current buffer to the command
+                    executeBufferShiftArgCommand(cmd_name, wm.activeWindow->buffer, shiftPressed, getGlobalArg(getBuffer(bm, "arg")));
+                    command_executed = true;
+                    break;
+                case CMD_TYPE_C_WINDOWSHIFTARG:
+                    // Pass the current buffer to the command
+                    executeWindowShiftArgCommand(cmd_name, wm.activeWindow, shiftPressed, getGlobalArg(getBuffer(bm, "arg")));
                     command_executed = true;
                     break;
                 case CMD_TYPE_C_BUFFERMANAGER:
@@ -2275,7 +3020,8 @@ void execute_extended_command(BufferManager *bm) {
             message(err_msg);
         }
 
-        switchToBuffer(bm, bm->lastBuffer->name);
+        switchToBuffer(bm, wm.activeWindow->buffer->name);
+        
         /* cleanBuffer(bm, "message"); */
     }
 }
@@ -2299,9 +3045,11 @@ void keep_lines(BufferManager *bm) {
         return;
     }
 
+    setMajorMode(minibuffer, "regex");
+
     // Get the pattern from minibuffer
     const char *pattern = minibuffer->content;
-    Buffer *buffer = bm->lastBuffer;
+    Buffer *buffer = wm.activeWindow->buffer;
 
     if (!buffer || !pattern || !buffer->content || buffer->size == 0) {
         message("Invalid buffer or pattern");
@@ -2381,10 +3129,11 @@ void keep_lines(BufferManager *bm) {
    Evaluate EXP and print value in the echo area.
 */
 void eval_expression(BufferManager *bm) {
-    Buffer *minibuffer = getBuffer(bm, "minibuffer");
-    Buffer *prompt = getBuffer(bm, "prompt");
+    Buffer *minibuffer     = getBuffer(bm, "minibuffer");
+    Buffer *prompt         = getBuffer(bm, "prompt");
+    Buffer *previousBuffer = getPreviousBuffer(bm);
 
-    if (bm->lastBuffer && bm->lastBuffer->name) {
+    if (previousBuffer && previousBuffer->name) {
         if (minibuffer->size == 0) {
             minibuffer->size = 0;
             minibuffer->point = 0;
@@ -2401,12 +3150,12 @@ void eval_expression(BufferManager *bm) {
             free(result);
 
             // Reset region on the lastBuffer
-            bm->lastBuffer->region.active = false;
-            bm->lastBuffer->region.marked = false;
+            previousBuffer->region.active = false;
+            previousBuffer->region.marked = false;
 
             cleanBuffer(bm, "minibuffer");
             cleanBuffer(bm, "prompt");
-            switchToBuffer(bm, bm->lastBuffer->name);
+            switchToBuffer(bm, previousBuffer->name);
         }
     } else {
         message("No last buffer to go to.");
@@ -2421,15 +3170,11 @@ void load_font(BufferManager *bm) {
     Buffer *prompt = getBuffer(bm, "prompt");
     // Initial minibuffer setup
     if (minibuffer->size == 0) {
-        if (bm->lastBuffer && bm->lastBuffer->name) {
-            minibuffer->size = 0;
-            minibuffer->point = 0;
-            minibuffer->content[0] = '\0';
-            prompt->content = strdup("Switch font to: ");
-            switchToBuffer(bm, "minibuffer");
-        } else {
-            message("No last buffer to return to.");
-        }
+        minibuffer->size = 0;
+        minibuffer->point = 0;
+        minibuffer->content[0] = '\0';
+        prompt->content = strdup("Switch font to: ");
+        switchToBuffer(bm, "minibuffer");
         return;
     }
     // Try to get font path using fontconfig
@@ -2440,7 +3185,7 @@ void load_font(BufferManager *bm) {
         message(error_msg);
         cleanBuffer(bm, "minibuffer");
         cleanBuffer(bm, "prompt");
-        switchToBuffer(bm, bm->lastBuffer->name);
+        switchToBuffer(bm, getPreviousBufferName(bm));
         return;
     }
     // Try to load the font at the base size first to verify it works
@@ -2452,7 +3197,7 @@ void load_font(BufferManager *bm) {
         free(newFontPath);
         cleanBuffer(bm, "minibuffer");
         cleanBuffer(bm, "prompt");
-        switchToBuffer(bm, bm->lastBuffer->name);
+        switchToBuffer(bm, getPreviousBufferName(bm));
         return;
     }
     freeFont(testFont);  // Free the test font since we'll reload per buffer
@@ -2480,7 +3225,7 @@ void load_font(BufferManager *bm) {
             /* free(newFontPath); */
             cleanBuffer(bm, "minibuffer");
             cleanBuffer(bm, "prompt");
-            switchToBuffer(bm, bm->lastBuffer->name);
+            switchToBuffer(bm, getPreviousBufferName(bm));
             return;
         }
         // Free the old font before assigning the new one
@@ -2506,7 +3251,8 @@ void load_font(BufferManager *bm) {
     /* free(newFontPath); */
     cleanBuffer(bm, "minibuffer");
     cleanBuffer(bm, "prompt");
-    switchToBuffer(bm, bm->lastBuffer->name);
+    Buffer *targetBuffer = getPreviousBuffer(bm);
+    switchToBuffer(bm, targetBuffer->name);
 }
 
 /**
@@ -2519,16 +3265,12 @@ void goto_line(BufferManager *bm) {
 
     // Activate minibuffer with "Goto line: " if it's empty
     if (minibuffer->size == 0) {
-        if (bm->lastBuffer && bm->lastBuffer->name) {
-            minibuffer->size = 0;
-            minibuffer->point = 0;
-            minibuffer->content[0] = '\0';
-            free(prompt->content);
-            prompt->content = strdup("Goto line: ");
-            switchToBuffer(bm, "minibuffer");
-        } else {
-            message("No last buffer to go to.");
-        }
+        minibuffer->size = 0;
+        minibuffer->point = 0;
+        minibuffer->content[0] = '\0';
+        free(prompt->content);
+        prompt->content = strdup("Goto line: ");
+        switchToBuffer(bm, "minibuffer");
         return;
     }
 
@@ -2540,9 +3282,9 @@ void goto_line(BufferManager *bm) {
     }
 
     // Assume last buffer is the target unless otherwise specified
-    Buffer *targetBuffer = bm->lastBuffer;
+    Buffer *targetBuffer = getPreviousBuffer(bm);
     if (!targetBuffer || !targetBuffer->content) {
-        message("No valid last buffer.");
+        message("No valid previous buffer.");
         return;
     }
 
@@ -2572,13 +3314,19 @@ void goto_line(BufferManager *bm) {
     switchToBuffer(bm, targetBuffer->name);
 }
 
-bool navigate_list(Buffer *buffer, int arg) {
+bool navigate_list(Buffer *buffer, bool shift, int arg) {
     if (!buffer || arg == 0) return false;
     int direction = (arg > 0) ? 1 : -1;
     int groupsToMove = abs(arg);
     int depth = 0;
     size_t pos = buffer->point;
     bool foundGroup = false;
+
+    if (shift && ! buffer->region.active) {
+        activateRegion(buffer);
+    } else if (!shift && !buffer->region.marked) {
+        buffer->region.active = false;
+    }
 
     // Adjust starting position for backward movement
     if (direction == -1 && pos > 0) pos--;
@@ -2609,23 +3357,33 @@ bool navigate_list(Buffer *buffer, int arg) {
     }
 }
 
-void forward_list(Buffer *buffer, int arg) {
+/**
+   Move forward across one balanced group of parentheses.
+*/
+void forward_list(Buffer *buffer, bool shift, int arg) {
     if (!buffer) return;
     if (arg == 0) arg = 1;  // Default to moving across one group
-    if (navigate_list(buffer, arg)) {
+    if (navigate_list(buffer, shift, arg)) {
         buffer->point++;  // Move past the closing delimiter
     }
 }
 
-void backward_list(Buffer *buffer, int arg) {
-    if (!buffer) return;
-    if (arg == 0) arg = 1;  // Default to moving across one group
-    navigate_list(buffer, -arg);
+/**
+   Move backward across one balanced group of prentheses.
+*/
+void backward_list(Buffer *buffer, bool shift, int arg) {
+  if (!buffer)
+    return;
+  if (arg == 0)
+    arg = 1; // Default to moving across one group
+  navigate_list(buffer, shift, -arg);
 }
 
-
-bool forward_sexp(Buffer *buffer, int arg) {
-    if (!buffer || arg == 0) return false;
+/**
+   Move forward across one balanced expression (sexp).
+*/
+void forward_sexp(Buffer *buffer, bool shift, int arg) {
+    if (!buffer || arg == 0) return;
 
     size_t original_point = buffer->point;
     int direction = (arg > 0) ? 1 : -1;
@@ -2643,7 +3401,7 @@ bool forward_sexp(Buffer *buffer, int arg) {
 
         if (c == '(' || c == '[' || c == '{') {
             // List-like expression
-            navigate_list(buffer, 1);
+            navigate_list(buffer, shift, 1);
             if (buffer->point < buffer->size) {
                 buffer->point++; // Move past the closing delimiter
             }
@@ -2674,14 +3432,16 @@ bool forward_sexp(Buffer *buffer, int arg) {
 
     if (buffer->point == original_point) {
         message("No next sexp");
-        return false;
+        return;
     }
-
-    return true;
+    return;
 }
 
-bool backward_sexp(Buffer *buffer, int arg) {
-    if (!buffer || arg == 0) return false;
+/**
+   Move backward across one balanced expression (sexp.)
+*/
+void backward_sexp(Buffer *buffer, bool shift, int arg) {
+    if (!buffer || arg == 0) return;
 
     size_t original_point = buffer->point;
     int direction = (arg > 0) ? -1 : 1; // Note the reversal of direction
@@ -2700,7 +3460,7 @@ bool backward_sexp(Buffer *buffer, int arg) {
         if (c == ')' || c == ']' || c == '}') {
             // List-like expression
             buffer->point--; // Move to the closing delimiter
-            navigate_list(buffer, -1);
+            navigate_list(buffer, shift, -1);
         } else if (c == '"') {
             // String
             buffer->point--; // Move to the closing quote
@@ -2728,58 +3488,18 @@ bool backward_sexp(Buffer *buffer, int arg) {
 
     if (buffer->point == original_point) {
         message("No previous sexp");
-        return false;
+        return;
     }
 
-    return true;
+    return;
 }
 
 
-/* void navigate_list(Buffer *buffer, int arg) { */
-/*     int direction = (arg > 0) ? 1 : -1; */
-/*     int groupsToMove = abs(arg); */
-/*     int depth = 0; */
-/*     size_t pos = buffer->point; */
-/*     bool foundGroup = false; */
-
-/*     while (groupsToMove > 0 && pos >= 0 && pos < buffer->size) { */
-/*         char c = buffer->content[pos]; */
-/*         if ((direction == 1 && (c == '(' || c == '[' || c == '{')) || */
-/*             (direction == -1 && (c == ')' || c == ']' || c == '}'))) { */
-/*             depth += direction; */
-/*         } else if ((direction == 1 && (c == ')' || c == ']' || c == '}')) || */
-/*                    (direction == -1 && (c == '(' || c == '[' || c == '{'))) { */
-/*             depth -= direction; */
-/*             if (depth == 0) { */
-/*                 foundGroup = true; */
-/*                 groupsToMove--; */
-/*             } */
-/*         } */
-/*         pos += direction; */
-/*     } */
-
-/*     if (foundGroup && groupsToMove == 0) { */
-/*         buffer->point = pos - direction;  // Adjust position back to the last valid position */
-/*     } else { */
-/*         printf("No %s group\n", (arg > 0) ? "next" : "previous"); */
-/*     } */
-/* } */
-
-/* void forward_list(Buffer *buffer, int arg) { */
-/*     if (arg == 0) arg = 1;  // Default to moving across one group */
-/*     navigate_list(buffer, arg); */
-/*     buffer->point += 1; */
-/* } */
-
-/* void backward_list(Buffer *buffer, int arg) { */
-/*     if (arg == 0) arg = 1;  // Default to moving across one group */
-/*     navigate_list(buffer, -arg); */
-/* } */
 
 // NOTE This will be useful to implement LSP
 void moveTo(Buffer *buffer, int ln, int col) {
-    size_t current_line = 1; // Start counting lines from 1
-    size_t current_column = 0; // Column count for the current line
+    size_t current_line = 0; // Start counting lines from 0 for LSP compatibility
+    size_t current_column = 0;
     size_t i = 0;
 
     if (buffer == NULL || buffer->content == NULL) {
@@ -2791,26 +3511,25 @@ void moveTo(Buffer *buffer, int ln, int col) {
     while (i < buffer->size && current_line < ln) {
         if (buffer->content[i] == '\n') {
             current_line++;
-            current_column = 0; // Reset column at the start of a new line
+            current_column = 0;
         }
         i++;
     }
 
     // If the line was found, position at the specified column
     if (current_line == ln) {
-        size_t line_start = i;
         while (current_column < col && i < buffer->size && buffer->content[i] != '\n') {
             i++;
             current_column++;
         }
         if (current_column == col) {
-            buffer->point = i - 1;
+            buffer->point = i;
         } else {
-            printf("Column number exceeds the length of the line. Positioning at line end.\n");
-            buffer->point = i; // If column exceeds line length, position at end of line
+            buffer->point = i; // Position at end of line if column exceeds line length
         }
     } else {
-        printf("Line number exceeds the total number of lines in the buffer.\n");
+        // Position at end of buffer if line exceeds total lines
+        buffer->point = buffer->size;
     }
 
     // Ensure the cursor does not end up beyond the actual content
@@ -2819,69 +3538,254 @@ void moveTo(Buffer *buffer, int ln, int col) {
     }
 }
 
-// FIXME
-void delete_blank_lines(Buffer *buffer, int arg) {
-    if (buffer == NULL || buffer->content == NULL) return;
+/* void moveTo(Buffer *buffer, int ln, int col) { */
+/*     size_t current_line = 1; // Start counting lines from 1 */
+/*     size_t current_column = 0; // Column count for the current line */
+/*     size_t i = 0; */
 
-    size_t point = buffer->point;
-    size_t length = buffer->size;
+/*     if (buffer == NULL || buffer->content == NULL) { */
+/*         printf("Buffer is not initialized.\n"); */
+/*         return; */
+/*     } */
 
-    // Check if the current position is on a non-blank line; if yes, do nothing.
-    size_t current = point;
-    while (current < length && buffer->content[current] != '\n') {
-        if (!isspace((unsigned char)buffer->content[current])) {
-            return; // Current line is not blank, do nothing.
-        }
-        current++;
+/*     // Traverse the buffer until the desired line */
+/*     while (i < buffer->size && current_line < ln) { */
+/*         if (buffer->content[i] == '\n') { */
+/*             current_line++; */
+/*             current_column = 0; // Reset column at the start of a new line */
+/*         } */
+/*         i++; */
+/*     } */
+
+/*     // If the line was found, position at the specified column */
+/*     if (current_line == ln) { */
+/*         size_t line_start = i; */
+/*         while (current_column < col && i < buffer->size && buffer->content[i] != '\n') { */
+/*             i++; */
+/*             current_column++; */
+/*         } */
+/*         if (current_column == col) { */
+/*             buffer->point = i - 1; */
+/*         } else { */
+/*             printf("Column number exceeds the length of the line. Positioning at line end.\n"); */
+/*             buffer->point = i; // If column exceeds line length, position at end of line */
+/*         } */
+/*     } else { */
+/*         printf("Line number exceeds the total number of lines in the buffer.\n"); */
+/*     } */
+
+/*     // Ensure the cursor does not end up beyond the actual content */
+/*     if (buffer->point > buffer->size) { */
+/*         buffer->point = buffer->size; */
+/*     } */
+/* } */
+
+
+bool bobp(Buffer *b) { return b->point == 0; }
+bool eobp(Buffer *b) { return b->point >= b->size; }
+
+void forward_line(Buffer *b, int n) {
+    while (n > 0 && !eobp(b)) {
+        while (b->point < b->size && b->content[b->point] != '\n') b->point++;
+        if (b->point < b->size) b->point++;  // Move past newline
+        n--;
     }
+    while (n < 0 && !bobp(b)) {
+        while (b->point > 0 && b->content[b->point-1] != '\n') b->point--;
+        if (b->point > 0) b->point--;  // Move before newline
+        n++;
+    }
+}
 
-    size_t start = point;
-    size_t end = point;
+bool looking_at(Buffer *b, const char *regex) {
+    if (strcmp(regex, "[ \t]*$") == 0) {
+        size_t pos = b->point;
+        while (pos < b->size && (b->content[pos] == ' ' || b->content[pos] == '\t')) pos++;
+        return (pos >= b->size) || (b->content[pos] == '\n');
+    }
+    return false;
+}
 
-    // Extend start backwards to include all blank lines before the current point
-    while (start > 0 && (buffer->content[start - 1] == '\n' || isspace((unsigned char)buffer->content[start - 1]))) {
-        start--;
-        if (start > 0 && buffer->content[start - 1] == '\n' && !isspace((unsigned char)buffer->content[start - 1])) {
-            start++; // Leave one newline character
+void delete_blank_lines(Buffer *b, int arg) {
+    // Save original point.
+    size_t orig_point = b->point;
+
+    // 1. Determine the start of the current line.
+    size_t cur = b->point;
+    size_t line_start = cur;
+    while (line_start > 0 && b->content[line_start - 1] != '\n')
+        line_start--;
+
+    // 2. Determine the end of the current line.
+    size_t line_end = cur;
+    while (line_end < b->size && b->content[line_end] != '\n')
+        line_end++;
+    // Include newline, if present.
+    if (line_end < b->size && b->content[line_end] == '\n')
+        line_end++;
+
+    // 3. Check if the current line is blank (only spaces, tabs, newline).
+    bool current_blank = true;
+    for (size_t i = line_start; i < line_end && i < b->size; i++) {
+        if (b->content[i] != ' ' && b->content[i] != '\t' && b->content[i] != '\n') {
+            current_blank = false;
             break;
         }
     }
+    if (!current_blank)
+        return;  // Nothing to delete if the current line isn't blank.
 
-    // Extend end forwards to include all blank lines after the current point,
-    // but stop if we encounter a non-blank, non-newline character after the newline
-    while (end < length && (buffer->content[end] == '\n' || isspace((unsigned char)buffer->content[end]))) {
-        if (buffer->content[end] == '\n') {
-            size_t next_pos = end + 1;
-            while (next_pos < length && isspace((unsigned char)buffer->content[next_pos])) {
-                // If next_pos reaches a non-whitespace character, stop extending end
-                if (buffer->content[next_pos] != '\n') {
-                    end = next_pos; // Retain the indentation
-                    goto done;
-                }
-                next_pos++;
+    // 4. Expand upward: include preceding blank lines.
+    size_t region_start = line_start;
+    while (region_start > 0) {
+        size_t prev_line_end = region_start - 1;
+        size_t prev_line_start = region_start - 1;
+        while (prev_line_start > 0 && b->content[prev_line_start - 1] != '\n')
+            prev_line_start--;
+        bool blank = true;
+        for (size_t i = prev_line_start; i < region_start; i++) {
+            if (b->content[i] != ' ' && b->content[i] != '\t' && b->content[i] != '\n') {
+                blank = false;
+                break;
             }
         }
-        end++;
+        if (!blank)
+            break;
+        region_start = prev_line_start;
     }
 
- done:
+    // 5. Expand downward: include following blank lines.
+    size_t region_end = line_end;
+    while (region_end < b->size) {
+        size_t next_line_start = region_end;
+        size_t next_line_end = next_line_start;
+        while (next_line_end < b->size && b->content[next_line_end] != '\n')
+            next_line_end++;
+        if (next_line_end < b->size && b->content[next_line_end] == '\n')
+            next_line_end++;
+        bool blank = true;
+        for (size_t i = next_line_start; i < next_line_end && i < b->size; i++) {
+            if (b->content[i] != ' ' && b->content[i] != '\t' && b->content[i] != '\n') {
+                blank = false;
+                break;
+            }
+        }
+        if (!blank)
+            break;
+        region_end = next_line_end;
+    }
 
-    // Ensure to keep one blank line where the point was
-    if (start < point) {
-        /* MM(buffer->content + start + 1, buffer->content + end, length - end + 1); // +1 for null terminator */
+    // 6. Determine the kept portion at the top.
+    //    If arg > 0, keep the first arg blank lines of the region.
+    size_t keep_end = region_start;
+    if (arg > 0) {
+        int count = 0;
+        while (keep_end < region_end && count < arg) {
+            while (keep_end < region_end && b->content[keep_end] != '\n')
+                keep_end++;
+            if (keep_end < region_end && b->content[keep_end] == '\n') {
+                keep_end++;
+                count++;
+            }
+        }
+    }
+    // Otherwise (arg <= 0) we remove the entire blank block.
 
-        // Shift the remaining content to remove blank lines
-        MM(buffer->content + start + 1, 
-           buffer->content + end, 
-           length - end + 1, // +1 for null terminator
-           buffer, start + 1, -(int)(end - start - 1)); // Adjust syntax ranges after deletion
+    // 7. Delete from keep_end to region_end.
+    if (keep_end < region_end) {
+        size_t delete_len = region_end - keep_end;
+        // Call to MM: shift content left by delete_len bytes.
+        MM(b->content + keep_end,
+           b->content + region_end,
+           b->size - region_end + 1,  // +1 for the null terminator.
+           b,
+           keep_end,
+           -(int)delete_len);
+        b->size -= delete_len;
+
+        // 8. Adjust b->point.
+        if (orig_point < keep_end) {
+            // If the original point was in the kept part, leave it unchanged.
+            b->point = orig_point;
+        } else if (orig_point < region_end) {
+            // If the original point was inside the deleted region, snap to the kept end.
+            b->point = keep_end;
+        } else {
+            // If it was after the region, shift it upward by the deleted length.
+            b->point = orig_point - delete_len;
+        }
         
-        buffer->size = buffer->size - (end - start - 1);
-        buffer->content[start] = '\n'; // Set a single newline at the start
-        buffer->point = start; // Set point at the beginning of the preserved newline
     }
-    insertChar(buffer, '\n');
+    // Ensure b->point does not exceed the new size.
+    if (b->point > b->size)
+        b->point = b->size;
 }
+
+
+
+// FIXME
+/* void delete_blank_lines(Buffer *buffer, int arg) { */
+/*     if (buffer == NULL || buffer->content == NULL) return; */
+
+/*     size_t point = buffer->point; */
+/*     size_t length = buffer->size; */
+
+/*     // Check if the current position is on a non-blank line; if yes, do nothing. */
+/*     size_t current = point; */
+/*     while (current < length && buffer->content[current] != '\n') { */
+/*         if (!isspace((unsigned char)buffer->content[current])) { */
+/*             return; // Current line is not blank, do nothing. */
+/*         } */
+/*         current++; */
+/*     } */
+
+/*     size_t start = point; */
+/*     size_t end = point; */
+
+/*     // Extend start backwards to include all blank lines before the current point */
+/*     while (start > 0 && (buffer->content[start - 1] == '\n' || isspace((unsigned char)buffer->content[start - 1]))) { */
+/*         start--; */
+/*         if (start > 0 && buffer->content[start - 1] == '\n' && !isspace((unsigned char)buffer->content[start - 1])) { */
+/*             start++; // Leave one newline character */
+/*             break; */
+/*         } */
+/*     } */
+
+/*     // Extend end forwards to include all blank lines after the current point, */
+/*     // but stop if we encounter a non-blank, non-newline character after the newline */
+/*     while (end < length && (buffer->content[end] == '\n' || isspace((unsigned char)buffer->content[end]))) { */
+/*         if (buffer->content[end] == '\n') { */
+/*             size_t next_pos = end + 1; */
+/*             while (next_pos < length && isspace((unsigned char)buffer->content[next_pos])) { */
+/*                 // If next_pos reaches a non-whitespace character, stop extending end */
+/*                 if (buffer->content[next_pos] != '\n') { */
+/*                     end = next_pos; // Retain the indentation */
+/*                     goto done; */
+/*                 } */
+/*                 next_pos++; */
+/*             } */
+/*         } */
+/*         end++; */
+/*     } */
+
+/*  done: */
+
+/*     // Ensure to keep one blank line where the point was */
+/*     if (start < point) { */
+/*         /\* MM(buffer->content + start + 1, buffer->content + end, length - end + 1); // +1 for null terminator *\/ */
+
+/*         // Shift the remaining content to remove blank lines */
+/*         MM(buffer->content + start + 1,  */
+/*            buffer->content + end,  */
+/*            length - end + 1, // +1 for null terminator */
+/*            buffer, start + 1, -(int)(end - start - 1)); // Adjust syntax ranges after deletion */
+        
+/*         buffer->size = buffer->size - (end - start - 1); */
+/*         buffer->content[start] = '\n'; // Set a single newline at the start */
+/*         buffer->point = start; // Set point at the beginning of the preserved newline */
+/*     } */
+/*     insertChar(buffer, '\n'); */
+/* } */
 
 #include <errno.h>
 
@@ -2963,7 +3867,7 @@ void recenter(Window *window, bool instant) {
         window->targetScrollY = targetY;
         window->isScrolling = false;
     } else {
-        if (scroll_lerp_mode) {
+        if (scroll_lerp) {
             // Use smooth scrolling (lerping)
             window->targetScrollY = targetY;
             window->isScrolling = true;
@@ -3479,3 +4383,19 @@ void insert_guile_symbols(Buffer *buffer, BufferManager *bm) {
     message(msg);
 }
 
+
+
+int getGlobalArg(Buffer *argBuffer) {
+    if (argBuffer->size == 0 || argBuffer->content[0] == '\0') {
+        return 1;
+    } else {
+        char *endptr;
+        int result = (int)strtol(argBuffer->content, &endptr, 10);
+        if (*endptr != '\0') {
+            // Handle case where non-numeric characters are present
+            printf("Non-numeric input in argument buffer. Ignoring non-numeric part.\n");
+            return result;
+        }
+        return result;
+    }
+}

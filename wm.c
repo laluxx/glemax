@@ -1,5 +1,7 @@
 #include "wm.h"
 #include "buffer.h"
+#include "faces.h"
+#include "globals.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -8,6 +10,9 @@
 
 // TODO i want it to mange X11 windows aswell add it to lume lazy fuck
 // TODO Tags M-0..9
+
+// TODO resurrect_last_killed_window()
+
 
 void initWindowManager(WindowManager *wm, BufferManager *bm, Font *font, int sw, int sh) {
     wm->head = malloc(sizeof(Window));
@@ -26,10 +31,29 @@ void initWindowManager(WindowManager *wm, BufferManager *bm, Font *font, int sw,
     wm->count = 1;
     wm->head->modeline.window = wm->head;
 
+    wm->graveyard = NULL;
+
     wm->head->leftPadding = 0;
     wm->head->parameters = (WindowParameters){0};
     wm->head->parameters.noOtherWindow = false;
-    wm->head->parameters.truncateLines = true;
+    if (global_minimap) {
+        wm->head->parameters.minimap = true;
+        wm->head->parameters.minimap_target_width = 110.0f;  // Set target width
+        if (lerp_minimap_on_startup) {
+            wm->head->parameters.minimap_width = 0.0f;
+        } else {
+            wm->head->parameters.minimap_width = 110.0f;
+        }
+        wm->head->parameters.minimap_lerp_active = true; // Start lerping
+    } else {
+        wm->head->parameters.minimap = false;
+    }
+    if (global_visual_line_mode) {
+        wm->head->parameters.truncateLines = false;
+    } else {
+        wm->head->parameters.truncateLines = true;
+    }
+
     wm->head->parameters.scrollBar = true;
 
     addDisplayWindowToBuffer(wm->head->buffer, wm->head);
@@ -48,7 +72,8 @@ void split_window_right(WindowManager *wm, WindowParameters *parameters) {
 
     active->splitOrientation = VERTICAL;
     newWindow->splitOrientation = VERTICAL;
-    newWindow->parameters.noOtherWindow = parameters->noOtherWindow;
+    /* newWindow->parameters.noOtherWindow = parameters->noOtherWindow; // FIX */
+    newWindow->parameters.noOtherWindow = false; // FIX
 
 
     // Insert new window into the list
@@ -98,7 +123,7 @@ void split_window_right(WindowManager *wm, WindowParameters *parameters) {
             Buffer *minibuffer = getBuffer(&bm, "minibuffer");
             if (minibuffer) {
                 setBufferContent(minibuffer, target_path, true);
-                find_file(&bm, wm, sw, sh);
+                find_file(&bm, wm);
 
                 // After find_file runs, the new buffer will be created and active
                 Buffer *target_buffer = getActiveBuffer(&bm);
@@ -166,7 +191,7 @@ void switch_or_split_window(WindowManager *wm, char *buffer_name, WindowParamete
     } else {
         // Create and switch to the new buffer
         char *fontPath = wm->activeWindow->buffer->fontPath;
-        newBuffer(&bm, wm, buffer_name, "~/", fontPath, sw, sh);
+        newBuffer(&bm, wm, buffer_name, "~/", fontPath);
         switchToBuffer(&bm, buffer_name);
     }
 }
@@ -205,8 +230,38 @@ void split_window_below(WindowManager *wm, WindowParameters *parameters) {
     wm->count++;
 }
 
+
+
+void redistribute_window_space(WindowManager *wm, Window *win) {
+    if (!win) return;
+
+    // Adjust size of adjacent windows based on the orientation
+    if (win->splitOrientation == HORIZONTAL) {
+        // Combine heights if the split was horizontal
+        if (win->prev) {
+            win->prev->height += win->height;
+        } else if (win->next) {
+            win->next->y = win->y;
+            win->next->height += win->height;
+        }
+    } else if (win->splitOrientation == VERTICAL) {
+        // Combine widths if the split was vertical
+        if (win->prev) {
+            win->prev->width += win->width;
+        } else if (win->next) {
+            win->next->x = win->x;
+            win->next->width += win->width;
+        }
+    }
+
+    // Refresh the layout of remaining windows
+    if (wm->head) {
+        updateWindowDimensions(wm->head, 0, wm->head->y, wm->head->width, wm->head->height);
+    }
+}
+
 void delete_window(WindowManager *wm) {
-    if (wm->count <= 1) return; // Cannot delete the last window
+    if (wm->count <= 1) return; // Cannot delete the last window we could go into dashboard
 
     Window *active = wm->activeWindow;
 
@@ -253,125 +308,135 @@ void delete_window(WindowManager *wm) {
     wm->count--;
 }
 
+
+
+
+// TODO kill_other_windows()
+void kill_window(WindowManager *wm, Window *win) {
+    if (wm->count <= 1) return; // Cannot kill the last window
+
+    // Remove from active window list
+    if (win->prev) {
+        win->prev->next = win->next;
+    } else {
+        wm->head = win->next; // Update head if this was the first window
+    }
+    if (win->next) {
+        win->next->prev = win->prev;
+    }
+
+    // Update active window if necessary
+    if (wm->activeWindow == win) {
+        wm->activeWindow = (win->next ? win->next : win->prev);
+        if (wm->activeWindow) {
+            wm->activeWindow->isActive = true;
+        }
+    }
+
+    // Clear window's list pointers
+    win->prev = NULL;
+    win->next = NULL;
+
+    // Add to graveyard (inactive hashmap)
+    WindowMap *entry = malloc(sizeof(WindowMap));
+    if (!entry) {
+        fprintf(stderr, "kill_window: Failed to allocate memory for hashmap entry\n");
+        return;
+    }
+    entry->key = strdup(win->buffer->name);
+    if (!entry->key) {
+        free(entry);
+        fprintf(stderr, "kill_window: Failed to duplicate buffer name\n");
+        return;
+    }
+    entry->window = win;
+    HASH_ADD_KEYPTR(hh, wm->graveyard, entry->key, strlen(entry->key), entry);
+
+    // Remove from buffer's display windows
+    removeDisplayWindowFromBuffer(win->buffer, win);
+
+    // UPDATE wm->lastKilledBufferName
+    if (wm->lastKilledBufferName) {
+        free(wm->lastKilledBufferName);
+    }
+    wm->lastKilledBufferName = strdup(win->buffer->name);
+
+    // Redistribute the space of the killed window
+    redistribute_window_space(wm, win);
+
+    // Update counts
+    wm->count--;
+    wm->inactive_count++;
+}
+
+Window* resurrect_window(WindowManager *wm, const char *buffer_name) {
+    // Find the window in the graveyard (inactive hashmap)
+    WindowMap *entry;
+    HASH_FIND_STR(wm->graveyard, buffer_name, entry);
+    if (!entry) {
+        fprintf(stderr, "resurrect_window: No inactive window found for buffer '%s'\n", buffer_name);
+        return NULL;
+    }
+
+    Window *win = entry->window;
+
+    // Remove from graveyard
+    HASH_DEL(wm->graveyard, entry);
+    free(entry->key);
+    free(entry);
+
+    // Add to active list
+    win->next = wm->head;
+    if (wm->head) {
+        wm->head->prev = win;
+    }
+    wm->head = win;
+
+    // Add to buffer's display windows
+    addDisplayWindowToBuffer(win->buffer, win);
+
+    // Update counts
+    wm->count++;
+    wm->inactive_count--;
+
+    return win;
+}
+
+
+// TODO Support NoOtherWindow Window parameter.
 void other_window(WindowManager *wm, int direction) {
     if (direction == 1) {
-        Window *nextWindow = wm->activeWindow->next;
-        // If next window has the flag, skip over it
-        while (nextWindow && nextWindow->parameters.noOtherWindow) {
-            nextWindow = nextWindow->next;
-        }
-
-        // If we reached the end, loop back to the beginning
-        if (!nextWindow) {
-            nextWindow = wm->head;
-            // Find first non-flagged window from the beginning
-            while (nextWindow && nextWindow->parameters.noOtherWindow &&
-                   nextWindow != wm->activeWindow) {
-                nextWindow = nextWindow->next;
-            }
-        }
-
-        // Only switch if we found a valid window that's different from the current
-        if (nextWindow && nextWindow != wm->activeWindow) {
+        if (wm->activeWindow->next) {
             wm->activeWindow->isActive = false;
-            wm->activeWindow = nextWindow;
+            wm->activeWindow = wm->activeWindow->next;
+            wm->activeWindow->isActive = true;
+        } else if (wm->head) {
+            wm->activeWindow->isActive = false;
+            wm->activeWindow = wm->head;
             wm->activeWindow->isActive = true;
         }
     } else if (direction == -1) {
-        // Find the previous window
         Window *current = wm->head;
-        Window *prev = NULL;
-
-        // Handle the case where active window is the first one
         if (current == wm->activeWindow) {
-            // Find the last non-flagged window
-            Window *last = NULL;
-            while (current) {
-                if (!current->parameters.noOtherWindow) {
-                    last = current;
-                }
+            while (current->next) {
                 current = current->next;
             }
-
-            if (last && last != wm->activeWindow) {
-                wm->activeWindow->isActive = false;
-                wm->activeWindow = last;
-                wm->activeWindow->isActive = true;
-            }
+            wm->activeWindow->isActive = false;
+            wm->activeWindow = current;
+            wm->activeWindow->isActive = true;
         } else {
-            // Find valid previous window
-            Window *validPrev = NULL;
-
-            while (current && current != wm->activeWindow) {
-                if (!current->parameters.noOtherWindow) {
-                    validPrev = current;
-                }
-                prev = current;
+            while (current->next != wm->activeWindow) {
                 current = current->next;
             }
-
-            if (validPrev) {
-                wm->activeWindow->isActive = false;
-                wm->activeWindow = validPrev;
-                wm->activeWindow->isActive = true;
-            } else {
-                // If no valid previous window, look for one from the beginning
-                // until active window
-                Window *temp = wm->head;
-                Window *lastValid = NULL;
-
-                while (temp && temp != wm->activeWindow) {
-                    if (!temp->parameters.noOtherWindow) {
-                        lastValid = temp;
-                    }
-                    temp = temp->next;
-                }
-
-                if (lastValid) {
-                    wm->activeWindow->isActive = false;
-                    wm->activeWindow = lastValid;
-                    wm->activeWindow->isActive = true;
-                }
-            }
+            wm->activeWindow->isActive = false;
+            wm->activeWindow = current;
+            wm->activeWindow->isActive = true;
         }
     }
 }
 
-/* void other_window(WindowManager *wm, int direction) { */
-/*     if (direction == 1) { */
-/*         if (wm->activeWindow->next) { */
-/*             wm->activeWindow->isActive = false; */
-/*             wm->activeWindow = wm->activeWindow->next; */
-/*             wm->activeWindow->isActive = true; */
-/*         } else if (wm->head) { */
-/*             wm->activeWindow->isActive = false; */
-/*             wm->activeWindow = wm->head; */
-/*             wm->activeWindow->isActive = true; */
-/*         } */
-/*     } else if (direction == -1) { */
-/*         Window *current = wm->head; */
-/*         if (current == wm->activeWindow) { */
-/*             while (current->next) { */
-/*                 current = current->next; */
-/*             } */
-/*             wm->activeWindow->isActive = false; */
-/*             wm->activeWindow = current; */
-/*             wm->activeWindow->isActive = true; */
-/*         } else { */
-/*             while (current->next != wm->activeWindow) { */
-/*                 current = current->next; */
-/*             } */
-/*             wm->activeWindow->isActive = false; */
-/*             wm->activeWindow = current; */
-/*             wm->activeWindow->isActive = true; */
-/*         } */
-/*     } */
-/* } */
-
-// TODO Also swa the window(s) parameters, as an option.
-void swap_window(WindowManager *wm, int direction) {
+void swap_windows(WindowManager *wm, int direction) {
     Window *tw = NULL; // Target Window
-
     if (direction == 1) {
         tw = wm->activeWindow->next ? wm->activeWindow->next : wm->head;
     } else {
@@ -388,35 +453,35 @@ void swap_window(WindowManager *wm, int direction) {
             tw = current; // Set the target to the previous window
         }
     }
-
+    
     if (tw) {
+        // Swap buffers
         Buffer *tempBuffer = wm->activeWindow->buffer;
         wm->activeWindow->buffer = tw->buffer;
         tw->buffer = tempBuffer;
+        
+        // Swap window parameters if the global flag is set
+        if (swap_windows_parameters) {
+            WindowParameters tempParams = wm->activeWindow->parameters;
+            wm->activeWindow->parameters = tw->parameters;
+            tw->parameters = tempParams;
+        }
+        
         other_window(wm, direction);
     }
 }
 
-
-// NOTE Never used and wrong
-/* void set_window_parameter(Window *window, WindowParameters parameters, bool value) { */
-/*     switch (parameters) { */
-/*     case truncateLines: */
-/*         window->parameters.truncateLines = value; */
-/*         break; */
-/*     case noOtherWindow: */
-/*         window->parameters.noOtherWindow = value; */
-/*         break; */
-/*     case scrollBar: */
-/*         window->parameters.scrollBar = value; */
-/*         break; */
-/*     default: */
-/*         fprintf(stderr, "set_window_parameter :: Unknown Window parameter type\n"); */
-/*         break; */
-/*     } */
-/* } */
+// TODO void set_window_parameter(Window *window, WindowParameters parameters, bool value) {}
 
 void freeWindowManager(WindowManager *wm) {
+    WindowMap *curr, *tmp;
+    // Free graveyard
+    HASH_ITER(hh, wm->graveyard, curr, tmp) {
+        HASH_DEL(wm->graveyard, curr);
+        free(curr->key);
+        free(curr);
+    }
+
     Window *current = wm->head;
     while (current != NULL) {
         Window *next = current->next;
@@ -526,5 +591,6 @@ bool isBottomWindow(WindowManager *wm, Window *window) {
     }
     return true;
 }
+
 
 

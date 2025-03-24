@@ -8,6 +8,7 @@
 #include "screen.h"
 #include "theme.h"
 #include "globals.h"
+#include "edit.h" // for find_visual_line maybe a line module would be nice
 
 
 
@@ -105,13 +106,13 @@ void draw_scopes(WindowManager *wm, Font *font) {
                     float highlightWidth = activeWindow->width - (x - activeWindow->x);
                     
                     // Calculate the effective minimap width and padding
-                    float effective_minimap_width = minimap_width;
+                    float effective_minimap_width = activeWindow->parameters.minimap_width;
                     float effective_minimap_padding = 0.0f;
 
                     if (minimap_padding_mode) {
-                        if (keep_right_fringe) {
+                        if (!keep_right_fringe) {
                             // Lerp the padding alongside the minimap width
-                            effective_minimap_padding = lerp(0.0f, minimap_left_padding, minimap_width / (110.0f + minimap_left_padding));
+                            effective_minimap_padding = lerp(0.0f, minimap_left_padding, activeWindow->parameters.minimap_width / (110.0f + minimap_left_padding));
                         } else {
                             // Apply padding immediately
                             effective_minimap_padding = minimap_left_padding;
@@ -143,406 +144,83 @@ void draw_scopes(WindowManager *wm, Font *font) {
     flush();
 }
 
-// NOTE Don't keep space for the scrollbar, right fringe and minimap_left_padding 
-/* void draw_scopes(WindowManager *wm, Font *font) { */
-/*     if (!hl_scope_mode) return; */
-    
-/*     Buffer *buffer = wm->activeWindow->buffer; */
-/*     Window *activeWindow = wm->activeWindow; */
-    
-/*     if (buffer->scopes.count == 0 || buffer->size == 0) return; */
-
-/*     float x = fringe + activeWindow->x - activeWindow->scroll.x; */
-/*     float y = activeWindow->y + font->ascent - font->descent * 2 + activeWindow->scroll.y; */
-    
-/*     useShader("simple"); */
-    
-/*     size_t lineStart = 0; */
-    
-/*     for (size_t i = 0; i <= buffer->size; i++) { */
-/*         if (i == buffer->size || buffer->content[i] == '\n') { */
-/*             for (size_t s = 0; s < buffer->scopes.count; s++) { */
-/*                 Scope scope = buffer->scopes.items[s]; */
-                
-/*                 if (scope.start >= buffer->size || scope.end > buffer->size) continue; */
-                
-/*                 // Check if the current line intersects with the scope */
-/*                 if ((lineStart <= scope.end) && (i > scope.start)) { */
-/*                     float highlightWidth = activeWindow->width - (x - activeWindow->x); */
-                    
-/*                     // Lerp the padding space alongside the minimap width */
-/*                     float minimap_padding = minimap_padding_mode */
-/*                         ? lerp(0.0f, minimap_left_padding, minimap_width / 110.0f)  // Lerp the padding */
-/*                         : 0; */
-                    
-/*                     float maxWidth = activeWindow->width */
-/*                         - minimap_width  // Lerped width */
-/*                         - fringe */
-/*                         - minimap_padding;  // Lerped padding */
-                    
-/*                     if (highlightWidth > maxWidth) */
-/*                         highlightWidth = maxWidth; */
-                    
-/*                     Color scopeColor = getScopeColor(scope.level); */
-/*                     /\* scopeColor.a = 0.1f + (float)scope.level * 0.05f; *\/ */
-                    
-/*                     Vec2f position = {x, y - font->ascent}; */
-/*                     Vec2f size = {highlightWidth, font->ascent + font->descent}; */
-/*                     drawRectangle(position, size, scopeColor); */
-/*                 } */
-/*             } */
-/*             y -= (font->ascent + font->descent); */
-/*             lineStart = i + 1; */
-/*         } */
-/*     } */
-    
-/*     flush(); */
-/* } */
 
 
-// NOTE keep space for the scrollbar, right fringe and minimap_left_padding 
-/* void draw_scopes(WindowManager *wm, Font *font) { */
-/*     if (!hl_scope_mode) return; */
-    
-/*     Buffer *buffer = wm->activeWindow->buffer; */
-/*     Window *activeWindow = wm->activeWindow; */
-    
-/*     if (buffer->scopes.count == 0 || buffer->size == 0) return; */
-
-/*     float x = fringe + activeWindow->x - activeWindow->scroll.x; */
-/*     float y = activeWindow->y + font->ascent - font->descent * 2 + activeWindow->scroll.y; */
-    
-/*     useShader("simple"); */
-    
-/*     size_t lineStart = 0; */
-    
-/*     for (size_t i = 0; i <= buffer->size; i++) { */
-/*         if (i == buffer->size || buffer->content[i] == '\n') { */
-/*             for (size_t s = 0; s < buffer->scopes.count; s++) { */
-/*                 Scope scope = buffer->scopes.items[s]; */
-                
-/*                 if (scope.start >= buffer->size || scope.end > buffer->size) continue; */
-                
-/*                 // Check if the current line intersects with the scope */
-/*                 if ((lineStart <= scope.end) && (i > scope.start)) { */
-/*                     float highlightWidth = activeWindow->width - (x - activeWindow->x); */
-                    
-/*                     // Apply minimap left padding immediately */
-/*                     float minimap_padding = minimap_padding_mode */
-/*                         ? minimap_left_padding */
-/*                         : 0; */
-                    
-/*                     // Use the current minimap_width for the rest of the animation */
-/*                     float maxWidth = activeWindow->width */
-/*                         - minimap_width  // Lerped width */
-/*                         - fringe */
-/*                         - minimap_padding;  // Immediate padding */
-                    
-/*                     if (highlightWidth > maxWidth) */
-/*                         highlightWidth = maxWidth; */
-                    
-/*                     Color scopeColor = getScopeColor(scope.level); */
-/*                     /\* scopeColor.a = 0.1f + (float)scope.level * 0.05f; *\/ */
-                    
-/*                     Vec2f position = {x, y - font->ascent}; */
-/*                     Vec2f size = {highlightWidth, font->ascent + font->descent}; */
-/*                     drawRectangle(position, size, scopeColor); */
-/*                 } */
-/*             } */
-/*             y -= (font->ascent + font->descent); */
-/*             lineStart = i + 1; */
-/*         } */
-/*     } */
-    
-/*     flush(); */
-/* } */
-
-// ORIGINAL
-// TODO Go over the the minimap padding space when backslash is presse immidiatly
-// not after the animation has finished
-/* void draw_scopes(WindowManager *wm, Font *font) { */
-/*     if (!hl_scope_mode) return; */
-    
-/*     Buffer *buffer = wm->activeWindow->buffer; */
-/*     Window *activeWindow = wm->activeWindow; */
-    
-/*     if (buffer->scopes.count == 0 || buffer->size == 0) return; */
-
-/*     float x = fringe + activeWindow->x - activeWindow->scroll.x; */
-/*     float y = activeWindow->y + font->ascent - font->descent * 2 + activeWindow->scroll.y; */
-    
-/*     useShader("simple"); */
-    
-/*     size_t lineStart = 0; */
-    
-/*     for (size_t i = 0; i <= buffer->size; i++) { */
-/*         if (i == buffer->size || buffer->content[i] == '\n') { */
-/*             for (size_t s = 0; s < buffer->scopes.count; s++) { */
-/*                 Scope scope = buffer->scopes.items[s]; */
-                
-/*                 if (scope.start >= buffer->size || scope.end > buffer->size) continue; */
-                
-/*                 // Check if the current line intersects with the scope */
-/*                 if ((lineStart <= scope.end) && (i > scope.start)) { */
-/*                     float highlightWidth = activeWindow->width - (x - activeWindow->x); */
-                    
-/*                     if (minimap_mode) { */
-/*                         float minimap_padding = minimap_padding_mode */
-/*                             ? minimap_left_padding */
-/*                             : 0; */
-/*                         float maxWidth = activeWindow->width */
-/*                             - minimap_width */
-/*                             - fringe */
-/*                             - minimap_padding; */
-/*                         if (highlightWidth > maxWidth) */
-/*                             highlightWidth = maxWidth; */
-/*                     } */
-                    
-/*                     Color scopeColor = getScopeColor(scope.level); */
-/*                     /\* scopeColor.a = 0.1f + (float)scope.level * 0.05f; *\/ */
-                    
-/*                     Vec2f position = {x, y - font->ascent}; */
-/*                     Vec2f size = {highlightWidth, font->ascent + font->descent}; */
-/*                     drawRectangle(position, size, scopeColor); */
-/*                 } */
-/*             } */
-/*             y -= (font->ascent + font->descent); */
-/*             lineStart = i + 1; */
-/*         } */
-/*     } */
-    
-/*     flush(); */
-/* } */
-
-
-
+// decent 
 void drawScrollbar(Window *win, Color *color, size_t thickness) {
-    if (!scroll_bar_mode) return;
-    // I would *really* like to handle the mouse interactions inside this function
+    if (!scroll_bar) return;
     
-    // Calculate total content height
+    if (!win->parameters.minimap) scroll_bar_right_padding = 0;
+    
+    // Calculate content height
     int lineCount = 1;
     for (size_t i = 0; i < win->buffer->size; i++) {
-        if (win->buffer->content[i] == '\n') {
-            lineCount++;
+        if (win->buffer->content[i] == '\n') lineCount++;
+    }
+    
+    float lineHeight = win->buffer->font->ascent + win->buffer->font->descent;
+    float contentHeight = lineHeight * lineCount;
+    if (contentHeight <= win->height) return;
+    
+    // Calculate scrollbar dimensions
+    float viewportRatio = win->height / contentHeight;
+    float scrollbarHeight = fmaxf(viewportRatio * win->height, thickness);
+    float maxScrollY = contentHeight - win->height;
+    float scrollPosition = (maxScrollY > 0) ? (win->scroll.y / maxScrollY) : 0;
+    
+    // Calculate base X position and width
+    float scrollbarX, scrollbarWidth;
+    if (win->parameters.minimap) {
+        scrollbarX = win->x + win->width - win->parameters.minimap_width - thickness;
+    } else {
+        scrollbarX = win->x + win->width - thickness;
+    }
+    
+    // Apply padding and trimming
+    scrollbarX -= scroll_bar_right_padding;
+    scrollbarX += scroll_bar_left_trim;  // Trim from left
+    scrollbarWidth = thickness - scroll_bar_left_trim;
+    
+    // Handle animations - either minimap easing or dedicated scrollbar easing
+    if (minimap_easing_mode && (win->parameters.minimap_lerp_active || scroll_bar_lerp_active)) {
+        float lerpFactor = win->parameters.minimap_width / (110.0f + minimap_left_padding);
+        
+        if (win->parameters.minimap) {
+            // Showing minimap
+            if (show_scroll_bar_with_minimap && scroll_bar_lerp_active) {
+                scrollbarWidth = lerp(0.0f, scrollbarWidth, lerpFactor);
+                scrollbarX = win->x + win->width - win->parameters.minimap_width - scrollbarWidth - scroll_bar_right_padding;
+            }
+        } else {
+            // Hiding minimap
+            if (hide_scroll_bar_with_minimap && scroll_bar_lerp_active) {
+                scrollbarWidth = lerp(scrollbarWidth, 0.0f, lerpFactor);
+                scrollbarX = win->x + win->width - thickness + (thickness - scrollbarWidth) - scroll_bar_right_padding;
+            } else if (!hide_scroll_bar_with_minimap) {
+                // Keep scrollbar visible when hiding minimap and hide_scroll_bar_with_minimap is false
+                scrollbarX = win->x + win->width - thickness - scroll_bar_right_padding;
+            }
         }
     }
-
-    float lineHeight = (win->buffer->font->ascent + win->buffer->font->descent);
-    float contentHeight = lineHeight * lineCount;
-
-    // Only draw the scrollbar if the content height exceeds the window height
-    if (contentHeight > win->height) {
-        // Calculate the proportion of the visible area to the total content height
-        float viewportRatio = win->height / contentHeight;
-        float scrollbarHeight = fmaxf(viewportRatio * win->height, thickness);
-
-        // Calculate the maximum scrollable distance
-        float maxScrollY = contentHeight - win->height;
-
-        // Calculate the scroll position (normalized to [0, 1])
-        float scrollPosition = (maxScrollY > 0) ? (win->scroll.y / maxScrollY) : 0;
-
-        // Position the scrollbar 2 pixels to the right of its original position
-        float scrollbarX = minimap_mode ? win->x + win->width - minimap_width -
-            thickness - 2 // 2 pixels to the right
-            : win->x + win->width - thickness -
-            2; // 2 pixels to the right
-
-        // Calculate the scrollbar Y position (y grows upwards, so we invert the calculation)
-        float scrollbarY = win->y - scrollbarHeight - (win->height - scrollbarHeight) * scrollPosition;
-
-        // Ensure the scrollbar stays within the window bounds
-        scrollbarY = fmaxf(win->y - win->height, fminf(scrollbarY, win->y - scrollbarHeight));
-
-        useShader("simple");
-        // Draw the vertical scrollbar
-        drawRectangle((Vec2f){scrollbarX, scrollbarY},
-                      (Vec2f){thickness, scrollbarHeight}, *color);
-        flush();
-    }
+    
+    // Calculate Y position (0,0 is bottom-left)
+    float windowBottom = win->y - win->height;
+    float scrollbarY = windowBottom + (win->height - scrollbarHeight) * (1.0f - scrollPosition);
+    scrollbarY = fmaxf(windowBottom, fminf(scrollbarY, win->y - scrollbarHeight));
+    
+    // Draw scrollbar
+    useShader("simple");
+    drawRectangle((Vec2f){scrollbarX, scrollbarY},
+                  (Vec2f){scrollbarWidth, scrollbarHeight}, *color);
+    flush();
 }
-
-/* void drawScrollbars(Window *win, Color *color,float Thickness) { */
-/*     // Calculate total content height and width */
-/*     int lineCount = 1; */
-/*     float contentWidth = 0; */
-/*     float maxLineWidth = 0; */
-
-/*     // Calculate line count and find the widest line */
-/*     for (size_t i = 0; i < win->buffer->size; i++) { */
-/*         contentWidth += getCharacterWidth(win->buffer->font, win->buffer->content[i]); */
-
-/*         if (win->buffer->content[i] == '\n') { */
-/*             lineCount++; */
-/*             if (contentWidth > maxLineWidth) { */
-/*                 maxLineWidth = contentWidth; */
-/*             } */
-/*             contentWidth = 0; */
-/*         } */
-/*     } */
-
-/*     if (contentWidth > maxLineWidth) { */
-/*         maxLineWidth = contentWidth; */
-/*     } */
-
-/*     float lineHeight = (win->buffer->font->ascent + win->buffer->font->descent); */
-/*     float contentHeight = lineHeight * lineCount; */
-
-/*     // Scrollbar padding */
-/*     const float scrollbarPadding = 2.0f; */
-
-/*     // Vertical scrollbar (right edge) */
-/*     if (contentHeight > win->height) { */
-/*         float viewportRatio = win->height / contentHeight; */
-/*         float scrollbarHeight = fmaxf(viewportRatio * win->height, Thickness); */
-/*         float maxScrollY = contentHeight - win->height; */
-/*         float scrollPosition = (maxScrollY > 0) ? (win->scroll.y / maxScrollY) : 0; */
-
-/*         // Position to the left of the minimap if enabled */
-/*         float scrollbarX = minimap_mode */
-/*             ? win->x + win->width - minimap_width - Thickness - scrollbarPadding */
-/*             : win->x + win->width - Thickness - scrollbarPadding; */
-
-/*         // Calculate scrollbar Y position (y grows upwards, so we invert the calculation) */
-/*         float scrollbarY = win->y - scrollbarHeight - (win->height - scrollbarHeight) * scrollPosition; */
-
-/*         // Ensure the scrollbar stays within the window bounds */
-/*         scrollbarY = fmaxf(win->y - win->height, fminf(scrollbarY, win->y - scrollbarHeight)); */
-
-/*         // Draw the vertical scrollbar */
-/*         drawRectangle( */
-/*             (Vec2f){scrollbarX, scrollbarY}, */
-/*             (Vec2f){Thickness, scrollbarHeight}, */
-/*             *color */
-/*         ); */
-/*     } */
-
-/*     // Horizontal scrollbar (bottom left) */
-/*     if (maxLineWidth > win->width) { */
-/*         float viewportRatio = win->width / maxLineWidth; */
-/*         float scrollbarWidth = fmaxf(viewportRatio * win->width, Thickness); */
-/*         float maxScrollX = maxLineWidth - win->width; */
-/*         float scrollPosition = (maxScrollX > 0) ? (win->scroll.x / maxScrollX) : 0; */
-
-/*         // Calculate scrollbar X position (start from window->x + yThickness to avoid overlap with vertical scrollbar) */
-/*         float scrollbarX = win->x + Thickness + scrollbarPadding + */
-/*             (win->width - Thickness - scrollbarWidth - 2 * scrollbarPadding) * scrollPosition; */
-
-/*         // Calculate scrollbar Y position (y grows upwards, so the scrollbar is at the bottom) */
-/*         float scrollbarY = win->y - win->height - scrollbarPadding - Thickness; */
-
-/*         // Ensure the scrollbar stays within the window bounds */
-/*         scrollbarX = fmaxf(win->x + Thickness, fminf(scrollbarX, win->x + win->width - scrollbarWidth)); */
-
-/*         // Draw the horizontal scrollbar */
-/*         drawRectangle( */
-/*             (Vec2f){scrollbarX, scrollbarY}, */
-/*             (Vec2f){scrollbarWidth, Thickness}, */
-/*             *color */
-/*         ); */
-/*     } */
-/* } */
-
-
-/* void drawScrollbars(Window *win, Color *xcolor, Color *ycolor) { */
-/*     if (!win || !xcolor || !ycolor) return; */
-
-/*     // Calculate total content height and width */
-/*     int lineCount = 1; */
-/*     float contentWidth = 0; */
-/*     float maxLineWidth = 0; */
-
-/*     // Calculate line count and find the widest line */
-/*     for (size_t i = 0; i < win->buffer->size; i++) { */
-/*         contentWidth += getCharacterWidth(win->buffer->font, win->buffer->content[i]); */
-
-/*         if (win->buffer->content[i] == '\n') { */
-/*             lineCount++; */
-/*             if (contentWidth > maxLineWidth) { */
-/*                 maxLineWidth = contentWidth; */
-/*             } */
-/*             contentWidth = 0; */
-/*         } */
-/*     } */
-
-/*     if (contentWidth > maxLineWidth) { */
-/*         maxLineWidth = contentWidth; */
-/*     } */
-
-/*     float lineHeight = (win->buffer->font->ascent + win->buffer->font->descent); */
-/*     float contentHeight = lineHeight * lineCount; */
-
-/*     // Scrollbar constants */
-/*     const float scrollbarThickness = 8.0f; */
-/*     const float scrollbarMinSize = 20.0f; */
-/*     const float scrollbarPadding = 2.0f; */
-
-/*     // Vertical scrollbar (right edge) */
-/*     if (contentHeight > win->height) { */
-/*         float viewportRatio = win->height / contentHeight; */
-/*         float scrollbarHeight = fmaxf(viewportRatio * win->height, scrollbarMinSize); */
-/*         float maxScrollY = contentHeight - win->height; */
-/*         float scrollPosition = (maxScrollY > 0) ? (win->scroll.y / maxScrollY) : 0; */
-
-/*         // Position to the left of the minimap if enabled */
-/*         float scrollbarX = minimap_mode */
-/*             ? win->x + win->width - minimap_width - scrollbarThickness - scrollbarPadding */
-/*             : win->x + win->width - scrollbarThickness - scrollbarPadding; */
-
-/*         // Calculate scrollbar Y position (y grows upwards, so we invert the calculation) */
-/*         float scrollbarY = win->y - win->height + (win->height - scrollbarHeight) * scrollPosition; */
-
-/*         // Ensure the scrollbar stays within the window bounds */
-/*         scrollbarY = fmaxf(win->y - win->height, fminf(scrollbarY, win->y - scrollbarHeight)); */
-
-/*         // Draw the vertical scrollbar */
-/*         drawRectangle( */
-/*                       (Vec2f){scrollbarX, scrollbarY}, */
-/*                       (Vec2f){scrollbarThickness, scrollbarHeight}, */
-/*                       *ycolor */
-/*                       ); */
-/*     } */
-
-/*     // Horizontal scrollbar (bottom left) */
-/*     if (maxLineWidth > win->width) { */
-/*         float viewportRatio = win->width / maxLineWidth; */
-/*         float scrollbarWidth = fmaxf(viewportRatio * win->width, scrollbarMinSize); */
-/*         float maxScrollX = maxLineWidth - win->width; */
-/*         float scrollPosition = (maxScrollX > 0) ? (win->scroll.x / maxScrollX) : 0; */
-
-/*         // Calculate scrollbar X position */
-/*         float scrollbarX = win->x + scrollbarPadding + */
-/*             (win->width - scrollbarWidth - 2 * scrollbarPadding) * scrollPosition; */
-
-/*         // Calculate scrollbar Y position (y grows upwards, so the scrollbar is at the bottom) */
-/*         float scrollbarY = win->y - win->height - scrollbarPadding - scrollbarThickness; */
-
-/*         // Ensure the scrollbar stays within the window bounds */
-/*         scrollbarX = fmaxf(win->x, fminf(scrollbarX, win->x + win->width - scrollbarWidth)); */
-
-/*         // Draw the horizontal scrollbar */
-/*         drawRectangle( */
-/*                       (Vec2f){scrollbarX, scrollbarY}, */
-/*                       (Vec2f){scrollbarWidth, scrollbarThickness}, */
-/*                       *xcolor */
-/*                       ); */
-/*     } */
-/* } */
-
-
-/// MINIMAP
 
 // TODO Simplify and optimize the minimap fnctions
 // We could generate a texture of the minimap and correctly
 // update it when we will have an undo system not on every key
-
-void drawMinimapView(WindowManager *wm, Window *mainWindow, Buffer *buffer) {
-    // TODO
-}
-
 void drawMinimapRegion(WindowManager *wm, Window *mainWindow, Buffer *buffer) {
-
+    if (mainWindow->buffer->region.active == false) return;
+    
     float minimap_width = 110;
     float minimapX = mainWindow->x + mainWindow->width - minimap_width;
     float lineHeight = 2.0;
@@ -738,60 +416,40 @@ void drawCommentUntilEndOfLine(Buffer *buffer, float minimapX, float startY, siz
  * - Handles comments that extend until the end of the line.
  */
 // TODO Wrap lines
+// TODO Draw rectangles starting from begin-of-defun and ends at end-of-defun
 void drawMinimap(WindowManager *wm, Window *mainWindow, Buffer *buffer) {
-    float minimapX = mainWindow->x + mainWindow->width - minimap_width;  // Positioned on the right edge of the main window
+    float minimapX = mainWindow->x + mainWindow->width - mainWindow->parameters.minimap_width;  // Positioned on the right edge of the main window
     float lineHeight = 2.0;  // Height of each line in the minimap
     float scale = 1.0;       // Scale factor for text rendering
     float startY = mainWindow->y;  // Starting Y position for drawing
     size_t lineStart = 0;    // Start index of the current line
     size_t wordStart = 0;    // Start index of the current word
     int currentLine = 0;     // Current line number
-
     // Calculate the maximum width of text that can fit in the minimap
-    float maxTextWidth = minimap_width / scale;
+    float maxTextWidth = mainWindow->parameters.minimap_width / scale;
 
-    // Use the "simple" shader for drawing
     useShader("simple");
-
-    // Draw the minimap region and view
     drawMinimapRegion(wm, mainWindow, buffer);
-    drawMinimapView(wm, mainWindow, buffer);
 
-    // Draw the minimap background
-    drawRectangle((Vec2f){sw - minimap_width, sw}, (Vec2f){sw - minimap_width, sw}, CT.modeline);
+    /* // Draw the minimap background */
+    /* drawRectangle((Vec2f){sw - mainWindow->parameters.minimap_width, sw}, (Vec2f){sw - mainWindow->parameters.minimap_width, sw}, CT.modeline); */
 
     // UPDATE LERP
-    if (minimap_lerp_active) {
+    if (mainWindow->parameters.minimap_lerp_active) {
         // Lerp minimap_width towards target_width
-        minimap_width = lerp(minimap_width, minimap_target_width, 0.1f);
-        printf("Lerping minimap_width: %.2f -> %.2f\n", minimap_width, minimap_target_width);
+        mainWindow->parameters.minimap_width = lerp(mainWindow->parameters.minimap_width, mainWindow->parameters.minimap_target_width, 0.1f);
 
         // Check if close enough to stop lerping
-        if (fabs(minimap_width - minimap_target_width) < 1.0f) {
-            minimap_width = minimap_target_width;
-            minimap_lerp_active = false;
+        if (fabs(mainWindow->parameters.minimap_width - mainWindow->parameters.minimap_target_width) < 1.0f) {
+            mainWindow->parameters.minimap_width = mainWindow->parameters.minimap_target_width;
+            mainWindow->parameters.minimap_lerp_active = false;
 
             // If the target width is 0, disable the minimap
-            if (minimap_target_width == 0.0f) {
-                minimap_mode = false;
+            if (mainWindow->parameters.minimap_target_width == 0.0f) {
+                mainWindow->parameters.minimap = false;
             }
-            printf("Lerping complete | Minimap mode: %d | Minimap width: %.2f\n", minimap_mode, minimap_width);
         }
     }
-
-    /* if (minimap_lerp_active) { */
-    /*     // Lerp minimap_width towards target_width */
-    /*     minimap_width = lerp(minimap_width, minimap_target_width, 0.1f); */
-    /*     // Check if close enough to stop lerping */
-    /*     if (fabs(minimap_width - minimap_target_width) < 1.0f) { */
-    /*         minimap_width = minimap_target_width; */
-    /*         minimap_lerp_active = false; */
-    /*         minimap_mode = (minimap_width > 0.0f); // Update minimap_mode based on final width */
-    /*     } */
-    /* } */
-
-
-
 
     // Iterate through each character in the buffer to draw syntax highlights
     for (size_t i = 0; i <= buffer->size; i++) {
@@ -823,44 +481,70 @@ void drawMinimap(WindowManager *wm, Window *mainWindow, Buffer *buffer) {
     flush();
 }
 
-
 void drawHollowPoint(Buffer *buffer, Window *win, size_t position, Color color) {
-    // Validate input
-    if (!buffer || !win) return;
-    if (!buffer->content) return;
-    if (buffer->size == 0) return;
-    if (position >= buffer->size) return;
-
     float x = win->x - win->scroll.x; // Start position adjusted for horizontal scroll
     float y = win->y;
     int lineCount = 0;
-
+    
+    // Calculate max X position for wrapping/truncation
+    float baseX = win->x - win->scroll.x;
+    float maxContentWidth = win->width - fringe;
+    if (win->parameters.minimap) {
+        float minimap_padding = minimap_padding_mode ? minimap_left_padding : 0;
+        maxContentWidth -= (win->parameters.minimap_width + minimap_padding);
+    }
+    float maxX = baseX + maxContentWidth;
+    
     // Calculate position
-    for (size_t i = 0; i < position; i++) {
+    size_t i = 0;
+    while (i < position) {
         if (buffer->content[i] == '\n') {
             lineCount++;
             x = win->x - win->scroll.x;
+            i++;
         } else {
-            x += getCharacterWidth(buffer->font, buffer->content[i]);
+            float charWidth = getCharacterWidth(buffer->font, buffer->content[i]);
+            
+            // Handle line wrapping or truncation
+            if (!win->parameters.truncateLines && x + charWidth > maxX) {
+                // Visual line wrapping
+                lineCount++;
+                x = win->x - win->scroll.x;
+            } else if (win->parameters.truncateLines && x >= maxX) {
+                // Skip to the end of logical line when truncating
+                while (i < position && buffer->content[i] != '\n') {
+                    i++;
+                }
+                continue;
+            }
+            
+            x += charWidth;
+            i++;
         }
     }
-
-    // Compute y position
-    y += win->scroll.y -
-        lineCount * (buffer->font->ascent + buffer->font->descent) -
+    
+    // Compute y position exactly as in the original function
+    y += win->scroll.y - 
+        lineCount * (buffer->font->ascent + buffer->font->descent) - 
         (buffer->font->descent * 2);
-
+    
     // Calculate width
     float width = (position < buffer->size && buffer->content[position] != '\n')
         ? getCharacterWidth(buffer->font, buffer->content[position])
         : getCharacterWidth(buffer->font, ' ');
-
+    
+    // Check if point needs to wrap to the next line
+    if (!win->parameters.truncateLines && x + width > maxX) {
+        x = win->x - win->scroll.x;
+        y -= (buffer->font->ascent + buffer->font->descent);
+    }
+    
     float height = buffer->font->ascent + buffer->font->descent;
-    float lineThickness =
+    float lineThickness = 
         fmax(1.0f, height * 0.03f); // Scale line thickness with font size
-
+    
     useShader("simple");
-
+    
     // Top line
     drawRectangle((Vec2f){fringe + x, y + height - lineThickness},
                   (Vec2f){width, lineThickness}, color);
@@ -873,10 +557,12 @@ void drawHollowPoint(Buffer *buffer, Window *win, size_t position, Color color) 
     // Right line
     drawRectangle((Vec2f){fringe + x + width - lineThickness, y},
                   (Vec2f){lineThickness, height}, color);
+    
     flush();
 }
 
 void drawMark(Buffer *buffer, Window *win, Color markColor) {
+    if (hide_mark_when_region_active) {if (buffer->region.active) return;}
     drawHollowPoint(buffer, win, buffer->region.mark, foregroundColorAtPoint(buffer, buffer->region.mark));
 }
 
@@ -904,9 +590,9 @@ void drawCursor(Buffer *buffer, Window *win, Color defaultColor) {
 
     // Calculate maximum content width considering minimap and window parameters
     float maxContentWidth = win->width - fringe;
-    if (minimap_mode) {
+    if (win->parameters.minimap) {
         float minimap_padding = minimap_padding_mode ? minimap_left_padding : 0;
-        maxContentWidth -= (minimap_width + minimap_padding);
+        maxContentWidth -= (win->parameters.minimap_width + minimap_padding);
     }
     float maxX = startX + maxContentWidth;
 
@@ -919,13 +605,24 @@ void drawCursor(Buffer *buffer, Window *win, Color defaultColor) {
         } else {
             float charWidth = getCharacterWidth(buffer->font, c);
             float newX = cursorX + charWidth;
+
             // Check if wrapping is needed when truncateLines is disabled
             if (!win->parameters.truncateLines && newX > maxX) {
-                lineCount++; // Wrap to next line
+                lineCount++; // Wrap to next visual line
                 cursorX = startX + charWidth;
             } else {
                 cursorX = newX;
             }
+        }
+    }
+
+    // Determine if the cursor is at the end of a wrapped line
+    if (buffer->point < buffer->size && buffer->content[buffer->point] != '\n') {
+        float charWidth = getCharacterWidth(buffer->font, buffer->content[buffer->point]);
+        if (cursorX + charWidth > maxX) {
+            // Cursor is at the end of a wrapped line, move to the start of the next visual line
+            lineCount++;
+            cursorX = startX;
         }
     }
 
@@ -970,56 +667,74 @@ void drawCursor(Buffer *buffer, Window *win, Color defaultColor) {
 }
 
 /* void drawCursor(Buffer *buffer, Window *win, Color defaultColor) { */
-/*     float cursorX = fringe + win->x - win->scroll.x;  // Start position adjusted for horizontal scroll */
-/*     float cursorY = win->y; */
+/*     float startX = fringe + win->x - win->scroll.x; */
+/*     float cursorX = startX; */
 /*     int lineCount = 0; */
-    
-/*     // Calculate the cursor's x offset within the content of the buffer */
+
+/*     // Calculate maximum content width considering minimap and window parameters */
+/*     float maxContentWidth = win->width - fringe; */
+/*     if (minimap) { */
+/*         float minimap_padding = minimap_padding_mode ? minimap_left_padding : 0; */
+/*         maxContentWidth -= (minimap_width + minimap_padding); */
+/*     } */
+/*     float maxX = startX + maxContentWidth; */
+
+/*     // Iterate through characters up to the cursor's position to calculate wraps */
 /*     for (size_t i = 0; i < buffer->point; i++) { */
-/*         if (buffer->content[i] == '\n') { */
-/*             lineCount++;  // Increment line count at each newline */
-/*             cursorX = fringe + win->x - win->scroll.x;  // Reset cursor x to the start of the window on new lines, adjusted for horizontal scroll */
+/*         char c = buffer->content[i]; */
+/*         if (c == '\n') { */
+/*             lineCount++; */
+/*             cursorX = startX; */
 /*         } else { */
-/*             cursorX += getCharacterWidth(buffer->font, buffer->content[i]);  // Move cursor right by character width */
+/*             float charWidth = getCharacterWidth(buffer->font, c); */
+/*             float newX = cursorX + charWidth; */
+/*             // Check if wrapping is needed when truncateLines is disabled */
+/*             if (!win->parameters.truncateLines && newX > maxX) { */
+/*                 lineCount++; // Wrap to next line */
+/*                 cursorX = startX + charWidth; */
+/*             } else { */
+/*                 cursorX = newX; */
+/*             } */
 /*         } */
 /*     } */
-    
-/*     // Determine cursor width, handle newline or end of buffer cases */
-/*     float cursorWidth = (buffer->point < buffer->size && buffer->content[buffer->point] != '\n') ? */
-/*         getCharacterWidth(buffer->font, buffer->content[buffer->point]) : */
-/*         getCharacterWidth(buffer->font, ' ');  // Use a standard width if at the end of a line or buffer */
-    
-/*     // Compute cursor's y position based on the number of lines, subtract from initial y and add the scroll */
-/*     cursorY += win->scroll.y - lineCount * (buffer->font->ascent + buffer->font->descent) - (buffer->font->descent * 2); */
-    
-/*     // Create a rectangle representing the cursor */
+
+/*     // Determine cursor width based on current character or space if at line end */
+/*     float cursorWidth; */
+/*     if (buffer->point < buffer->size && buffer->content[buffer->point] != '\n') { */
+/*         cursorWidth = getCharacterWidth(buffer->font, buffer->content[buffer->point]); */
+/*     } else { */
+/*         cursorWidth = getCharacterWidth(buffer->font, ' '); */
+/*     } */
+
+/*     // Calculate Y position considering line wraps and newlines */
+/*     float cursorY = win->y + win->scroll.y  */
+/*         - lineCount * (buffer->font->ascent + buffer->font->descent) */
+/*         - (buffer->font->descent * 2); */
+
 /*     Vec2f cursorPosition = {cursorX, cursorY}; */
 /*     Vec2f cursorSize = {cursorWidth, buffer->font->ascent + buffer->font->descent}; */
-    
-/*     // Determine the cursor color */
+
+/*     // Determine cursor color */
 /*     Color cursorColor = defaultColor; */
 /*     if (buffer->region.active && hide_region_mode) { */
 /*         cursorColor = CT.null; */
 /*     } else { */
 /*         cursorColor = foregroundColorAtPoint(buffer, buffer->point); */
 /*     } */
-    
-/*     // Handle cursor blinking logic */
+
+/*     // Handle cursor blinking */
 /*     if (blink_cursor_mode && blinkCount < blink_cursor_blinks) { */
 /*         double currentTime = getTime(); */
 /*         if (currentTime - lastBlinkTime >= (cursorVisible ? blink_cursor_interval : blink_cursor_delay)) { */
 /*             cursorVisible = !cursorVisible; */
 /*             lastBlinkTime = currentTime; */
-/*             if (cursorVisible) { */
-/*                 blinkCount++; */
-/*             } */
+/*             if (cursorVisible) blinkCount++; */
 /*         } */
-        
 /*         if (cursorVisible) { */
-/*             drawRectangle(cursorPosition, cursorSize, cursorColor);  // Draw the cursor if visible */
+/*             drawRectangle(cursorPosition, cursorSize, cursorColor); */
 /*         } */
 /*     } else { */
-/*         drawRectangle(cursorPosition, cursorSize, cursorColor);  // Always draw cursor with syntax color if not blinking or crystal_cursor_mode is true */
+/*         drawRectangle(cursorPosition, cursorSize, cursorColor); */
 /*     } */
 /* } */
 

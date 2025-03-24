@@ -5,20 +5,27 @@
 #include "buffer.h"
 
 extern Font *font;
+extern int fontsize;
+extern char *fontPath;
+
+extern Font *commentfont;
+extern char *commentfontPath;
+extern int  commentfontsize;
+
+
 extern Font *minifont;
 
-extern int fontincrement;
-extern int fontsize;
+extern int fontincrement; // NOTE unused
 extern int minifontsize;
-extern char *fontPath;
-extern Font *nerdFont;
+extern Font *nerdFont;    // NOTE unused
+
 
 #define MAX_FONT_SCALE 27
 #define MIN_FONT_SCALE -8
 #define MAX_FONT_SCALE_INDEX 36
 #define SCALE_ZERO_INDEX 8
 
-extern Font *globalFontCache[MAX_FONT_SCALE_INDEX];  // Global cache of rasterized fonts
+extern Font *globalFontCache[MAX_FONT_SCALE_INDEX]; // NOTE Global cache of rasterized fonts
 
 void initScale(Scale *scale);
 Font* updateFont(Scale *scale, int newIndex, char *fontPath);

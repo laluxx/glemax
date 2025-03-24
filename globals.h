@@ -33,10 +33,10 @@ extern bool   crystal_cursor_mode;
 extern float  mouse_wheel_scroll_amount;
 extern bool   mouse_wheel_lerp_mode;
 extern float  mouse_wheel_lerp_speed;
-extern bool   minimap_mode;
+extern bool   minimap;
 extern bool   minimap_easing_mode;
-extern float  minimap_target_width;
-extern bool   minimap_lerp_active;
+/* extern float  minimap_target_width; */
+/* extern bool   minimap_lerp_active; */
 
 
 extern bool   minibuffer_minimap_mode;
@@ -45,7 +45,7 @@ extern bool   fringe_mode;
 extern bool   color_fringe_mode;
 extern bool   hide_region_mode;
 extern char   *first_theme_name;
-extern float  minimap_width;
+/* extern float  minimap_width; */
 extern size_t fringe;
 extern size_t minimap_left_padding;
 extern bool   minimap_padding_mode;
@@ -60,7 +60,7 @@ extern bool   diff_hl_bg;
 extern float  diff_hl_bg_alpha;
 extern bool   diff_hl_text;
 extern bool   diff_hl_cursor;
-extern bool   scroll_lerp_mode;
+extern bool   scroll_lerp;
 extern float  scroll_lerp_speed;
 extern bool   clock_mode;
 extern float  clockScale;
@@ -71,17 +71,46 @@ extern char   *scratch_buffer_content;
 extern bool   mark_mode;
 extern bool   region_fg_mode;
 extern bool   region_alpa_mode;
-extern bool   lerp_line_mode;
+extern bool   lerp_line;
 extern float  lerp_line_duration;
 extern bool   vertico_mode;
 extern size_t vertico_max_lines;
 extern bool   find_file_focus_existing;
 extern size_t max_gemini_redirections;
 extern bool   revert_buffer_mode;
-extern bool   SkipFistScrollLerpFrameUpdate; // HACK
-extern bool   scroll_bar_mode;
+/* extern bool   scroll_bar_mode; */
+extern bool   scroll_bar;
+
+extern size_t scroll_bar_right_padding;
+
 extern size_t scroll_bar_thickness;
 
 extern bool keep_right_fringe;
+
+extern bool hide_scroll_bar_with_minimap;
+extern bool show_scroll_bar_with_minimap;
+extern size_t scroll_bar_left_trim;
+extern bool scroll_bar_lerp_active;
+extern bool prevent_scroll;
+
+extern bool swap_windows_parameters;
+
+extern bool line_move_visual;
+extern bool global_visual_line_mode;
+extern bool mmm;
+extern bool word_wrap;
+
+
+extern bool show_minimap_with_gemini;
+extern bool lerp_minimap_with_gemini;
+extern bool global_minimap;
+
+extern bool focus_window_if_buffer_displayed;
+extern bool hide_mark_when_region_active;
+
+extern bool shiftPressed;
+extern bool ctrlPressed;
+extern bool altPressed;
+extern bool lerp_minimap_on_startup;
 
 #endif
