@@ -60,15 +60,12 @@ void forward_sexp( Buffer *buffer, bool shift, int arg);
 void backward_sexp(Buffer *buffer, bool shift, int arg);
 
 // Transposing
-/* void transpose_subr(Buffer *buffer, bool (*mover)(Buffer *, int, bool), int arg); */
-/* void transpose_subr(Buffer *buffer, bool (*mover)(Buffer *, bool, int), int arg); */
 void transpose_subr(Buffer *buffer, void (*mover)(Buffer *, bool, int), int arg);
 void transpose_words(Buffer *buffer, int arg);
 void transpose_chars(Buffer *buffer);
 
 void open_line(Buffer *buffer);
 
-/* void delete_indentation(Buffer *buffer, BufferManager *bm, int arg); */
 void delete_indentation(Buffer *buffer, int arg);
 bool isWordChar(char c);
 void add_indentation(Buffer *buffer);
@@ -81,20 +78,15 @@ bool is_punctuation_char(char c);
 void backward_word(Buffer *buffer, bool shift, int arg);
 void forward_word( Buffer *buffer, bool shift, int arg);
 
-
 void forward_paragraph(Buffer *buffer, bool shift);
 void backward_paragraph(Buffer *buffer, bool shift);
 void beginning_of_buffer(Buffer *buffer);
 void end_of_buffer(Buffer *buffer);
-/* void indent(Buffer *buffer, int indentation, int arg); */
 void indent_line(Buffer *buffer, bool shift, int arg);
-/* void indent_region(Buffer *buffer, int indentation, int arg); */
 void indent_region(Buffer *buffer, bool shift, int arg);
 void goto_line(BufferManager *bm);
 void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm, Buffer *minibuffer, Buffer *prompt, int indentation, bool electric_indent_mode, int sw, int sh, NamedHistories *nh, int arg);
 
-
-/* void find_file(BufferManager *bm, WindowManager *wm, int sw, int sh); */
 void find_file(BufferManager *bm, WindowManager *wm);
 void backspace(Buffer *buffer, bool electric_pair_mode);
 
@@ -134,7 +126,8 @@ void read_only_mode(Buffer *buffer);
 void helpful_symbol(BufferManager *bm);
 
 // EXTENSION
-void insert_guile_symbols(Buffer *buffer, BufferManager *bm);
+/* void insert_guile_symbols(Buffer *buffer, BufferManager *bm); */
+void insert_guile_symbols(Buffer *buffer);
 
 
 void exchange_point_and_mark(Buffer *buffer);
@@ -143,7 +136,10 @@ void scroll(Window *window, int arg);
 void scroll_up(Window *window, int arg);
 void scroll_down(Window *window, int arg);
 
+const char *getProjectRoot(const char *path);
+const char *getTrailingFile(const char *path);
 const char *getFilename(const char *path);
+const char *getFileExtension(const char* filename);
 void trimTrailingFile(char *path);
 
 
@@ -179,6 +175,6 @@ bool bobp(Buffer *b);
 bool eobp(Buffer *b);
 void forward_line(Buffer *b, int n);
 bool looking_at(Buffer *b, const char *regex);
-
+int current_column(Buffer *buffer);
 
 #endif

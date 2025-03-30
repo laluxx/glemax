@@ -22,6 +22,7 @@
 #include "./grammars/tree-sitter-go/bindings/c/tree-sitter-go.h"
 #include "./grammars/tree-sitter-json/bindings/c/tree-sitter-json.h"
 #include "./grammars/tree-sitter-regex/bindings/c/tree-sitter-regex.h"
+#include "./grammars/tree-sitter-d/bindings/c/tree-sitter-d.h"
 #include <stdio.h>
 #include <string.h>
 #include "syntax.h"
@@ -84,16 +85,14 @@ void initCNodeColorMappings(NodeColorMap **map) {
     addNodeColorMapping(map, "arithmetic_expression", &CT.cursor);
     addNodeColorMapping(map, "unary_expression",      &CT.cursor);
     addNodeColorMapping(map, "update_expression",     &CT.cursor);
-    // Since we can't dynamically check parent nodes,
-    // Map all possible combinations of identifier and its parent node types
+    // FIXME This doesn't work and should be checked at runtime
     addNodeColorMapping(map, "identifier:function_declarator",   &CT.function);
     addNodeColorMapping(map, "identifier:function_definition",   &CT.function);
     addNodeColorMapping(map, "identifier:declaration",           &CT.variable);
     addNodeColorMapping(map, "identifier:assignment_expression", &CT.variable);
     addNodeColorMapping(map, "identifier:init_declarator",       &CT.variable);
-    addNodeColorMapping(map, "identifier",                       &CT.text); //_=> identifier
+    addNodeColorMapping(map, "identifier",                       &CT.text);
     addNodeColorMapping(map, "comment", &CT.comment);
-    //_=> will use CT.text
 }
 
 void initSchemeNodeColorMappings(NodeColorMap **map) {
@@ -2306,6 +2305,186 @@ void initPhpNodeColorMappings(NodeColorMap **map) {
 }
 
 
+void initDNodeColorMappings(NodeColorMap **map) {
+    // Keywords
+    addNodeColorMapping(map, "return",      &CT.keyword);
+    addNodeColorMapping(map, "if",          &CT.keyword);
+    addNodeColorMapping(map, "else",        &CT.keyword);
+    addNodeColorMapping(map, "while",       &CT.keyword);
+    addNodeColorMapping(map, "do",          &CT.keyword);
+    addNodeColorMapping(map, "for",         &CT.keyword);
+    addNodeColorMapping(map, "foreach",     &CT.keyword);
+    addNodeColorMapping(map, "foreach_reverse", &CT.keyword);
+    addNodeColorMapping(map, "switch",      &CT.keyword);
+    addNodeColorMapping(map, "case",        &CT.keyword);
+    addNodeColorMapping(map, "default",     &CT.keyword);
+    addNodeColorMapping(map, "break",       &CT.keyword);
+    addNodeColorMapping(map, "continue",    &CT.keyword);
+    addNodeColorMapping(map, "goto",        &CT.keyword);
+    addNodeColorMapping(map, "struct",      &CT.keyword);
+    addNodeColorMapping(map, "class",       &CT.keyword);
+    addNodeColorMapping(map, "interface",   &CT.keyword);
+    addNodeColorMapping(map, "enum",        &CT.keyword);
+    addNodeColorMapping(map, "union",       &CT.keyword);
+    addNodeColorMapping(map, "template",    &CT.keyword);
+    addNodeColorMapping(map, "mixin",       &CT.keyword);
+    addNodeColorMapping(map, "module",      &CT.keyword);
+    addNodeColorMapping(map, "import",      &CT.keyword);
+    addNodeColorMapping(map, "package",     &CT.keyword);
+    addNodeColorMapping(map, "private",     &CT.keyword);
+    addNodeColorMapping(map, "protected",   &CT.keyword);
+    addNodeColorMapping(map, "public",      &CT.keyword);
+    addNodeColorMapping(map, "export",      &CT.keyword);
+    addNodeColorMapping(map, "static",      &CT.keyword);
+    addNodeColorMapping(map, "final",       &CT.keyword);
+    addNodeColorMapping(map, "const",       &CT.keyword);
+    addNodeColorMapping(map, "immutable",   &CT.keyword);
+    addNodeColorMapping(map, "inout",       &CT.keyword);
+    addNodeColorMapping(map, "shared",      &CT.keyword);
+    addNodeColorMapping(map, "synchronized",&CT.keyword);
+    addNodeColorMapping(map, "volatile",    &CT.keyword);
+    addNodeColorMapping(map, "abstract",    &CT.keyword);
+    addNodeColorMapping(map, "override",    &CT.keyword);
+    addNodeColorMapping(map, "pragma",      &CT.keyword);
+    addNodeColorMapping(map, "delegate",    &CT.keyword);
+    addNodeColorMapping(map, "function",    &CT.keyword);
+    addNodeColorMapping(map, "alias",       &CT.keyword);
+    addNodeColorMapping(map, "typedef",     &CT.keyword);
+    addNodeColorMapping(map, "scope",       &CT.keyword);
+    addNodeColorMapping(map, "debug",       &CT.keyword);
+    addNodeColorMapping(map, "version",     &CT.keyword);
+    addNodeColorMapping(map, "assert",      &CT.keyword);
+    addNodeColorMapping(map, "cast",        &CT.keyword);
+    addNodeColorMapping(map, "new",         &CT.keyword);
+    addNodeColorMapping(map, "delete",      &CT.keyword);
+    addNodeColorMapping(map, "throw",       &CT.keyword);
+    addNodeColorMapping(map, "try",         &CT.keyword);
+    addNodeColorMapping(map, "catch",       &CT.keyword);
+    addNodeColorMapping(map, "finally",     &CT.keyword);
+    addNodeColorMapping(map, "with",        &CT.keyword);
+    addNodeColorMapping(map, "in",          &CT.keyword);
+    addNodeColorMapping(map, "out",         &CT.keyword);
+    addNodeColorMapping(map, "body",        &CT.keyword);
+    addNodeColorMapping(map, "invariant",   &CT.keyword);
+    addNodeColorMapping(map, "unittest",    &CT.keyword);
+    addNodeColorMapping(map, "is",          &CT.keyword);
+    
+    // Constants
+    addNodeColorMapping(map, "null",  &CT.null);
+    addNodeColorMapping(map, "true",  &CT.null);
+    addNodeColorMapping(map, "false", &CT.null);
+    
+    // Operators
+    addNodeColorMapping(map, "!",     &CT.negation);
+    
+    // Types
+    addNodeColorMapping(map, "type_identifier",      &CT.type);
+    addNodeColorMapping(map, "primitive_type",       &CT.type);
+    addNodeColorMapping(map, "sized_type_specifier", &CT.type);
+    addNodeColorMapping(map, "template_type",        &CT.type);
+    addNodeColorMapping(map, "auto",                 &CT.type);
+    addNodeColorMapping(map, "void",                 &CT.type);
+    addNodeColorMapping(map, "bool",                 &CT.type);
+    addNodeColorMapping(map, "byte",                 &CT.type);
+    addNodeColorMapping(map, "ubyte",                &CT.type);
+    addNodeColorMapping(map, "short",                &CT.type);
+    addNodeColorMapping(map, "ushort",               &CT.type);
+    addNodeColorMapping(map, "int",                  &CT.type);
+    addNodeColorMapping(map, "uint",                 &CT.type);
+    addNodeColorMapping(map, "long",                 &CT.type);
+    addNodeColorMapping(map, "ulong",                &CT.type);
+    addNodeColorMapping(map, "cent",                 &CT.type);
+    addNodeColorMapping(map, "ucent",                &CT.type);
+    addNodeColorMapping(map, "float",                &CT.type);
+    addNodeColorMapping(map, "double",               &CT.type);
+    addNodeColorMapping(map, "real",                 &CT.type);
+    addNodeColorMapping(map, "ifloat",               &CT.type);
+    addNodeColorMapping(map, "idouble",              &CT.type);
+    addNodeColorMapping(map, "ireal",                &CT.type);
+    addNodeColorMapping(map, "cfloat",               &CT.type);
+    addNodeColorMapping(map, "cdouble",              &CT.type);
+    addNodeColorMapping(map, "creal",                &CT.type);
+    addNodeColorMapping(map, "char",                 &CT.type);
+    addNodeColorMapping(map, "wchar",                &CT.type);
+    addNodeColorMapping(map, "dchar",                &CT.type);
+    
+    // Strings
+    addNodeColorMapping(map, "string_literal",      &CT.string);
+    addNodeColorMapping(map, "wysiwyg_string",      &CT.string);
+    addNodeColorMapping(map, "alternate_wysiwyg_string", &CT.string);
+    addNodeColorMapping(map, "double_quoted_string", &CT.string);
+    addNodeColorMapping(map, "hex_string",          &CT.string);
+    addNodeColorMapping(map, "delimited_string",    &CT.string);
+    addNodeColorMapping(map, "token_string",        &CT.string);
+    addNodeColorMapping(map, "char_literal",        &CT.string);
+    addNodeColorMapping(map, "string_content",      &CT.string);
+    addNodeColorMapping(map, "\"",                  &CT.string);
+    addNodeColorMapping(map, "``",                  &CT.string);
+    addNodeColorMapping(map, "r\"",                 &CT.string);
+    addNodeColorMapping(map, "q{",                  &CT.string);
+    
+    // Numbers
+    addNodeColorMapping(map, "number_literal",      &CT.number);
+    addNodeColorMapping(map, "integer_literal",     &CT.number);
+    addNodeColorMapping(map, "float_literal",       &CT.number);
+    addNodeColorMapping(map, "hex_literal",         &CT.number);
+    addNodeColorMapping(map, "binary_literal",      &CT.number);
+    
+    // Functions
+    addNodeColorMapping(map, "function_definition",  &CT.function);
+    addNodeColorMapping(map, "function_declaration", &CT.function);
+    addNodeColorMapping(map, "constructor_definition", &CT.function);
+    addNodeColorMapping(map, "destructor_definition", &CT.function);
+    addNodeColorMapping(map, "this",                 &CT.function);
+    addNodeColorMapping(map, "super",                &CT.function);
+    
+    // Preprocessor
+    addNodeColorMapping(map, "module_declaration",   &CT.preprocessor);
+    addNodeColorMapping(map, "import_declaration",   &CT.preprocessor);
+    addNodeColorMapping(map, "conditional_compilation", &CT.preprocessor);
+    addNodeColorMapping(map, "version_specification", &CT.preprocessor);
+    addNodeColorMapping(map, "debug_specification",  &CT.preprocessor);
+    addNodeColorMapping(map, "static_if",            &CT.preprocessor);
+    addNodeColorMapping(map, "static_assert",        &CT.preprocessor);
+    addNodeColorMapping(map, "pragma_statement",     &CT.preprocessor);
+    
+    // Expressions
+    addNodeColorMapping(map, "assignment_expression", &CT.cursor);
+    addNodeColorMapping(map, "arithmetic_expression", &CT.cursor);
+    addNodeColorMapping(map, "unary_expression",      &CT.cursor);
+    addNodeColorMapping(map, "update_expression",     &CT.cursor);
+    addNodeColorMapping(map, "ternary_expression",    &CT.cursor);
+    addNodeColorMapping(map, "binary_expression",     &CT.cursor);
+    addNodeColorMapping(map, "lambda_expression",     &CT.cursor);
+    
+    // Identifiers with specific contexts
+    addNodeColorMapping(map, "identifier:function_declarator",   &CT.function);
+    addNodeColorMapping(map, "identifier:function_definition",   &CT.function);
+    addNodeColorMapping(map, "identifier:method_definition",     &CT.function);
+    addNodeColorMapping(map, "identifier:declaration",           &CT.variable);
+    addNodeColorMapping(map, "identifier:assignment_expression", &CT.variable);
+    addNodeColorMapping(map, "identifier:init_declarator",       &CT.variable);
+    addNodeColorMapping(map, "identifier:parameter_declaration", &CT.variable);
+    addNodeColorMapping(map, "identifier",                       &CT.text);
+    
+    // Comments
+    addNodeColorMapping(map, "comment",              &CT.comment);
+    addNodeColorMapping(map, "line_comment",         &CT.comment);
+    addNodeColorMapping(map, "block_comment",        &CT.comment);
+    addNodeColorMapping(map, "nested_comment",       &CT.comment);
+    addNodeColorMapping(map, "documentation_comment", &CT.comment);
+    
+    // D-specific attributes
+    addNodeColorMapping(map, "attribute_specifier",  &CT.preprocessor);
+    addNodeColorMapping(map, "@property",            &CT.preprocessor);
+    addNodeColorMapping(map, "@safe",                &CT.preprocessor);
+    addNodeColorMapping(map, "@trusted",             &CT.preprocessor);
+    addNodeColorMapping(map, "@system",              &CT.preprocessor);
+    addNodeColorMapping(map, "@nogc",                &CT.preprocessor);
+    addNodeColorMapping(map, "@disable",             &CT.preprocessor);
+}
+
+
 void initLanguageParsers() {
     lps.capacity = 4; // Start with a small capacity
     lps.items = malloc(lps.capacity * sizeof(LanguageParser));
@@ -2409,6 +2588,8 @@ TSParser *inferParserForLanguage(const char *language) {
         lang = tree_sitter_json();
     } else if (strcmp(language, "regex") == 0) {
         lang = tree_sitter_regex();
+    } else if (strcmp(language, "d") == 0) {
+        lang = tree_sitter_d();
     }
 
     if (!lang) {
@@ -2474,6 +2655,8 @@ TSParser *inferParserForLanguage(const char *language) {
         initJsonNodeColorMappings(&newParser.nodeColorMap);
     } else if (strcmp(language, "regex") == 0) {
         initRegexNodeColorMappings(&newParser.nodeColorMap);
+    } else if (strcmp(language, "d") == 0) {
+        initDNodeColorMappings(&newParser.nodeColorMap);
     }
 
     // Add the new parser to the array

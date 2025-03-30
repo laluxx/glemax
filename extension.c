@@ -269,7 +269,7 @@ void init_glemax_bindings(void) {
     scm_c_use_module("glemax");
 }
 
-void load_init_file(void) {
+void load_user_init_file(void) {
     for (size_t i = 0; i < sizeof(INIT_FILE_PATHS)/sizeof(INIT_FILE_PATHS[0]); i++) {
         char expanded_path[1024];
         
@@ -388,8 +388,9 @@ static size_t find_enclosing_sexp_start(const char* content, size_t point) {
     return 0; // Return the start of the buffer if no start found
 }
 
-void eval_last_sexp(BufferManager *bm) {
-    Buffer *buffer = getActiveBuffer(bm);
+
+void eval_last_sexp() {
+    Buffer *buffer = wm.activeWindow->buffer;
     if (!buffer || !buffer->content) {
         message("No buffer to evaluate.");
         return;
@@ -456,8 +457,11 @@ void eval_last_sexp(BufferManager *bm) {
     free(result);
 }
 
-void eval_buffer(BufferManager *bm) {
-    Buffer *buffer = getActiveBuffer(bm);
+/**
+   Execute the accessible portion of current buffer as Guile scheme code.
+ */
+void eval_buffer() {
+    Buffer *buffer = wm.activeWindow->buffer;
     if (!buffer || !buffer->content) { message("No buffer to evaluate."); return; }
 
     char *result = eval_scheme_string(buffer->content);
@@ -469,58 +473,60 @@ void eval_buffer(BufferManager *bm) {
     }
 }
 
-void eval_region(BufferManager *bm) {
-    Buffer *buffer = getActiveBuffer(bm);
-    if (!buffer || !buffer->content || !buffer->region.active) {
-        message("No active region to evaluate.");
-        return;
-    }
+/**
+   Execute the region as Guile scheme code.
+*/
+void eval_region() {
+  Buffer *buffer = wm.activeWindow->buffer;
+  if (!buffer || !buffer->content || !buffer->region.active) {
+    message("No active region to evaluate.");
+    return;
+  }
 
-    size_t start = buffer->region.start;
-    size_t end = buffer->region.end;
-    if (start > end) {
-        size_t temp = start;
-        start = end;
-        end = temp;
-    }
+  size_t start = buffer->region.start;
+  size_t end = buffer->region.end;
+  if (start > end) {
+    size_t temp = start;
+    start = end;
+    end = temp;
+  }
 
-    // Get the region text
-    size_t region_length = end - start;
-    char *region_text = malloc(region_length + 1);
-    if (!region_text) {
-        message("Memory allocation failed.");
-        return;
-    }
-    strncpy(region_text, buffer->content + start, region_length);
-    region_text[region_length] = '\0';
+  // Get the region text
+  size_t region_length = end - start;
+  char *region_text = malloc(region_length + 1);
+  if (!region_text) {
+    message("Memory allocation failed.");
+    return;
+  }
+  strncpy(region_text, buffer->content + start, region_length);
+  region_text[region_length] = '\0';
 
-    // Trim whitespace from the start and end
-    char *trimmed_text = region_text;
-    while (*trimmed_text && isspace((unsigned char)*trimmed_text)) {
-        trimmed_text++;
-    }
-    char *end_text = trimmed_text + strlen(trimmed_text) - 1;
-    while (end_text > trimmed_text && isspace((unsigned char)*end_text)) {
-        *end_text = '\0';
-        end_text--;
-    }
+  // Trim whitespace from the start and end
+  char *trimmed_text = region_text;
+  while (*trimmed_text && isspace((unsigned char)*trimmed_text)) {
+    trimmed_text++;
+  }
+  char *end_text = trimmed_text + strlen(trimmed_text) - 1;
+  while (end_text > trimmed_text && isspace((unsigned char)*end_text)) {
+    *end_text = '\0';
+    end_text--;
+  }
 
-    // If there's no content after trimming, return
-    if (!*trimmed_text) {
-        free(region_text);
-        message("No content to evaluate.");
-        return;
-    }
-
-    // Evaluate the region text directly
-    char *result = eval_scheme_string(trimmed_text);
-    if (result) {
-        message(result);
-        free(result);
-    } else {
-        message("Evaluation returned #f");
-    }
-
+  // If there's no content after trimming, return
+  if (!*trimmed_text) {
     free(region_text);
-}
+    message("No content to evaluate.");
+    return;
+  }
 
+  // Evaluate the region text directly
+  char *result = eval_scheme_string(trimmed_text);
+  if (result) {
+    message(result);
+    free(result);
+  } else {
+    message("Evaluation returned #f");
+  }
+
+  free(region_text);
+}

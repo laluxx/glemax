@@ -70,7 +70,6 @@ extern char   *buffer_shader;
 extern char   *scratch_buffer_content;
 extern bool   mark_mode;
 extern bool   region_fg_mode;
-extern bool   region_alpa_mode;
 extern bool   lerp_line;
 extern float  lerp_line_duration;
 extern bool   vertico_mode;
@@ -112,5 +111,10 @@ extern bool shiftPressed;
 extern bool ctrlPressed;
 extern bool altPressed;
 extern bool lerp_minimap_on_startup;
+
+
+
+extern bool region_alpha;
+extern size_t region_alpha_amount;
 
 #endif

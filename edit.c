@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include "globals.h"
 #include "syntax.h"
+#include "lsp.h"
 
 
 jmp_buf env; // NOTE Global jump buffer
@@ -1115,17 +1116,7 @@ void kill_sexp(Buffer *buffer) {
     buffer->point = start_point;
 }
 
-// TODO Use it in move-beginning-of-line
-bool bolp(Buffer *buffer) {
-    if (wm.activeWindow->parameters.truncateLines == false || global_visual_line_mode) {
-        if (buffer->point == 0) return true;
-        size_t visual_line_start = find_visual_line_start(buffer, wm.activeWindow, buffer->point);
-        return buffer->point == visual_line_start;
-    }
 
-    if (buffer->point == 0) return true;
-    return buffer->content[buffer->point - 1] == '\n';
-}
 
 /**
    Kill the rest of the current line; if no nonblanks there, kill thru newline.
@@ -1672,7 +1663,12 @@ void backward_word(Buffer *buffer, bool shift, int arg) {
     forward_word(buffer, -arg, shift);
 }
 
-// FIXME incorrect
+
+
+
+
+
+// FIXME incorrect fr fr
 void transpose_subr(Buffer *buffer, void (*mover)(Buffer *, bool, int), int arg) {
     if (buffer == NULL || mover == NULL) return;
 
@@ -2229,6 +2225,23 @@ int mkdirp(const char *path, mode_t mode) {
 }
 
 
+
+
+const char *getProjectRoot(const char *path) {
+    const char *lastSlash = strrchr(path, '/');
+    if (lastSlash) {
+        size_t len = lastSlash - path;
+        return strndup(path, len);
+    }
+    return NULL; // Guess it will never work on windows
+}
+
+const char* getFileExtension(const char* filename) {
+    const char* dot = strrchr(filename, '.');
+    if (!dot || dot == filename) return NULL;
+    return strdup(dot + 1);
+}
+
 const char *getFilename(const char *path) {
     const char *lastSlash = strrchr(path, '/');
     if (lastSlash) {
@@ -2385,6 +2398,12 @@ void find_file(BufferManager *bm, WindowManager *wm) {
         message("Failed to create buffer");
         fclose(file);
         return;
+    }
+
+    // NOTE Notify LSP client if this file is in a workspace
+    LspClient* client = get_client_for_current_buffer();
+    if (client && client->initialized) {
+        lsp_notify_did_open(fileBuffer);
     }
 
     recenter(wm->activeWindow, true);
@@ -2663,6 +2682,8 @@ void *mm(void *dest, const void *src, size_t n, Buffer *buffer, int index, int l
     // Update syntax highlighting for supported major modes
     updateSyntaxHighlighting(buffer, index, lengthChange);
 
+    buffer->modified = true;
+
     if (mmm) {
         if (buffer->point < buffer->region.mark) {
             buffer->region.mark += lengthChange;
@@ -2889,29 +2910,71 @@ void change_major_mode(BufferManager *bm) {
     switchToBuffer(bm, previousBuffer->name);
 }
 
+/**
+   Display buffer BUFFER-OR-NAME in the selected window.
+*/
 void switch_to_buffer(BufferManager *bm) {
-    Buffer *minibuffer     = getBuffer(bm, "minibuffer");
-    Buffer *prompt         = getBuffer(bm, "prompt");
-    Buffer *previousBuffer = getPreviousBuffer(bm);
-
-    // TODO IMPORTANT Recursive minibuffer
+    Buffer *minibuffer = getBuffer(bm, "minibuffer");
+    Buffer *prompt = getBuffer(bm, "prompt");
+    
+    // First activation - just setup minibuffer prompt
     if (minibuffer->size == 0) {
         minibuffer->size = 0;
         minibuffer->point = 0;
         minibuffer->content[0] = '\0';
         free(prompt->content);
-        prompt->content = strdup("Switch to buffer: "); // TODO Show the default, in the modeline maybe.
+        prompt->content = strdup("Switch to buffer: ");
         switchToBuffer(bm, "minibuffer");
         return;
     }
 
+    // Second activation - process the buffer switch
+    char *target_buffer_name = strdup(minibuffer->content);
+    if (!target_buffer_name) {
+        message("Failed to allocate memory for buffer name");
+        return;
+    }
+    
+    // Trim whitespace and validate input
+    if (strlen(target_buffer_name) == 0) {
+        message("No buffer name specified");
+        free(target_buffer_name);
+        return;
+    }
 
-    // Clear minibuffer after operation
+    // Check if buffer exists
+    Buffer *target_buffer = getBuffer(bm, target_buffer_name);
+    if (!target_buffer) {
+        // Create new buffer if it doesn't exist
+        newBuffer(bm, &wm, target_buffer_name, NULL, NULL);
+        target_buffer = getBuffer(bm, target_buffer_name);
+        if (!target_buffer) {
+            message("Failed to create buffer '%s'", target_buffer_name);
+            free(target_buffer_name);
+            return;
+        }
+    }
+
+    // Actually switch to the target buffer in the active window
+    if (wm.activeWindow) {
+        // Detach current buffer from window
+        removeDisplayWindowFromBuffer(wm.activeWindow->buffer, wm.activeWindow);
+        
+        // Attach new buffer to window
+        wm.activeWindow->buffer = target_buffer;
+        addDisplayWindowToBuffer(target_buffer, wm.activeWindow);
+    }
+
+    // Clear minibuffer state
     minibuffer->size = 0;
     minibuffer->point = 0;
     minibuffer->content[0] = '\0';
+    free(prompt->content);
     prompt->content = strdup("");
-    switchToBuffer(bm, previousBuffer->name);
+
+    // Update buffer manager state
+    switchToBuffer(bm, target_buffer_name);
+    free(target_buffer_name);
 }
 
 
@@ -2942,7 +3005,6 @@ void helpful_symbol(BufferManager *bm) {
     prompt->content = strdup("");
     switchToBuffer(bm, previousBuffer->name);
 }
-
 
 #include "commands.h"
 
@@ -3606,6 +3668,34 @@ bool looking_at(Buffer *b, const char *regex) {
     return false;
 }
 
+/**
+   Return the horizontal position of point.  Beginning of line is column 0.
+*/
+int current_column(Buffer *buffer) {
+    if (!buffer || !buffer->content) return -1;
+    
+    size_t line_start = buffer->point;
+    while (line_start > 0 && buffer->content[line_start-1] != '\n') {
+        line_start--;
+    }
+    
+    return buffer->point - line_start;
+}
+
+// TODO Use it in move-beginning-of-line
+bool bolp(Buffer *buffer) {
+    if (wm.activeWindow->parameters.truncateLines == false || global_visual_line_mode) {
+        if (buffer->point == 0) return true;
+        size_t visual_line_start = find_visual_line_start(buffer, wm.activeWindow, buffer->point);
+        return buffer->point == visual_line_start;
+    }
+
+    if (buffer->point == 0) return true;
+    return buffer->content[buffer->point - 1] == '\n';
+}
+
+
+
 void delete_blank_lines(Buffer *b, int arg) {
     // Save original point.
     size_t orig_point = b->point;
@@ -3833,10 +3923,13 @@ void save_buffer(BufferManager *bm, Buffer *buffer) {
     // Close the file after writing
     fclose(file);
 
+
     // Display a message indicating success using the full path
     char msg[512];
     snprintf(msg, sizeof(msg), "Wrote %s", fullPath);
     message(msg);
+    buffer->version++;
+    buffer->modified = false;
     updateDiffs(buffer);
 }
 
@@ -4257,7 +4350,7 @@ static SCM collect_symbol_info(void *data) {
                                                   "          (string<? (car a) (car b)))))"));
 }
 
-void insert_guile_symbols(Buffer *buffer, BufferManager *bm) {
+void insert_guile_symbols(Buffer *buffer) {
     SCM result = scm_c_catch(SCM_BOOL_T,
                              collect_symbol_info,
                              NULL,

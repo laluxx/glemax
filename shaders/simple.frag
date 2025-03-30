@@ -1,23 +1,12 @@
 #version 330 core
 out vec4 FragColor;
 
-in vec4 ourColor; // Change to vec4
+in vec4 ourColor; // Receives RGBA from vertex shader
 in vec2 TexCoord;
 
 void main()
 {
-    FragColor = ourColor; // Use the alpha value from ourColor
+    FragColor = ourColor; // Use original alpha
+//    FragColor = vec4(ourColor.rgb, 0.5); // Uncomment to force 50% alpha
 }
-
-/* #version 330 core */
-/* out vec4 FragColor; */
-
-/* in vec3 ourColor; */
-/* in vec2 TexCoord; // Receive UV coordinates */
-
-/* void main() */
-/* { */
-/*     // For now, just output the color. This shader doesn't yet use TexCoord. */
-/*     FragColor = vec4(ourColor, 1.0); */
-/* } */
 

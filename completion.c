@@ -30,6 +30,46 @@ void free_completion_engine(CompletionEngine *ce) {
     ce->currentIndex = -1;
 }
 
+
+void fetch_buffer_completions(const char *input, CompletionEngine *ce) {
+    // Clear previous completions
+    free_completion_engine(ce);
+
+    // Get buffer count from buffer manager
+    int buf_count = bm.count;
+    if (buf_count == 0) {
+        message("No buffers available");
+        return;
+    }
+
+    // Collect matching buffer names
+    size_t input_len = strlen(input);
+    for (int i = 0; i < buf_count; i++) {
+        Buffer *buf = bm.buffers[i];
+        if (buf && buf->name) {
+            // Match buffer names starting with input
+            if (strncmp(buf->name, input, input_len) == 0) {
+                ce->items = realloc(ce->items, sizeof(char *) * (ce->count + 1));
+                ce->items[ce->count] = strdup(buf->name);
+                if (!ce->items[ce->count]) {
+                    perror("Failed to allocate memory for buffer completion");
+                    continue;
+                }
+                ce->count++;
+            }
+        }
+    }
+
+    // Sort alphabetically
+    if (ce->count > 0) {
+        qsort(ce->items, ce->count, sizeof(char *),
+              (int (*)(const void *, const void *))strcmp);
+    }
+
+    ce->isActive = ce->count > 0;
+    ce->currentIndex = -1;
+}
+
 void fetch_path_completions(const char *input, CompletionEngine *ce) {
     DIR *dir;
     struct dirent *entry;
@@ -282,6 +322,7 @@ void fetch_symbol_completions(const char *input, CompletionEngine *ce) {
     message(msg);
 }
 
+// More like complete_minibuffer.
 void complete_at_point(const char *prompt, const char *input, CompletionEngine *ce, WindowManager *wm) {
     Buffer *buffer = wm->activeWindow->buffer;
     if (strcmp(prompt, "M-x ") == 0) {
@@ -292,9 +333,14 @@ void complete_at_point(const char *prompt, const char *input, CompletionEngine *
         fetch_word_completions(input, buffer, ce);
     } else if (strcmp(prompt, "Symbol: ") == 0) {
         fetch_symbol_completions(input, ce);
+    } else if (strcmp(prompt, "Switch to buffer: ") == 0) {
+        fetch_buffer_completions(input, ce);
     } else {
         fetch_path_completions(input, ce);
     }
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Inserted %d completions.", ce->count);
+    message(msg);
 }
 
 
@@ -387,6 +433,7 @@ void fetch_word_completions(const char *input, Buffer *target_buffer,
 }
 
 // TODO vertico
+// NOTE Unused
 void insert_completions(Buffer *buffer, CompletionEngine *ce) {
     if (!buffer || !ce || ce->count == 0) {
         message("No match");
@@ -409,7 +456,6 @@ void insert_completions(Buffer *buffer, CompletionEngine *ce) {
         }
     }
 
-    // Notify the user
     char msg[128];
     snprintf(msg, sizeof(msg), "Inserted %d completions.", ce->count);
     message(msg);

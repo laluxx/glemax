@@ -148,4 +148,3 @@ void drawClock(int hours, int minutes) {
     flush();
 }
 
-

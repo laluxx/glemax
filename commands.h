@@ -70,6 +70,7 @@ void executeBufferArgCommand(const char *name, Buffer *buffer, int arg);
 void executeBufferManagerCommand(const char *name, BufferManager *manager);
 void executeWindowManagerCommand(const char *name, WindowManager *manager);
 void executeWindowManagerParametersCommand(const char *name, WindowManager *manager, WindowParameters parameters);
+
 void executeBufferShiftArgCommand(const char *name, Buffer *buffer, bool shift, bool arg);
 void executeWindowShiftArgCommand(const char *name, Window *window, bool shift, bool arg);
 

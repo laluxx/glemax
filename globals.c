@@ -90,7 +90,9 @@ char   *scratch_buffer_content   = ";; This buffer is for text that is not saved
 bool   mark_mode                 = true;
 
 bool   region_fg_mode            = true;
-bool   region_alpa_mode          = true;  // TODO
+
+bool   region_alpha               = true;
+float  region_alpha_amount        = 0.7f;
 
 bool   lerp_line                 = false; // TODO It's garbage
 float  lerp_line_duration        = 1.0;
@@ -136,4 +138,6 @@ bool ctrlPressed  = false;
 bool altPressed   = false;
 
 bool lerp_minimap_on_startup   = false;
+
+
 

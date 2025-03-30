@@ -86,15 +86,14 @@ typedef struct {
 } BufferWindows;
 
 
-
-
+// TODO Undo system
 /* typedef struct { */
-    
-/* } Undo; */
-
-/* typedef struct { */
-    
+/*     char *array; */
+/*     size_t size; */
+/*     size_t capacity; */
 /* } Undos; */
+
+
 
 typedef struct {
     char *content;   // Text content
@@ -110,8 +109,14 @@ typedef struct {
     SyntaxArray syntaxArray; // Array of syntax highlighting ranges
     char *major_mode;
 
-    Font *font; // NOTE Each buffer has its fonts
+    Font *font; // NOTE Each buffer has its font
     char *fontPath;
+
+    // We could implment a Tick system
+    size_t version;  // Increments on save (monotonic)
+    bool modified;   // Track unsaved changes
+    /* Undos undos;  // TODO Dynamic array of strings */
+    
 
     Scopes scopes;
     Diffs diffs;
@@ -208,16 +213,6 @@ typedef struct {
     char *lastKilledBufferName; // Buffers are keys to windows
 } WindowManager;
 
-/* typedef struct { */
-/*     Window *head;         // Head of the rendered window list */
-/*     Window *inactive;     // Pool of unused windows */
-/*     Window *activeWindow;  */
-/*     int count;            // Number of windows */
-/*     int inactive_count;   // Number of inactive windows */
-/*     WindowMap *name_map; */
-/* } WindowManager; */
-
-
 extern WindowManager wm;
 extern BufferManager bm;
 
@@ -227,14 +222,11 @@ extern double mouseY;
 
 void initBuffer(Buffer *buffer, const char *name, const char *path);
 
-/* void newBuffer(BufferManager *manager, WindowManager *wm, */
-/*                const char *name, const char *path, char *fontPath, */
-/*                int sw, int sh); */
 
 void newBuffer(BufferManager *manager, WindowManager *wm,
                const char *name, const char *path, char *fontPath);
 
-
+Buffer* generate_new_buffer(const char* name, const char* path, const char* fontPath);
 
 void freeBuffer(Buffer *buffer);
 void initBufferManager(BufferManager *manager);

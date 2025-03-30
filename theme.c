@@ -12,11 +12,22 @@ Theme previousTheme;
 
 
 // TODO take the alpha as a parameter
+/* Color hexToColor(const char *hex) { */
+/*     int r, g, b; */
+/*     sscanf(hex, "#%02x%02x%02x", &r, &g, &b); */
+/*     return (Color){r / 255.0f, g / 255.0f, b / 255.0f, 1.0f}; */
+/* } */
+
 Color hexToColor(const char *hex) {
-    int r, g, b;
-    sscanf(hex, "#%02x%02x%02x", &r, &g, &b);
-    return (Color){r / 255.0f, g / 255.0f, b / 255.0f, 1.0f};
+    int r, g, b, a = 255; // NOTE Default alpha to 255)
+    if (strlen(hex) == 9) { //#RRGGBBAA
+        sscanf(hex, "#%02x%02x%02x%02x", &r, &g, &b, &a);
+    } else { //#RRGGBB
+        sscanf(hex, "#%02x%02x%02x", &r, &g, &b);
+    }
+    return (Color){r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f};
 }
+
 
 bool colorsEqual(Color a, Color b) {
     return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;

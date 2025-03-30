@@ -95,6 +95,9 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
     buffer->animatedLineNumber = -1;
     buffer->animationStartTime = 0.0f;
 
+    buffer->modified = false;
+    buffer->version = 0;
+
 
     // Initialize BufferWindows structure
     buffer->displayWindows.windows = NULL;
@@ -136,6 +139,69 @@ void initBuffer(Buffer *buffer, const char *name, const char *path) {
 
     buffer->diffs = (Diffs){NULL, 0, 0};
 }
+
+
+/**
+ * Create and return a buffer with a name based on NAME.
+ * @param name The base name for the buffer (will be uniquified if needed)
+ * @param path The file path associated with the buffer (can be NULL)
+ * @param fontPath The font path for the buffer
+ * @return The newly created buffer, or NULL on failure
+ */
+Buffer* generate_new_buffer(const char* name, const char* path, const char* fontPath) {
+    // Generate a unique buffer name if needed
+    char* unique_name = strdup(name);
+    int counter = 1;
+    
+    while (getBuffer(&bm, unique_name) != NULL) {
+        free(unique_name);
+        unique_name = malloc(strlen(name) + 10); // Enough space for name<counter>
+        sprintf(unique_name, "%s<%d>", name, counter++);
+    }
+    
+    // Create and initialize the buffer
+    Buffer* buffer = malloc(sizeof(Buffer));
+    if (!buffer) {
+        free(unique_name);
+        return NULL;
+    }
+    
+    initBuffer(buffer, unique_name, path ? path : "");
+    free(unique_name);
+    
+    inferMajorMode(buffer);
+    initScale(&buffer->scale);
+    buffer->fontPath = strdup(fontPath);
+    
+    // Initialize display windows array
+    buffer->displayWindows.windows = NULL;
+    buffer->displayWindows.windowCount = 0;
+    buffer->displayWindows.windowCapacity = 0;
+    
+    // Add to buffer manager without making it active
+    if (bm.count >= bm.capacity) {
+        bm.capacity = bm.capacity ? bm.capacity * 2 : 10;
+        Buffer** new_buffers = realloc(bm.buffers, sizeof(Buffer*) * bm.capacity);
+        if (!new_buffers) {
+            freeBuffer(buffer);
+            free(buffer);
+            return NULL;
+        }
+        bm.buffers = new_buffers;
+    }
+    
+    bm.buffers[bm.count++] = buffer;
+    
+    // Load font
+    if (!globalFontCache[buffer->scale.index]) {
+        globalFontCache[buffer->scale.index] = 
+            loadFont(buffer->fontPath, fontsize, "name", tab);
+    }
+    buffer->font = globalFontCache[buffer->scale.index];
+    
+    return buffer;
+}
+
 
 void newBuffer(BufferManager *bm, WindowManager *wm, const char *name,
                const char *path, char *fontPath) {
@@ -512,6 +578,7 @@ void setMajorMode(Buffer *buffer, char *mode) {
     // TODO Clear SyntaxArray or assume each major mode does it
 }
 
+// Is an hashmap for this an overkill ?
 void inferMajorMode(Buffer *buffer) {
     const char *extension = strrchr(buffer->name, '.');
     if (extension) {
@@ -611,6 +678,12 @@ void inferMajorMode(Buffer *buffer) {
             free(buffer->major_mode);
             setMajorMode(buffer, "json");
         }
+
+        if (strcmp(extension, ".d") == 0) {
+            free(buffer->major_mode);
+            setMajorMode(buffer, "d");
+        }
+
         if (   strcmp(extension, ".regex") == 0
             || strcmp(extension, ".rgx"  ) == 0) {
             free(buffer->major_mode);
@@ -647,6 +720,8 @@ void initSegments(Segments *segments) {
     segments->segment = NULL;
     segments->count = 0;
     addSegment(segments, "logo",          "NaL");
+    addSegment(segments, "modified",      "NaM");
+    addSegment(segments, "version",       "NaV");
     addSegment(segments, "changed",       "Nothing");
     addSegment(segments, "readonly",      "NaR");
     addSegment(segments, "noOtherWindow", "NoW");
@@ -659,8 +734,11 @@ void initSegments(Segments *segments) {
     addSegment(segments, "region-chars",  "NaRC");
     addSegment(segments, "region-lines",  "NaRL");
     addSegment(segments, "isearch",       "[NaC]");
+    // TODO Right allign segments from
+    // here to the right of the modeline
     addSegment(segments, "mode",          "Maybe");
     addSegment(segments, "scale",         "NaN");
+    addSegment(segments, "completions",   "NaC");
     addSegment(segments, "branch",        "NaB");
 }
 
@@ -688,10 +766,20 @@ void updateSegments(Modeline *modeline, Buffer *buffer) {
             free(segment->content);
             segment->content = strdup(buffer->url);
         }
+        else if (strcmp(segment->name, "completions") == 0) {
+            free(segment->content);
+            if (ce.count != 0) {
+                char content[128];
+                snprintf(content, sizeof(content), "%d", ce.count);
+                segment->content = strdup(content);
+            } else {
+                segment->content = strdup("");
+            }
+        }
         else if (strcmp(segment->name, "lsp") == 0) {
             free(segment->content);
             char *bufferDir = getBufferDirectory(buffer->path);
-            if (strcmp(bufferDir, "~/xos/projects/c/glemax") == 0 && lspp(lspClient)) {
+            if (lspp()) {
                 segment->content = strdup("LSP");
             } else {
                 segment->content = strdup("");
@@ -702,6 +790,26 @@ void updateSegments(Modeline *modeline, Buffer *buffer) {
             free(segment->content);
             if (strcmp(buffer->name, buffer->path) != 0) {
                 segment->content = strdup(buffer->path);
+            } else {
+                segment->content = strdup("");
+            }
+        }
+
+        else if (strcmp(segment->name, "modified") == 0) {
+            free(segment->content);
+            if (buffer->modified) {
+                segment->content = strdup("M");
+            } else {
+                segment->content = strdup("");
+            }
+        }
+        
+        else if (strcmp(segment->name, "version") == 0) {
+            free(segment->content);
+            char version_str[32]; // size_t
+            snprintf(version_str, sizeof(version_str), "%zu", buffer->version);
+            if (buffer->version != 0) {
+                segment->content = strdup(version_str);
             } else {
                 segment->content = strdup("");
             }
@@ -793,6 +901,8 @@ void updateSegments(Modeline *modeline, Buffer *buffer) {
                 segment->content = strdup("C");
             } else if (strcmp(buffer->major_mode, "html") == 0) {
                 segment->content = strdup("H");
+            } else if (strcmp(buffer->major_mode, "d") == 0) {
+                segment->content = strdup("D");
             } else if (strcmp(buffer->major_mode, "scheme") == 0) {
                 segment->content = strdup("S");
             } else if (strcmp(buffer->major_mode, "glsl") == 0) {
@@ -1013,5 +1123,6 @@ bool major_mode_supported(Buffer *buffer) {
         || strcmp(buffer->major_mode, "go"  ) == 0
         || strcmp(buffer->major_mode, "json"  ) == 0
         || strcmp(buffer->major_mode, "regex"  ) == 0
+        || strcmp(buffer->major_mode, "d"  ) == 0
         || strcmp(buffer->major_mode, "scheme") == 0) { return true; } else { return false; }
 }

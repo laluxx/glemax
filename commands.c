@@ -431,17 +431,33 @@ static void initCommand(Command *cmd, const char *name, const char *description,
 void gemini() {
     switch_or_split_window(&wm, "*gemini*", &wm.activeWindow->parameters);
     wm.activeWindow->parameters.truncateLines = false; // Wrap lines as specified.
+    
     if (show_minimap_with_gemini) {
         Buffer *pb = getPreviousBuffer(&bm);
-        if (!pb->displayWindows.windows[0]->parameters.minimap) { // HACK This is so bad.
-            minimap_mode(&wm);
+        
+        // Check if previous buffer exists and has windows
+        if (pb && pb->displayWindows.windowCount > 0) {
+            // Iterate through all windows for this buffer to check minimap status
+            bool minimap_needed = true;
+            for (int i = 0; i < pb->displayWindows.windowCount; i++) {
+                if (pb->displayWindows.windows[i]->parameters.minimap) {
+                    minimap_needed = false;
+                    break;
+                }
+            }
+            
+            if (minimap_needed) {
+                minimap_mode(&wm);
+            }
         }
     }
+    
     GeminiOutput go = gemini_fetch("gemini://geminiprotocol.net/docs/", getBuffer(&bm, "*gemini*"));
-    setBufferContent(getBuffer(&bm, "*gemini*"), go.content, false); /*  */
+    setBufferContent(getBuffer(&bm, "*gemini*"), go.content, false);
     setMajorMode(getBuffer(&bm, "*gemini*"), "gemini");
     wm.activeWindow->buffer->readOnly = true;
 }
+
 /**
    View the log of recent echo-area messages: the '*Messages*' buffer.
 */
@@ -450,12 +466,23 @@ void view_echo_area_messages() {
     switch_or_split_window(&wm, "messages", false);
 }
 
+
+/**
+   Toggle region-alpha minor mode.
+ */
+void region_alpha_mode() {
+    region_alpha = !region_alpha;
+}
+
+
 void initCommands() {
     commands.commands = (Command *)malloc(INITIAL_CAPACITY * sizeof(Command));
     commands.size = 0;
     commands.capacity = INITIAL_CAPACITY;
  
     // Void
+    addVoidCommand(         &commands, "lsp-start",                          "Start LSP server for PROJECT's buffers under MANAGED-MAJOR-MODES.",               start_lsp);
+    addVoidCommand(         &commands, "lsp-stop",                           "Stop LSP server for PROJECT.",                                                    stop_lsp);
     addVoidCommand(         &commands, "next-theme",                         "Switch to the next theme.",                                                       switchToNextTheme);
     addVoidCommand(         &commands, "previous-theme",                     "Switch to the previous theme.",                                                   switchToPreviousTheme);
     addVoidCommand(         &commands, "gemini",                             "Gemini.",                                                                         gemini);
@@ -472,8 +499,12 @@ void initCommands() {
     addVoidCommand(         &commands, "swap-windows-parameters-mode",       "Toggle swap-windows-parameters minor mode if true 'swap-windows' will also swap the parameters of the 2 windows.", swap_window_parameters_mode);
     addVoidCommand(         &commands, "line-move-visual-mode",              "Whatever",                                                                        line_move_visual_mode);
     addVoidCommand(         &commands, "move-mark-memory-mode",              "Toggle move-mark-memory-mode minor mode if true Move Mark the the mark memory if buffer->point < buffer->region.mark.", move_mark_memory_mode);
-    addVoidCommand(         &commands, "start-lps",                          "Start LSP server for PROJECT's buffers under MANAGED-MAJOR-MODES.",               start_lsp);
-    addVoidCommand(         &commands, "stop-lps",                           "Stop LSP server for PROJECT.",                                                    stop_lsp);
+    addVoidCommand(         &commands, "toggle-vsync",                       "Toggle vsync",                                                                    toggle_vsync);
+    addVoidCommand(         &commands, "reload-shaders",                     "Recompile and link all known shader programs",                                    reloadShaders);
+    addVoidCommand(         &commands, "region-alpha-mode",                  "Toggle region-alpha minor mode.",                                                 region_alpha_mode);
+    addVoidCommand(         &commands, "eval-buffer",                        "Execute the accessible portion of current buffer as Guile scheme code.",          eval_buffer);
+    addVoidCommand(         &commands, "eval-region",                        "Execute the region as Guile scheme code.",                                        eval_region);
+    addVoidCommand(         &commands, "load-user-init-file",                "Load a user init-file, used at startup.",                                         load_user_init_file);
 
     // Buffer
     addBufferCommand(       &commands, "fundamental-mode",                   "Major mode not specialized for anything in particular.",                          fundamental_mode);
@@ -521,6 +552,7 @@ void initCommands() {
     addBufferCommand(       &commands, "kill-sexp",                          "Kill the sexp (balanced expression) following point.",                            kill_sexp);
     addBufferCommand(       &commands, "backward-kill-word",                 "Kill characters backward until encountering the beginning of a word.",            backward_kill_word);
     addBufferCommand(       &commands, "goto-definition",                    "Find definitions of the symbol under point.",                                     goto_definition);
+    addBufferCommand(       &commands, "insert-guile-symbols",               "Find all Scheme symbols and insert them in the active buffer.",                   insert_guile_symbols);
 
     // BM
     addBufferManagerCommand(&commands, "keep-lines",                         "Delete all lines except those containing matches for REGEXP.",                    keep_lines);

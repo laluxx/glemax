@@ -28,6 +28,7 @@
 #include "clock.h"
 #include <string.h>
 #include <unistd.h>
+#include <window.h>
 #include "gemini.h"
 #include "symbols.h"
 #include "debugger.h"
@@ -179,6 +180,9 @@ static void inner_main(void *closure, int argc, char **argv) {
     registerCursorPosCallback(cursorPosCallback);
     registerMouseButtonCallback(mouseButtonCallback);
 
+    setSwapInterval(true); // TRUE if vsync is on
+    enableAlphaBlending();
+    
     font = loadFont(fontPath, fontsize, "fontname", tab);
     commentfont = loadFont(commentfontPath, commentfontsize, "commentfontname", tab);
     initThemes();
@@ -187,7 +191,7 @@ static void inner_main(void *closure, int argc, char **argv) {
     initKillRing(&kr, kill_ring_max);
     initBufferManager(&bm);
     newBuffer(&bm, &wm, "messages", "~/", fontPath);
-    newBuffer(&bm, &wm, "*clangd::stderr*", "~/", fontPath);
+    /* newBuffer(&bm, &wm, "*clangd::stderr*", "~/", fontPath); */
 
 
     initCommands();
@@ -222,10 +226,12 @@ static void inner_main(void *closure, int argc, char **argv) {
     updateSegments(&wm.activeWindow->modeline, wm.activeWindow->buffer);
     /* updateWindows(&wm, font, sw, sh); // NOTE We will do it later*/
     
-    load_init_file();
+    load_user_init_file();
 
-    lspClient = initLsp("~/xos/projects/c/glemax", "c", &lspConfig);
-    initialize_lsp_session(lspClient);
+    /* lspClient = initLsp("~/xos/projects/c/glemax", "c", &lspConfig); */
+    /* initialize_lsp_session(lspClient); */
+    lspClients = initLspClients(LSP_CLIENTS_INITIAL_CAPACITY);
+
     while (!windowShouldClose()) {
         sw = getScreenWidth();  // TODO Update in
         sh = getScreenHeight(); // the resize callback
@@ -311,7 +317,13 @@ static void inner_main(void *closure, int argc, char **argv) {
             if (win == wm.activeWindow) {
                 highlightHexColors(&wm, buffer->font, buffer, rainbow_mode);
                 useShader("simple");
-                drawRegion(&wm, buffer->font, CT.region); // TODO ALPHA
+                /* if (region_alpha) { */
+                /*     Color rc = CT.region; */
+                /*     rc.a = region_alpha_amount; */
+                /*     drawRegion(&wm, buffer->font, rc); */
+                /* } else { */
+                /*     drawRegion(&wm, buffer->font, CT.region); */
+                /* } */
                 highlightMatchingBrackets(&wm, buffer->font, CT.show_paren_match);
                 if (isearch.searching)
                     highlightAllOccurrences(&wm, minibuffer->content, font,
@@ -343,8 +355,21 @@ static void inner_main(void *closure, int argc, char **argv) {
                     drawBuffer(win, buffer, cursorVisible, true);
                 }
 
+
+                useShader("simple");
+
+                if (region_alpha) {
+                    Color rc = CT.region;
+                    rc.a = 0.5; // 1H wasted here
+                    drawRegion(&wm, buffer->font, rc);
+                } else {
+                    drawRegion(&wm, buffer->font, CT.region);
+                }
+
+
                 if (win->parameters.scrollBar) drawScrollbar(win, &CT.error, scroll_bar_thickness);
                 
+                flush();
 
             } else {
                 if (win->buffer != wm.activeWindow->buffer) {
@@ -636,6 +661,7 @@ void keyCallback(int key, int action, int mods) {
 
                 message("Minibuffer major mode is: %s", minibuffer->major_mode);
 
+                toggle_vsync();
                 /* insertSyntax(&buffer->syntaxArray, */
                 /*              (Syntax){buffer->region.start, */
                 /*                       buffer->region.end, */
@@ -784,6 +810,8 @@ void keyCallback(int key, int action, int mods) {
                     previousBuffer(&bm); // Go out of the minibuffer.
                     cleanBuffer(&bm, "message");
                 }
+
+                ce.count = 0;
                 
             } else if (altPressed) {
                 goto_line(&bm);
@@ -1074,7 +1102,7 @@ void keyCallback(int key, int action, int mods) {
                 other_window(&wm, 1);
             } else if (ctrlPressed) {
                 /* enter(buffer, &bm, &wm, minibuffer, prompt, indentation, electric_indent_mode, sw, sh, &nh, arg); */
-                eval_last_sexp(&bm);
+                eval_last_sexp();
             }
             break;
         case KEY_H:
@@ -1270,6 +1298,7 @@ void textCallback(unsigned int codepoint) {
 
                     // Calculate actual length change from buffer size difference
                     int lengthChange = buffer->size - oldSize;
+                    buffer->modified = true;
                     if (mmm) {
                         if  (buffer->point < buffer->region.mark) {
                             buffer->region.mark += lengthChange;
@@ -1476,7 +1505,7 @@ void drawRegion(WindowManager *wm, Font *font, Color regionColor) {
                     drawRectangle(position, size, regionColor);
                 }
             }
-            currentLineStart = i + 1;  // Move to the start of the next line
+            currentLineStart = i + 1;             // Move to the start of the next line
             y -= (font->ascent + font->descent);  // Move y to the next line
         }
     }
@@ -2648,5 +2677,4 @@ void mouseButtonCallback(int button, int action, int mods) {
         }
     }
 }
-
 

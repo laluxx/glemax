@@ -12,7 +12,8 @@
 // Core functions
 void init_scheme_environment(void);
 void init_glemax_bindings(void);
-void load_init_file(void);
+/* void load_init_file(void); */
+void load_user_init_file(void);
 
 // Evaluation functions
 SCM eval_in_scheme(const char *expr);
@@ -43,9 +44,9 @@ SCM scm_previous_theme(void);
 // Version function
 SCM scm_glemax_version(void);
 
-void eval_last_sexp(BufferManager *bm);
-void eval_region(BufferManager *bm);
-
+void eval_last_sexp();
+void eval_region();
+void eval_buffer();
 
 SCM scm_interactive(void);
 
