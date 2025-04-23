@@ -4,7 +4,7 @@
 #+OPTIONS: toc:2
 
 * TODO Auto generate this file
-
+i could be writing code instead of this nonsense
 
 * 5.5 Defining New Foreign Object Types
 

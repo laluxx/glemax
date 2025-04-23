@@ -1,0 +1,21 @@
+(
+    (Find
+        "~/xos/projects/c/glemax/"
+        ""
+    )
+    (M-x "gay-mode")
+    (Symbol:
+        "symbol"
+        "wasa"
+        "ciao"
+        "lero"
+        "delete"
+        "buffer"
+    )
+    (Shell "git diff --stat")
+    (Switch "Monocraft")
+    (I-search: "")
+    (Insert "ls")
+    (Append "ls")
+    (Eval "/55/22")
+)

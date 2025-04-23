@@ -26,17 +26,17 @@
 #include <stdio.h>
 #include <string.h>
 #include "syntax.h"
+#include "globals.h"
 #include "buffer.h"
 #include "theme.h"
 
-NodeColorMap    *nodeColorMap = {0}; // NOTE Global node->color mapping (for all grammars ?)
+// for all grammars ? we need an array of node->color maps
+NodeColorMap    *nodeColorMap = {0}; // NOTE Global node->color mapping
 LanguageParsers  lps          = {0}; // NOTE Global ring of LanguageParser(s)
 
 // TODO language injection for org-mode, md-mode and gemini-mode
 static bool printTSNodes = false;
 
-
-// Helper function to add a node type to color mapping
 void addNodeColorMapping(NodeColorMap **map, const char *nodeType, Color *color) {
     NodeColorMap *entry = malloc(sizeof(NodeColorMap));
     entry->nodeType = nodeType;
@@ -45,54 +45,112 @@ void addNodeColorMapping(NodeColorMap **map, const char *nodeType, Color *color)
 }
 
 void initCNodeColorMappings(NodeColorMap **map) {
-    addNodeColorMapping(map, "return",   &CT.keyword);
-    addNodeColorMapping(map, "if",       &CT.keyword);
-    addNodeColorMapping(map, "while",    &CT.keyword);
-    addNodeColorMapping(map, "do",       &CT.keyword);
-    addNodeColorMapping(map, "switch",   &CT.keyword);
-    addNodeColorMapping(map, "break",    &CT.keyword);
-    addNodeColorMapping(map, "continue", &CT.keyword);
-    addNodeColorMapping(map, "goto",     &CT.keyword);
-    addNodeColorMapping(map, "typedef",  &CT.keyword);
-    addNodeColorMapping(map, "extern",   &CT.keyword);
-    addNodeColorMapping(map, "else",     &CT.keyword);
-    addNodeColorMapping(map, "struct",   &CT.keyword);
-    addNodeColorMapping(map, "for",      &CT.keyword);
-    addNodeColorMapping(map, "const",    &CT.keyword);
-    addNodeColorMapping(map, "static",   &CT.keyword);
+    // 1. Keywords
+    const char *keywords[] = {
+        "return", "if", "else", "while", "do", "for", "switch", "case", "default",
+        "break", "continue", "goto", "typedef", "extern", "static", "const", "volatile",
+        "struct", "union", "enum", "sizeof", "_Alignas", "_Alignof", "_Atomic", "_Bool",
+        "_Complex", "_Generic", "_Imaginary", "_Noreturn", "_Static_assert", "_Thread_local",
+        "__attribute__", "asm", "auto", "inline", "register", "restrict", "signed", "unsigned",
+        "void"
+    };
+    for (size_t i = 0; i < sizeof(keywords)/sizeof(keywords[0]); i++) {
+        addNodeColorMapping(map, keywords[i], &CT.keyword);
+    }
+
+
+    // Field identifiers in struct declarations and accesses
+    addNodeColorMapping(map, "field_identifier", &CT.text);
+
+    addNodeColorMapping(map, "field_declaration", &CT.error);
+    addNodeColorMapping(map, "field_expression", &CT.error);
+    // Member access operators
+    addNodeColorMapping(map, "->", &CT.comment);
+    addNodeColorMapping(map, ".", &CT.operator);
+
     addNodeColorMapping(map, "NULL",  &CT.null);
-    addNodeColorMapping(map, "true",  &CT.null);
-    addNodeColorMapping(map, "false", &CT.null);
-    addNodeColorMapping(map, "!",     &CT.negation);
-    addNodeColorMapping(map, "type_identifier",      &CT.type);
-    addNodeColorMapping(map, "function_definition",  &CT.type);
+    addNodeColorMapping(map, "false", &CT.error);
+    addNodeColorMapping(map, "true",  &CT.success);
+
+    // Array accesses
+    addNodeColorMapping(map, "subscript_expression", &CT.error);
+
+    // Pointer dereferences
+    addNodeColorMapping(map, "pointer_expression", &CT.error);
+
+    // Common variable patterns
+    addNodeColorMapping(map, "init_declarator", &CT.error);
+    addNodeColorMapping(map, "assignment_expression", &CT.error);
+
+
+    // 2. Types
+    addNodeColorMapping(map, "primitive_type", &CT.type);
+    addNodeColorMapping(map, "type_identifier", &CT.type);
     addNodeColorMapping(map, "sized_type_specifier", &CT.type);
-    addNodeColorMapping(map, "primitive_type",       &CT.type);
-    addNodeColorMapping(map, "string_literal",    &CT.string);
-    addNodeColorMapping(map, "char_literal",      &CT.string);
-    addNodeColorMapping(map, "string_content",    &CT.string);
-    addNodeColorMapping(map, "system_lib_string", &CT.string);
-    addNodeColorMapping(map, "\"",                &CT.string);
+    addNodeColorMapping(map, "type_descriptor", &CT.type);
+    
+    const char *primitive_types[] = {
+        "int", "char", "float", "double", "short", "long", 
+        "size_t", "ssize_t", "int8_t", "uint8_t", "int16_t", "uint16_t",
+        "int32_t", "uint32_t", "int64_t", "uint64_t"
+    };
+    for (size_t i = 0; i < sizeof(primitive_types)/sizeof(primitive_types[0]); i++) {
+        addNodeColorMapping(map, primitive_types[i], &CT.type);
+    }
+
+    // 3. Functions
+    addNodeColorMapping(map, "function_definition", &CT.function);
+    addNodeColorMapping(map, "function_declarator", &CT.function);
+    addNodeColorMapping(map, "declaration", &CT.function);
+
+    // 4. Literals
     addNodeColorMapping(map, "number_literal", &CT.number);
-    addNodeColorMapping(map, "function_definition",  &CT.function);
-    addNodeColorMapping(map, "function_declaration", &CT.function);
-    addNodeColorMapping(map, "preproc_directive", &CT.preprocessor);
-    addNodeColorMapping(map, "preproc_arg",       &CT.preprocessor);
-    addNodeColorMapping(map, "preproc_def",       &CT.preprocessor);
-    addNodeColorMapping(map, "#define",           &CT.preprocessor);
-    addNodeColorMapping(map, "#include",          &CT.preprocessor);
-    addNodeColorMapping(map, "assignment_expression", &CT.cursor);
-    addNodeColorMapping(map, "arithmetic_expression", &CT.cursor);
-    addNodeColorMapping(map, "unary_expression",      &CT.cursor);
-    addNodeColorMapping(map, "update_expression",     &CT.cursor);
-    // FIXME This doesn't work and should be checked at runtime
-    addNodeColorMapping(map, "identifier:function_declarator",   &CT.function);
-    addNodeColorMapping(map, "identifier:function_definition",   &CT.function);
-    addNodeColorMapping(map, "identifier:declaration",           &CT.variable);
-    addNodeColorMapping(map, "identifier:assignment_expression", &CT.variable);
-    addNodeColorMapping(map, "identifier:init_declarator",       &CT.variable);
-    addNodeColorMapping(map, "identifier",                       &CT.text);
+    addNodeColorMapping(map, "char_literal", &CT.string);
+    addNodeColorMapping(map, "string_literal", &CT.string);
+    addNodeColorMapping(map, "string_content", &CT.string);
+    addNodeColorMapping(map, "system_lib_string", &CT.string);
+    addNodeColorMapping(map, "escape_sequence", &CT.string);
+    addNodeColorMapping(map, "concatenated_string", &CT.string);
+    addNodeColorMapping(map, "\"", &CT.string);
+    addNodeColorMapping(map, "'", &CT.string);
+
+    // 5. Preprocessor
+    const char *preprocessor[] = {
+        "preproc_directive", "preproc_arg", "preproc_def", "preproc_function_def",
+        "preproc_call", "#if", "#ifdef", "#ifndef", "#elif", "#else", "#endif", 
+        "#define", "#include", "#pragma", "#error", "#warning", "#line", "#undef",
+        "defined"
+    };
+    for (size_t i = 0; i < sizeof(preprocessor)/sizeof(preprocessor[0]); i++) {
+        addNodeColorMapping(map, preprocessor[i], &CT.preprocessor);
+    }
+
+    // 6. Comments
     addNodeColorMapping(map, "comment", &CT.comment);
+    addNodeColorMapping(map, "block_comment", &CT.comment);
+    addNodeColorMapping(map, "line_comment", &CT.comment);
+
+    // 7. Punctuation
+    addNodeColorMapping(map, ";", &CT.comment);
+    if (!rainbow_delimiters) {
+        addNodeColorMapping(map, "(", &CT.text); // Parentheses
+        addNodeColorMapping(map, ")", &CT.text);
+        addNodeColorMapping(map, "{", &CT.text); // Braces
+        addNodeColorMapping(map, "}", &CT.text);
+        addNodeColorMapping(map, "[", &CT.text); // Brackets
+        addNodeColorMapping(map, "]", &CT.text);
+    }
+    addNodeColorMapping(map, ",", &CT.comment);
+
+    // 8. Operators
+    const char *operators[] = {
+        "!", "=", "+", "-", "*", "/", "%", "==", "!=", ">", "<", ">=", "<=",
+        "&&", "||", "&", "|", "^", "~", "<<", ">>", "?", ":", ".", "->", "++",
+        "--", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", "&=", "|=", "^="
+    };
+    for (size_t i = 0; i < sizeof(operators)/sizeof(operators[0]); i++) {
+        addNodeColorMapping(map, operators[i], &CT.operator);
+    }
 }
 
 void initSchemeNodeColorMappings(NodeColorMap **map) {
@@ -2697,18 +2755,299 @@ bool isHexColor(const char *text) {
     return false;
 }
 
-Color *getNodeColor(TSNode node, const char *major_mode) {
-    // NOTE At this point we assume that
-    // the major mode is already supported
-
-    // Look up the node color based on the node type
-    const char *nodeType = ts_node_type(node);
-    NodeColorMap *entry;
-    HASH_FIND_STR(lps.items[lps.count - 1].nodeColorMap, nodeType, entry);
-
-    // Return the color if found, otherwise return the default text color
-    return entry ? entry->color : &CT.warning;
+Color *getRainbowDelimiterColor(TSNode node) {
+    int32_t depth = 0;
+    TSNode current = node;
+    
+    // Count nesting depth
+    while (!ts_node_is_null(current)) {
+        const char *currentType = ts_node_type(current);
+        
+        // Count opening delimiters at same level
+        if (strcmp(currentType, "(") == 0 || strcmp(currentType, "{") == 0 ||
+            strcmp(currentType, "[") == 0) {
+            depth++;
+        }
+        
+        // Move to previous sibling if possible
+        TSNode prev = ts_node_prev_sibling(current);
+        while (!ts_node_is_null(prev)) {
+            const char *prevType = ts_node_type(prev);
+            if (strcmp(prevType, "(") == 0 || strcmp(prevType, "{") == 0 ||
+                strcmp(prevType, "[") == 0) {
+                depth++;
+            }
+            prev = ts_node_prev_sibling(prev);
+        }
+        
+        current = ts_node_parent(current);
+    }
+    
+    // Use theme's rainbow delimiter colors based on depth
+    switch (depth % 6) {
+        case 0: return &CT.rainbow_delimiters_base_face;
+        case 1: return &CT.rainbow_delimiters_depth_1_face;
+        case 2: return &CT.rainbow_delimiters_depth_2_face;
+        case 3: return &CT.rainbow_delimiters_depth_3_face;
+        case 4: return &CT.rainbow_delimiters_depth_4_face;
+        case 5: return &CT.rainbow_delimiters_depth_5_face;
+        default: return &CT.rainbow_delimiters_depth_6_face;
+    }
 }
+
+// Helper function to determine identifier color based on context
+Color *getIdentifierColor(TSNode node) {
+    TSNode parent = ts_node_parent(node);
+    if (ts_node_is_null(parent)) return &CT.variable;
+    
+    const char *parentType = ts_node_type(parent);
+    
+    // Function calls
+    if (strcmp(parentType, "call_expression") == 0) {
+        if (ts_node_start_byte(ts_node_child(parent, 0)) == ts_node_start_byte(node)) {
+            return &CT.function;
+        }
+        return &CT.variable;
+    }
+    
+    // Function declarations
+    if (strcmp(parentType, "function_declarator") == 0 ||
+        strcmp(parentType, "function_definition") == 0) {
+        return &CT.function;
+    }
+    
+    // Struct/union fields
+    if (strcmp(parentType, "field_identifier") == 0 ||
+        strcmp(parentType, "field_expression") == 0) {
+        if (strcmp(parentType, "field_expression") == 0) {
+            TSNode op = ts_node_child(parent, 1);
+            if (!ts_node_is_null(op) && ts_node_start_byte(node) > ts_node_start_byte(op)) {
+                return &CT.variable;
+            }
+        }
+        return &CT.variable;
+    }
+    
+    return &CT.variable;
+}
+
+Color *getNodeColor(TSNode node, const char *major_mode) {
+    // Find the correct LanguageParser for this major_mode
+    LanguageParser *langParser = NULL;
+    for (size_t i = 0; i < lps.count; i++) {
+        if (strcmp(lps.items[i].language, major_mode) == 0) {
+            langParser = &lps.items[i];
+            break;
+        }
+    }
+    
+    // Fall back to default text color if no language-specific parser/mapping
+    if (!langParser || !langParser->nodeColorMap) {
+        return &CT.text;
+    }
+
+    const char *nodeType = ts_node_type(node);
+    
+    // Check for direct mapping first (unless it's a delimiter in rainbow mode)
+    NodeColorMap *entry;
+    HASH_FIND_STR(langParser->nodeColorMap, nodeType, entry);
+    if (entry) {
+        bool isDelimiter = (strcmp(nodeType, "(") == 0 || strcmp(nodeType, ")") == 0 ||
+                          strcmp(nodeType, "{") == 0 || strcmp(nodeType, "}") == 0 ||
+                          strcmp(nodeType, "[") == 0 || strcmp(nodeType, "]") == 0);
+        
+        if (!(rainbow_delimiters && isDelimiter)) {
+            return entry->color;
+        }
+    }
+
+    if (strcmp(nodeType, "string_literal") == 0 ||
+        strcmp(nodeType, "char_literal") == 0 ||
+        strcmp(nodeType, "system_lib_string") == 0 ||
+        strcmp(nodeType, "\"") == 0 ||
+        strcmp(nodeType, "'") == 0) {
+        return &CT.string;
+    }
+
+    if (strcmp(nodeType, "number_literal") == 0) {
+        return &CT.number;
+    }
+
+    // Rainbow delimiters handling
+    if (rainbow_delimiters) {
+        if (strcmp(nodeType, "(") == 0 || strcmp(nodeType, ")") == 0 ||
+            strcmp(nodeType, "{") == 0 || strcmp(nodeType, "}") == 0 ||
+            strcmp(nodeType, "[") == 0 || strcmp(nodeType, "]") == 0) {
+                
+            return getRainbowDelimiterColor(node);
+        }
+    }
+
+    // Handle identifiers with context-sensitive coloring
+    if (strcmp(nodeType, "identifier") == 0) {
+        return getIdentifierColor(node);
+    }
+
+    // Handle preprocessor directives
+    if (strncmp(nodeType, "preproc_", 8) == 0 || strcmp(nodeType, "defined") == 0) {
+        return &CT.preprocessor;
+    }
+
+    // Handle operators
+    if (strcmp(nodeType, ".") == 0 || strcmp(nodeType, "->") == 0) {
+        return &CT.comment;
+    }
+
+    // Handle punctuation
+    if (strcmp(nodeType, ",") == 0 || strcmp(nodeType, ";") == 0) {
+        return &CT.comment;
+    }
+
+    return &CT.error; // _->
+}
+
+/* Color *getNodeColor(TSNode node, const char *major_mode) { */
+/*     // NOTE At this point we assume that */
+/*     // the major mode is already supported */
+/*     // First find the correct LanguageParser for this major_mode */
+/*     LanguageParser *langParser = NULL; */
+/*     for (size_t i = 0; i < lps.count; i++) { */
+/*         if (strcmp(lps.items[i].language, major_mode) == 0) { */
+/*             langParser = &lps.items[i]; */
+/*             break; */
+/*         } */
+/*     } */
+    
+/*     if (!langParser || !langParser->nodeColorMap) { */
+/*         return &CT.text; */
+/*     } */
+
+/*     const char *nodeType = ts_node_type(node); */
+    
+/*     // Check for direct mapping first */
+/*     NodeColorMap *entry; */
+/*     HASH_FIND_STR(langParser->nodeColorMap, nodeType, entry); */
+/*     if (entry) { */
+/*         // Skip static delimiter mappings if rainbow mode is enabled */
+/*         if (rainbow_delimiters && */
+/*             (strcmp(nodeType, "(") == 0 || strcmp(nodeType, ")") == 0 || */
+/*              strcmp(nodeType, "{") == 0 || strcmp(nodeType, "}") == 0 || */
+/*              strcmp(nodeType, "[") == 0 || strcmp(nodeType, "]") == 0)) { */
+/*             // Fall through to dynamic handling */
+/*         } else { */
+/*             return entry->color; */
+/*         } */
+/*     } */
+
+/*     // Special handling for C/C++ */
+/*     if (strcmp(major_mode, "c") == 0 || strcmp(major_mode, "cpp") == 0) { */
+/*         // Handle literals */
+/*         if (strcmp(nodeType, "string_literal") == 0 || */
+/*             strcmp(nodeType, "char_literal") == 0 || */
+/*             strcmp(nodeType, "system_lib_string") == 0 || */
+/*             strcmp(nodeType, "\"") == 0 || */
+/*             strcmp(nodeType, "'") == 0) { */
+/*             return &CT.string; */
+/*         } */
+
+/*         if (strcmp(nodeType, "number_literal") == 0) { */
+/*             return &CT.number; */
+/*         } */
+
+/*         // Handle delimiters with rainbow colors when enabled */
+/*         if (rainbow_delimiters) { */
+/*             if (strcmp(nodeType, "(") == 0 || strcmp(nodeType, ")") == 0 || */
+/*                 strcmp(nodeType, "{") == 0 || strcmp(nodeType, "}") == 0 || */
+/*                 strcmp(nodeType, "[") == 0 || strcmp(nodeType, "]") == 0) { */
+                
+/*                 int32_t depth = 0; */
+/*                 TSNode current = node; */
+                
+/*                 // Count nesting depth */
+/*                 while (!ts_node_is_null(current)) { */
+/*                     const char *currentType = ts_node_type(current); */
+                    
+/*                     // Count opening delimiters at same level */
+/*                     if (strcmp(currentType, "(") == 0 || strcmp(currentType, "{") == 0 || */
+/*                         strcmp(currentType, "[") == 0) { */
+/*                         depth++; */
+/*                     } */
+                    
+/*                     // Move to previous sibling if possible */
+/*                     TSNode prev = ts_node_prev_sibling(current); */
+/*                     while (!ts_node_is_null(prev)) { */
+/*                         const char *prevType = ts_node_type(prev); */
+/*                         if (strcmp(prevType, "(") == 0 || strcmp(prevType, "{") == 0 || */
+/*                             strcmp(prevType, "[") == 0) { */
+/*                             depth++; */
+/*                         } */
+/*                         prev = ts_node_prev_sibling(prev); */
+/*                     } */
+                    
+/*                     current = ts_node_parent(current); */
+/*                 } */
+                
+/*                 return &rainbow_colors[depth % (sizeof(rainbow_colors)/sizeof(rainbow_colors[0]))]; */
+/*             } */
+/*         } */
+
+/*         // Handle identifiers */
+/*         if (strcmp(nodeType, "identifier") == 0) { */
+/*             TSNode parent = ts_node_parent(node); */
+/*             if (ts_node_is_null(parent)) return &CT.variable; */
+            
+/*             const char *parentType = ts_node_type(parent); */
+            
+/*             // Function calls */
+/*             if (strcmp(parentType, "call_expression") == 0) { */
+/*                 if (ts_node_start_byte(ts_node_child(parent, 0)) == ts_node_start_byte(node)) { */
+/*                     return &CT.function; */
+/*                 } */
+/*                 return &CT.variable; */
+/*             } */
+            
+/*             // Function declarations */
+/*             if (strcmp(parentType, "function_declarator") == 0 || */
+/*                 strcmp(parentType, "function_definition") == 0) { */
+/*                 return &CT.function; */
+/*             } */
+            
+/*             // Struct/union fields */
+/*             if (strcmp(parentType, "field_identifier") == 0 || */
+/*                 strcmp(parentType, "field_expression") == 0) { */
+/*                 if (strcmp(parentType, "field_expression") == 0) { */
+/*                     TSNode op = ts_node_child(parent, 1); */
+/*                     if (!ts_node_is_null(op) && ts_node_start_byte(node) > ts_node_start_byte(op)) { */
+/*                         return &CT.variable; */
+/*                     } */
+/*                 } else { */
+/*                     return &CT.variable; */
+/*                 } */
+/*             } */
+            
+/*             return &CT.variable; */
+/*         } */
+
+/*         // Handle preprocessor */
+/*         if (strncmp(nodeType, "preproc_", 8) == 0 || strcmp(nodeType, "defined") == 0) { */
+/*             return &CT.preprocessor; */
+/*         } */
+
+/*         // Handle operators */
+/*         if (strcmp(nodeType, ".") == 0 || strcmp(nodeType, "->") == 0) { */
+/*             return &CT.operator; */
+/*         } */
+
+/*         // Handle punctuation */
+/*         if (strcmp(nodeType, ",") == 0 || strcmp(nodeType, ";") == 0) { */
+/*             return &CT.comment; */
+/*         } */
+/*     } */
+
+/*     return &CT.text; */
+/* } */
+
+
 
 void insertSyntax(SyntaxArray *array, Syntax syntax) {
     if (array->used == array->size) {
@@ -2851,6 +3190,8 @@ void displaySyntax(Buffer *buffer) {
     processNode(root_node, buffer->content, &buffer->syntaxArray, buffer->major_mode);
 }
 
+
+// NOTE This is used only for TS Languages
 void parseSyntax(Buffer *buffer) {
     TSParser *parser = inferParserForLanguage(buffer->major_mode);
     if (!parser) {
@@ -3028,12 +3369,8 @@ void clearSyntaxArray(Buffer *buffer) {
     buffer->syntaxArray.used = 0;
 }
 
-void clearSyntax(Buffer *buffer, size_t start, size_t end) {
-    // TODO
-}
-
 // NOTE The only way you should ever touch the syntaxArray memory
-// it could be weapped in the MSM macro
+// it could be wrapped in a new MSM macro
 void msm(Buffer *buffer, int index, int lengthChange) {
     SyntaxArray *syntaxArray = &buffer->syntaxArray;
     for (size_t i = 0; i < syntaxArray->used; i++) {
@@ -3047,89 +3384,8 @@ void msm(Buffer *buffer, int index, int lengthChange) {
     }
 }
 
-void apply_ansi_color_syntax(Buffer *buffer) {
-    // Clear existing syntax entries
-    clearSyntaxArray(buffer);
-
-    const char *text = buffer->content;
-    size_t length = buffer->size;
-
-    // Create a new buffer to store content without escape codes
-    char *cleanedContent = malloc(length + 1); // +1 for null terminator
-    size_t cleanedIndex = 0; // Tracks position in cleanedContent
-
-    Color currentColor = CT.text; // Default color
-    size_t visibleStart = 0; // Tracks visible text positions (excluding escape codes)
-
-    size_t i = 0;
-    while (i < length) {
-        // Detect ANSI escape sequences
-        if (text[i] == '\033' && i + 1 < length && text[i + 1] == '[') {
-            size_t escapeStart = i;
-            size_t escapeEnd = i + 2; // Skip ESC and [
-
-            // Parse until 'm'
-            while (escapeEnd < length && text[escapeEnd] != 'm') {
-                escapeEnd++;
-            }
-            if (escapeEnd >= length) break; // Incomplete escape sequence
-            escapeEnd++; // Include 'm'
-
-            // Add syntax entry for text before the escape code
-            if (visibleStart < cleanedIndex) {
-                Syntax syntax = {
-                    .start = visibleStart,
-                    .end = cleanedIndex, // Use cleanedIndex for visible text
-                    .color = &currentColor
-                };
-                insertSyntax(&buffer->syntaxArray, syntax);
-            }
-
-            // Update color based on escape code
-            char escapeCode[32];
-            size_t escapeLen = escapeEnd - escapeStart;
-            strncpy(escapeCode, text + escapeStart, escapeLen);
-            escapeCode[escapeLen] = '\0';
-            currentColor = parseAnsiColor(escapeCode, &currentColor);
-
-            // Skip the escape sequence in the cleaned content
-            i = escapeEnd;
-            visibleStart = cleanedIndex; // Next visible start after escape
-        } else {
-            // Copy non-escape characters to cleanedContent
-            cleanedContent[cleanedIndex++] = text[i++];
-        }
-    }
-
-    // Add syntax entry for remaining text
-    if (visibleStart < cleanedIndex) {
-        Syntax syntax = {
-            .start = visibleStart,
-            .end = cleanedIndex,
-            .color = &currentColor
-        };
-        insertSyntax(&buffer->syntaxArray, syntax);
-    }
-
-    // Null-terminate the cleaned content
-    cleanedContent[cleanedIndex] = '\0';
-
-    // Replace buffer content with cleaned content
-    setBufferContent(buffer, cleanedContent, true);
-
-    // Free the temporary cleaned content buffer
-    free(cleanedContent);
-}
+//--- Compilation
 
 
-// TODO
-Color parseAnsiColor(const char *escapeCode, Color *currentColor) {
-    if (strstr(escapeCode, "[0m"))  return CT.text;
-    if (strstr(escapeCode, "[31m")) return CT.string;
-    if (strstr(escapeCode, "[32m")) return CT.type;
-    if (strstr(escapeCode, "[33m")) return CT.keyword;
-    if (strstr(escapeCode, "[34m")) return CT.function;
-    if (strstr(escapeCode, "[35m")) return CT.preprocessor;
-    if (strstr(escapeCode, "[36m")) return CT.variable;
-    return *currentColor; // Default to current color if unknown
-}
+
+

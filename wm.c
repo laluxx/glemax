@@ -24,11 +24,15 @@ void initWindowManager(WindowManager *wm, BufferManager *bm, Font *font, int sw,
     wm->head->prev = NULL;
     wm->head->next = NULL;
     wm->head->isActive = true;
-    wm->head->modeline.height = 25.0;
     wm->activeWindow = wm->head;
     wm->activeWindow->splitOrientation = VERTICAL;
     wm->head->scroll = (Vec2f){0, 0}; 
     wm->count = 1;
+    
+    // Modeline
+    wm->head->modeline.height = 25.0;
+    wm->head->modeline.segments.segment = NULL;
+    wm->head->modeline.segments.count = 0;
     wm->head->modeline.window = wm->head;
 
     wm->graveyard = NULL;
@@ -74,7 +78,6 @@ void split_window_right(WindowManager *wm, WindowParameters *parameters) {
     newWindow->splitOrientation = VERTICAL;
     /* newWindow->parameters.noOtherWindow = parameters->noOtherWindow; // FIX */
     newWindow->parameters.noOtherWindow = false; // FIX
-
 
     // Insert new window into the list
     newWindow->next = active->next;
@@ -130,7 +133,7 @@ void split_window_right(WindowManager *wm, WindowParameters *parameters) {
                 if (target_buffer) {
                     // Assign the target buffer to the new window
                     newWindow->buffer = target_buffer;
-                    recenter(newWindow, true);
+                    /* recenter(newWindow, true); */
                     // Restore the original buffer to the active window
                     active->buffer = original_buffer;
                     // Switch the active window back to the original window
@@ -162,6 +165,210 @@ void updateWindowBufferAssociation(Window *window, Buffer *oldBuffer,
     }
 }
 
+
+
+// Helper function to count how many windows display a given buffer
+int buffer_display_count(WindowManager *wm, const char *buffer_name) {
+    int count = 0;
+    Window *current = wm->head;
+    while (current != NULL) {
+        if (current->buffer && strcmp(current->buffer->name, buffer_name) == 0) {
+            count++;
+        }
+        current = current->next;
+    }
+    return count;
+}
+
+
+// TODO If the splitted window is too small (Define too small) change the wm.activeWindow->buffer instead (option)
+void split_or_take_over_window(WindowManager *wm, char *buffer_name, WindowParameters *parameters) {
+    // First count windows and check for duplicate buffers
+    int window_count = 0;
+    bool has_duplicate_buffers = false;
+    Window *current = wm->head;
+    
+    while (current != NULL) {
+        window_count++;
+        if (current->buffer && current->buffer->displayWindows.windowCount > 1) {
+            has_duplicate_buffers = true;
+        }
+        current = current->next;
+    }
+
+    // Case 1: Only one window - always split
+    if (window_count == 1) {
+        goto SPLIT_WINDOW;
+    }
+
+    // Case 2: Any windows showing same buffer - take over one
+    if (has_duplicate_buffers) {
+        Window *original_active = wm->activeWindow;
+        Window *candidate = NULL;
+
+        // Search for a window showing a duplicated buffer
+        current = original_active->next ? original_active->next : wm->head;
+        while (current != original_active) {
+            if (current->buffer && current->buffer->displayWindows.windowCount > 1) {
+                candidate = current;
+                break;
+            }
+            current = current->next ? current->next : wm->head;
+        }
+
+        if (candidate) {
+            wm->activeWindow = candidate;
+            Buffer *existing = getBuffer(&bm, buffer_name);
+            if (existing) {
+                wm->activeWindow->buffer = existing;
+                switchToBuffer(&bm, buffer_name);
+            } else {
+                char *fontPath = original_active->buffer->fontPath;
+                newBuffer(&bm, wm, buffer_name, "~/", fontPath);
+                switchToBuffer(&bm, buffer_name);
+            }
+            return;
+        }
+    }
+
+    // Case 3: All windows show unique buffers - split current window
+SPLIT_WINDOW:
+    split_window_right(wm, parameters);
+    other_window(wm, 1);
+    
+    Buffer *existing = getBuffer(&bm, buffer_name);
+    if (existing) {
+        wm->activeWindow->buffer = existing;
+        switchToBuffer(&bm, buffer_name);
+    } else {
+        char *fontPath = wm->activeWindow->buffer->fontPath;
+        newBuffer(&bm, wm, buffer_name, "~/", fontPath);
+        switchToBuffer(&bm, buffer_name);
+    }
+}
+
+// TODO If we have N windows and they All display an unique window, we should split.
+/* void split_or_take_over_window(WindowManager *wm, char *buffer_name, WindowParameters *parameters) { */
+/*     // Count how many windows we currently have */
+/*     int window_count = 0; */
+/*     Window *current = wm->head; */
+/*     while (current != NULL) { */
+/*         window_count++; */
+/*         current = current->next; */
+/*     } */
+
+/*     // Case 1: Only one window - split and open buffer in new window */
+/*     if (window_count == 1) { */
+/*         split_window_right(wm, parameters); */
+/*         other_window(wm, 1);  // Focus the new window */
+        
+/*         // Check if buffer exists or create new one */
+/*         Buffer *existing = getBuffer(&bm, buffer_name); */
+/*         if (existing) { */
+/*             wm->activeWindow->buffer = existing; */
+/*             switchToBuffer(&bm, buffer_name); */
+/*         } else { */
+/*             char *fontPath = wm->activeWindow->buffer->fontPath; */
+/*             newBuffer(&bm, wm, buffer_name, "~/", fontPath); */
+/*             switchToBuffer(&bm, buffer_name); */
+/*         } */
+/*     } */
+/*     // Case 2: Multiple windows - take over a window with a buffer displayed in multiple windows if possible */
+/*     else { */
+/*         // Save current active window */
+/*         Window *original_active = wm->activeWindow; */
+/*         Window *candidate = NULL; */
+
+/*         // Start searching from the next window */
+/*         Window *current = original_active->next ? original_active->next : wm->head; */
+/*         while (current != original_active) { */
+/*             if (current->buffer && current->buffer->displayWindows.windowCount > 1) { */
+/*                 candidate = current; */
+/*                 break; */
+/*             } */
+/*             current = current->next ? current->next : wm->head; */
+/*         } */
+
+/*         if (candidate) { */
+/*             wm->activeWindow = candidate; */
+/*         } else { */
+/*             // Move to next window */
+/*             other_window(wm, 1); */
+            
+/*             // Check if we're back to the original window (only happens with 2 windows) */
+/*             if (wm->activeWindow == original_active) { */
+/*                 // If we have exactly 2 windows, take the other one */
+/*                 other_window(wm, 1); */
+/*             } */
+/*         } */
+
+/*         // Now set the buffer in the selected window */
+/*         Buffer *existing = getBuffer(&bm, buffer_name); */
+/*         if (existing) { */
+/*             wm->activeWindow->buffer = existing; */
+/*             switchToBuffer(&bm, buffer_name); */
+/*         } else { */
+/*             char *fontPath = original_active->buffer->fontPath; */
+/*             newBuffer(&bm, wm, buffer_name, "~/", fontPath); */
+/*             switchToBuffer(&bm, buffer_name); */
+/*         } */
+/*     } */
+/* } */
+
+
+// TODO One smart thing that we should do is basically prioritize windows which buffer is already displayed in more than one window
+/* void split_or_take_over_window(WindowManager *wm, char *buffer_name, WindowParameters *parameters) { */
+/*     // Count how many windows we currently have */
+/*     int window_count = 0; */
+/*     Window *current = wm->head; */
+/*     while (current != NULL) { */
+/*         window_count++; */
+/*         current = current->next; */
+/*     } */
+
+/*     // Case 1: Only one window - split and open buffer in new window */
+/*     if (window_count == 1) { */
+/*         split_window_right(wm, parameters); */
+/*         other_window(wm, 1);  // Focus the new window */
+        
+/*         // Check if buffer exists or create new one */
+/*         Buffer *existing = getBuffer(&bm, buffer_name); */
+/*         if (existing) { */
+/*             wm->activeWindow->buffer = existing; */
+/*             switchToBuffer(&bm, buffer_name); */
+/*         } else { */
+/*             char *fontPath = wm->activeWindow->buffer->fontPath; */
+/*             newBuffer(&bm, wm, buffer_name, "~/", fontPath); */
+/*             switchToBuffer(&bm, buffer_name); */
+/*         } */
+/*     } */
+/*     // Case 2: Multiple windows - take over next window */
+/*     else { */
+/*         // Save current active window */
+/*         Window *original_active = wm->activeWindow; */
+        
+/*         // Move to next window */
+/*         other_window(wm, 1); */
+        
+/*         // Check if we're back to the original window (only happens with 2 windows) */
+/*         if (wm->activeWindow == original_active) { */
+/*             // If we have exactly 2 windows, we want the other one */
+/*             other_window(wm, 1); */
+/*         } */
+        
+/*         // Now we're in the other window - set the buffer */
+/*         Buffer *existing = getBuffer(&bm, buffer_name); */
+/*         if (existing) { */
+/*             wm->activeWindow->buffer = existing; */
+/*             switchToBuffer(&bm, buffer_name); */
+/*         } else { */
+/*             char *fontPath = original_active->buffer->fontPath; */
+/*             newBuffer(&bm, wm, buffer_name, "~/", fontPath); */
+/*             switchToBuffer(&bm, buffer_name); */
+/*         } */
+/*     } */
+/* } */
+
 void switch_or_split_window(WindowManager *wm, char *buffer_name, WindowParameters *parameters) {
     // Check if a window already displays the buffer
     Window *current = wm->head;
@@ -180,7 +387,7 @@ void switch_or_split_window(WindowManager *wm, char *buffer_name, WindowParamete
     split_window_right(wm, parameters);
     other_window(wm, 1);
 
-    recenter(wm->activeWindow, true);
+    /* recenter(wm->activeWindow, true); */
 
     // Check if the buffer exists in the BufferManager
     Buffer *existing = getBuffer(&bm, buffer_name);
@@ -591,6 +798,3 @@ bool isBottomWindow(WindowManager *wm, Window *window) {
     }
     return true;
 }
-
-
-

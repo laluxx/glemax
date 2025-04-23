@@ -88,7 +88,6 @@ const bool digit_patterns[10][5][3] = {
     }
 };
 
-
 void drawClockDigit(int digit, Vec2f position, float squareSize, Color color) {
     for (int y = 0; y < 5; ++y) {
         for (int x = 0; x < 3; ++x) {

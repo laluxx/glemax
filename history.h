@@ -23,4 +23,8 @@ const char* previous_history_element(NamedHistories *nh, const char *name, Buffe
 const char* next_history_element(NamedHistories *nh, const char *name, Buffer *minibuffer, BufferManager *bm);
 void resetHistoryIndex(NamedHistories *nh, const char *name);
 
+void savehist_save();
+void savehist_load();
+void savehist_clear();
+
 #endif // HISTORY_H

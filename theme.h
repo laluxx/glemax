@@ -43,6 +43,24 @@ typedef struct {
     Color diff_hl_change_bg;
     Color clock;
     Color header_line;
+    Color rainbow_delimiters_base_face;
+    Color rainbow_delimiters_depth_1_face;
+    Color rainbow_delimiters_depth_2_face;
+    Color rainbow_delimiters_depth_3_face;
+    Color rainbow_delimiters_depth_4_face;
+    Color rainbow_delimiters_depth_5_face;
+    Color rainbow_delimiters_depth_6_face;
+
+    Color diredfl_dir_heading;
+    Color diredfl_dir_priv;
+    Color diredfl_read_priv;
+    Color diredfl_write_priv;
+    Color diredfl_exec_priv;
+    Color diredfl_no_priv;
+    Color diredfl_number;
+    Color diredfl_date_time;
+    Color diredfl_dir_name;
+    Color diredfl_file_suffix;
 } Theme;
 
 extern Theme themes[];

@@ -91,7 +91,7 @@ bool   mark_mode                 = true;
 
 bool   region_fg_mode            = true;
 
-bool   region_alpha               = true;
+bool   region_alpha               = true; // If true draw the region trasparent and over the text else draw it under the text and opaque
 float  region_alpha_amount        = 0.7f;
 
 bool   lerp_line                 = false; // TODO It's garbage
@@ -106,7 +106,6 @@ bool   find_file_focus_existing      = false; // If true, focus the window that 
 size_t max_gemini_redirections       = 5;
 /* bool highlight_nonselected_windows = false; // TODO each window highlights its own region. */
 
-bool   revert_buffer_mode            = true; // TODO a watcher for buffer, if that buffer has a path NOTE Buffers that don't "" have a path should *not* be watched
 bool   minibuffer_minimap_mode       = false; // If true show the minibuffer in the active window minimap
 bool   scroll_bar                    = false;
 size_t scroll_bar_thickness          = 8;
@@ -133,11 +132,23 @@ bool lerp_minimap_with_gemini        = false; // TODO
 bool focus_window_if_buffer_displayed = true;
 bool hide_mark_when_region_active     = false;
 
-bool shiftPressed = false;
-bool ctrlPressed  = false;
-bool altPressed   = false;
+bool shiftPressed                    = false;
+bool ctrlPressed                     = false;
+bool altPressed                      = false;
 
-bool lerp_minimap_on_startup   = false;
+bool lerp_minimap_on_startup         = false;
+bool savehist                       = true;
+bool auto_revert                    = true; // TODO a watcher for buffer, if that buffer has a path NOTE Buffers that don't "" have a path should *not* be watched
+char *state_path                    = "state.sxp";
 
+// State.sxp
+size_t sxp_indentation            = 4;
 
+bool verbose_completion           = false;
 
+bool gay                          = false;
+char *gay_shader                  = "gay";
+
+bool rainbow_delimiters           = true; // FIXME It doesn't change at runtime and it's probably slower than a hoe
+bool inhibit_screenshot           = false;
+bool word_based_undo              = true;

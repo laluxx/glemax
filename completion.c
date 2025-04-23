@@ -1,5 +1,6 @@
 #include "completion.h"
 #include "buffer.h"
+#include "globals.h"
 #include "symbols.h"
 #include "commands.h"
 #include <dirent.h>
@@ -7,10 +8,6 @@
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
-
-
-// TODO If we insert a completion with tab and it's a sole completion, then next tab
-// should start completing again not try to cycle between 1 completion.
 
 
 BinaryCache binary_cache = {NULL, 0, false};
@@ -229,10 +226,12 @@ void initialize_binary_cache() {
               (int (*)(const void *, const void *))strcmp);
     }
 
-    char msg[128];
-    snprintf(msg, sizeof(msg), "Binary cache initialized with %d commands.",
-             binary_cache.count);
-    message(msg);
+    if (verbose_completion) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "Binary cache initialized with %d commands.",
+                 binary_cache.count);
+        message(msg);
+    }
 }
 
 // TODO Complete also the arguments and paths when needed
@@ -316,10 +315,11 @@ void fetch_symbol_completions(const char *input, CompletionEngine *ce) {
     ce->isActive = ce->count > 0;
     ce->currentIndex = -1;
 
-    // Display completion count message
-    char msg[128];
-    snprintf(msg, sizeof(msg), "Found %d matching symbols.", ce->count);
-    message(msg);
+    if (verbose_completion) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "Found %d matching symbols.", ce->count);
+        message(msg);
+    }
 }
 
 // More like complete_minibuffer.
@@ -338,9 +338,12 @@ void complete_at_point(const char *prompt, const char *input, CompletionEngine *
     } else {
         fetch_path_completions(input, ce);
     }
-    char msg[128];
-    snprintf(msg, sizeof(msg), "Inserted %d completions.", ce->count);
-    message(msg);
+
+    if (verbose_completion) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "Inserted %d completions.", ce->count);
+        message(msg);
+    }
 }
 
 
@@ -432,8 +435,7 @@ void fetch_word_completions(const char *input, Buffer *target_buffer,
     ce->currentIndex = -1;
 }
 
-// TODO vertico
-// NOTE Unused
+// TODO vertico NOTE Unused
 void insert_completions(Buffer *buffer, CompletionEngine *ce) {
     if (!buffer || !ce || ce->count == 0) {
         message("No match");
@@ -456,7 +458,9 @@ void insert_completions(Buffer *buffer, CompletionEngine *ce) {
         }
     }
 
-    char msg[128];
-    snprintf(msg, sizeof(msg), "Inserted %d completions.", ce->count);
-    message(msg);
+    if (verbose_completion) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "Inserted %d completions.", ce->count);
+        message(msg);
+    }
 }

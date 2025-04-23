@@ -1,11 +1,51 @@
 #ifndef BUFFER_H
 #define BUFFER_H
 
-#include <tree_sitter/api.h>
-#include <stddef.h>
-#include <stdbool.h>
 #include "font.h"
 #include "git.h"
+#include "renderer.h"
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <tree_sitter/api.h>
+
+// TODO
+typedef struct {
+    union CursorType {bool beam;
+                      bool line;
+                      bool block;
+                      bool hollow;};
+    size_t current;
+} CursorShape;
+
+// TODO
+typedef struct {
+    char *family;
+    char *foundry;
+    char *width;
+    size_t height;
+    size_t slant;
+    Color fg;
+    Color bg;
+    bool underline;
+    bool overline;
+    bool strike_trough;
+    bool box;
+    bool inverse;
+    bool stripple;
+    bool extend;
+    bool inherit;
+    // Extended
+    bool hide_cursor;
+    CursorShape cursor_shape;
+} Face;
+
+typedef struct {
+    Face *array;
+    size_t used;
+    size_t size;
+} Faces;
+
 
 typedef struct {
     size_t start;
@@ -14,7 +54,7 @@ typedef struct {
     Color *color;
 } Syntax;
 
-// TODO keep syntaxes in a tree
+// TODO keep syntaxes in a tree (aka faces)
 typedef struct {
     Syntax *items;
     size_t used;
@@ -86,14 +126,18 @@ typedef struct {
 } BufferWindows;
 
 
-// TODO Undo system
-/* typedef struct { */
-/*     char *array; */
-/*     size_t size; */
-/*     size_t capacity; */
-/* } Undos; */
+typedef struct {
+    char *content;    // Buffer content snapshot
+    size_t size;      // Size of content
+    size_t point;     // Cursor position
+} UndoState;
 
-
+typedef struct {
+    UndoState *states;  // Array of undo states
+    size_t count;       // Total states
+    size_t capacity;    // Allocated capacity
+    size_t current;     // Current state index
+} Undos;
 
 typedef struct {
     char *content;   // Text content
@@ -101,7 +145,7 @@ typedef struct {
     size_t capacity; // Allocated capacity
     size_t point;    // Cursor position
     char *name;      // Buffer name
-    bool readOnly;   // Read-only flag TODO
+    bool readOnly;   // Read-only flag
     char *path;      // Normalized as "~/"
     Region region;   // NOTE Each buffer has its region
     Scale scale;     // Scale struct for managing font sizes
@@ -111,12 +155,6 @@ typedef struct {
 
     Font *font; // NOTE Each buffer has its font
     char *fontPath;
-
-    // We could implment a Tick system
-    size_t version;  // Increments on save (monotonic)
-    bool modified;   // Track unsaved changes
-    /* Undos undos;  // TODO Dynamic array of strings */
-    
 
     Scopes scopes;
     Diffs diffs;
@@ -128,6 +166,11 @@ typedef struct {
     double animationStartTime; // Start time of the animation
     char *url;                 // Gemini url TODO History
     BufferWindows displayWindows; // Windows where this buffer is displayed
+
+    // NOTE We could implment a Tick system
+    size_t version;            // Increments on save (monotonic)
+    bool modified;             // Track unsaved changes
+    Undos undos;               // Buffer undos
 } Buffer;
 
 typedef struct {
@@ -144,10 +187,18 @@ typedef enum {
     HORIZONTAL
 } SplitOrientation;
 
+typedef enum {
+    SEGMENT_LEFT,
+    SEGMENT_RIGHT
+} SegmentAlignment;
+
 typedef struct {
-    char *name;     // Name or identifier of the segment
-    char *content;  // Content to be displayed in this segment
-    // TODO Width
+    char *name;           // Name or identifier of the segment
+    char *content;        // UTF-8 content to be displayed in this segment
+    uint32_t *codepoints; // Array of Unicode codepoints (for rendering)
+    size_t length;        // Number of codepoints (not bytes)
+    SegmentAlignment alignment;
+    //  TODO       Width
 } Segment;
 
 typedef struct {
@@ -161,8 +212,6 @@ typedef struct {
     Segments segments;
     struct Window *window; // Pointer to the owning window TODO
 } Modeline;
-
-
 
 #include "uthash.h"
 
@@ -223,11 +272,8 @@ extern double mouseY;
 void initBuffer(Buffer *buffer, const char *name, const char *path);
 
 
-void newBuffer(BufferManager *manager, WindowManager *wm,
-               const char *name, const char *path, char *fontPath);
-
+Buffer* newBuffer(BufferManager *bm, WindowManager *wm, const char *name, const char *path, const char *fontPath);
 Buffer* generate_new_buffer(const char* name, const char* path, const char* fontPath);
-
 void freeBuffer(Buffer *buffer);
 void initBufferManager(BufferManager *manager);
 void freeBufferManager(BufferManager *manager);
@@ -259,14 +305,6 @@ bool major_mode_is(Buffer *buffer, char *mode);
 void updateDiffs(Buffer *buffer);
 void initDiffs(BufferManager *bm);
 
-
-
-// MODELINE
-void addSegment(Segments *segments, const char *name, const char *content);
-void initSegments(Segments *segments);
-/* void updateSegments(Modeline *modeline); */
-void updateSegments(Modeline *modeline, Buffer *buffer);
-
 // UTILITY FUNCTIONS
 int getLineNumber(Buffer *buffer);
 int lineNumberAtPoint(Buffer *buffer, size_t point);
@@ -283,13 +321,31 @@ void abort_recursive_edit();
 
 Buffer *getPreviousBuffer(BufferManager *bm);
 Buffer *getNextBuffer(BufferManager *bm);
-
 char *getPreviousBufferName(BufferManager *bm);
 char *getNextBufferName(BufferManager *bm);
-
 char *getPreviousBufferPath(BufferManager *bm);
 char *getNextBufferPath(BufferManager *bm);
-
 bool major_mode_supported(Buffer *buffer);
+
+void executeAndOutputShellCommand(Buffer *buffer, const char *command,
+                                  bool insertMode, size_t insertPos,
+                                  bool pointAtSize);
+void appendShellCommand(Buffer *buffer, char *command, bool pointAtSize);
+void insertShellCommand(Buffer *buffer, char *command, bool pointAtSize);
+
+
+extern Buffer *minibuffer;
+extern Buffer *prompt;
+extern Buffer *vertico;
+extern Buffer *footer;
+extern Buffer *argBuffer;
+extern Buffer *scratch;
+extern Buffer *messages;
+
+char *buffer_substring(Buffer *buffer, size_t start, size_t end);
+size_t line_beginning_position(Buffer *buffer);
+size_t line_end_position(Buffer *buffer);
+size_t line_beginning_position_at(Buffer *buffer, size_t line_number);
+size_t line_end_position_at(Buffer *buffer, size_t pos);
 
 #endif

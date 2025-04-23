@@ -78,7 +78,6 @@ Color getScopeColor(int level) {
 }
 
 
-
 void draw_scopes(WindowManager *wm, Font *font) {
     if (!hl_scope_mode) return;
     
@@ -392,10 +391,7 @@ void drawWordInMinimap(Buffer *buffer, float minimapX, float startY, size_t line
     }
 }
 
-/**
- * Draws comments that extend until the end of the line.
- */
-void drawCommentUntilEndOfLine(Buffer *buffer, float minimapX, float startY, size_t lineStart, size_t lineEnd, float maxTextWidth, float scale, float lineHeight) {
+void drawMinimapComment(Buffer *buffer, float minimapX, float startY, size_t lineStart, size_t lineEnd, float maxTextWidth, float scale, float lineHeight) {
     for (size_t j = 0; j < buffer->syntaxArray.used; j++) {
         Syntax syntax = buffer->syntaxArray.items[j];
         if (syntax.start >= lineStart && syntax.start < lineEnd && syntax.color == &CT.comment) {
@@ -410,29 +406,25 @@ void drawCommentUntilEndOfLine(Buffer *buffer, float minimapX, float startY, siz
 }
 
 
-/**
- * Draws the minimap for the given buffer in the specified window.
- * - If the buffer's syntaxArray is empty, falls back to drawing all text using CT.text.
- * - Handles comments that extend until the end of the line.
- */
-// TODO Wrap lines
-// TODO Draw rectangles starting from begin-of-defun and ends at end-of-defun
+
+// Love it but inefficient
 void drawMinimap(WindowManager *wm, Window *mainWindow, Buffer *buffer) {
-    float minimapX = mainWindow->x + mainWindow->width - mainWindow->parameters.minimap_width;  // Positioned on the right edge of the main window
+    if (!mainWindow->parameters.minimap || !buffer || buffer->size == 0)
+        return;
+
+    float minimapX = mainWindow->x + mainWindow->width - mainWindow->parameters.minimap_width;
     float lineHeight = 2.0;  // Height of each line in the minimap
     float scale = 1.0;       // Scale factor for text rendering
-    float startY = mainWindow->y;  // Starting Y position for drawing
-    size_t lineStart = 0;    // Start index of the current line
-    size_t wordStart = 0;    // Start index of the current word
-    int currentLine = 0;     // Current line number
-    // Calculate the maximum width of text that can fit in the minimap
+    float startY = mainWindow->y;  // Starting Y position for drawing (top of window)
+    float windowBottom = mainWindow->y - mainWindow->height; // Bottom of window
     float maxTextWidth = mainWindow->parameters.minimap_width / scale;
 
     useShader("simple");
-    drawMinimapRegion(wm, mainWindow, buffer);
-
-    /* // Draw the minimap background */
-    /* drawRectangle((Vec2f){sw - mainWindow->parameters.minimap_width, sw}, (Vec2f){sw - mainWindow->parameters.minimap_width, sw}, CT.modeline); */
+    
+    // Draw region highlight if active
+    if (buffer->region.active) {
+        drawMinimapRegion(wm, mainWindow, buffer);
+    }
 
     // UPDATE LERP
     if (mainWindow->parameters.minimap_lerp_active) {
@@ -447,39 +439,186 @@ void drawMinimap(WindowManager *wm, Window *mainWindow, Buffer *buffer) {
             // If the target width is 0, disable the minimap
             if (mainWindow->parameters.minimap_target_width == 0.0f) {
                 mainWindow->parameters.minimap = false;
+                return;
             }
         }
     }
 
-    // Iterate through each character in the buffer to draw syntax highlights
+    // First calculate visible range of text (based on scroll position)
+    // This could be further optimized based on scroll offset in real application
+    
+    size_t lineStart = 0;
+    size_t textSegmentStart = 0;
+    bool inTextSegment = false;
+    
+    // Process the buffer character by character
     for (size_t i = 0; i <= buffer->size; i++) {
-        // Check for word end or line end
-        if (buffer->content[i] == ' ' || buffer->content[i] == '\n' || i == buffer->size) {
-            // If there's a word to draw
-            if (i > wordStart) {
-                drawWordInMinimap(buffer, minimapX, startY, lineStart, wordStart, i, maxTextWidth, scale, lineHeight);
-            }
-            wordStart = i + 1;  // Update start of next word
+        char c = (i < buffer->size) ? buffer->content[i] : '\0';
+        
+        // Handle start of text segment
+        if (!inTextSegment && c != ' ' && c != '\n' && c != '\t' && c != '\0') {
+            inTextSegment = true;
+            textSegmentStart = i;
         }
-
-        // Check for line end
-        if (buffer->content[i] == '\n' || i == buffer->size) {
-            // Handle comments that extend until the end of the line
-            if (buffer->syntaxArray.used > 0) {
-                drawCommentUntilEndOfLine(buffer, minimapX, startY, lineStart, i, maxTextWidth, scale, lineHeight);
+        
+        // Handle end of text segment or line
+        if ((inTextSegment && (c == ' ' || c == '\n' || c == '\t' || c == '\0')) ||
+            i == buffer->size) {
+            
+            // If we found a text segment, draw it
+            if (inTextSegment) {
+                // Skip if line is outside visible area
+                if (startY >= windowBottom) {
+                    float segmentStartX = minimapX + (textSegmentStart - lineStart) * scale;
+                    float segmentWidth = (i - textSegmentStart) * scale;
+                    
+                    // Ensure we don't exceed minimap width
+                    if ((textSegmentStart - lineStart) * scale < maxTextWidth) {
+                        // Clamp width if needed
+                        if (segmentStartX + segmentWidth > minimapX + maxTextWidth) {
+                            segmentWidth = minimapX + maxTextWidth - segmentStartX;
+                        }
+                        
+                        // First draw with default text color
+                        drawRectangle(
+                            (Vec2f){segmentStartX, startY},
+                            (Vec2f){segmentWidth, lineHeight},
+                            CT.text
+                        );
+                        
+                        // Then check if this segment has syntax highlighting
+                        bool hasSyntax = false;
+                        for (size_t j = 0; j < buffer->syntaxArray.used; j++) {
+                            Syntax syntax = buffer->syntaxArray.items[j];
+                            
+                            // Check for overlap between segment and syntax range
+                            if ((syntax.start <= textSegmentStart && syntax.end > textSegmentStart) ||
+                                (syntax.start >= textSegmentStart && syntax.start < i)) {
+                                
+                                // Calculate the overlap
+                                size_t overlapStart = (syntax.start > textSegmentStart) ? syntax.start : textSegmentStart;
+                                size_t overlapEnd = (syntax.end < i) ? syntax.end : i;
+                                
+                                if (overlapEnd > overlapStart) {
+                                    float overlapStartX = minimapX + (overlapStart - lineStart) * scale;
+                                    float overlapWidth = (overlapEnd - overlapStart) * scale;
+                                    
+                                    // Clamp to minimap width
+                                    if (overlapStartX + overlapWidth > minimapX + maxTextWidth) {
+                                        overlapWidth = minimapX + maxTextWidth - overlapStartX;
+                                    }
+                                    
+                                    // Draw highlighted segment
+                                    drawRectangle(
+                                        (Vec2f){overlapStartX, startY},
+                                        (Vec2f){overlapWidth, lineHeight},
+                                        *syntax.color
+                                    );
+                                    
+                                    hasSyntax = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                inTextSegment = false;
             }
-
-            startY -= (lineHeight + 2);  // Move up for the next line and add 2 pixel spacing
-            lineStart = i + 1;           // Update the start of the next line
-            wordStart = lineStart;        // Reset word start to the beginning of the next line
-            currentLine++;
+        }
+        
+        // Handle end of line or end of buffer
+        if (c == '\n' || i == buffer->size) {
+            startY -= (lineHeight + 2);
+            lineStart = i + 1;
+            inTextSegment = false;
+            
+            // Exit early if we're below window bounds
+            if (startY < windowBottom) {
+                break;
+            }
         }
     }
 
     // Draw the minimap cursor
-    drawMinimapCursor(wm, mainWindow, buffer);
+    if (minimap_cursor) {
+        drawMinimapCursor(wm, mainWindow, buffer);
+    }
+    
     flush();
 }
+
+
+/**
+ * Draws the minimap for the given buffer in the specified window.
+ * - If the buffer's syntaxArray is empty, falls back to drawing all text using CT.text.
+ * - Handles comments that extend until the end of the line.
+ */
+// TODO Option to Wrap lines
+// TODO Option to draw Scopes
+// TODO Option to Draw rectangles starting from begin-of-defun and ends at end-of-defun
+/* void drawMinimap(WindowManager *wm, Window *mainWindow, Buffer *buffer) { */
+/*     float minimapX = mainWindow->x + mainWindow->width - mainWindow->parameters.minimap_width;  // Positioned on the right edge of the main window */
+/*     float lineHeight = 2.0;  // Height of each line in the minimap */
+/*     float scale = 1.0;       // Scale factor for text rendering */
+/*     float startY = mainWindow->y;  // Starting Y position for drawing */
+/*     size_t lineStart = 0;    // Start index of the current line */
+/*     size_t wordStart = 0;    // Start index of the current word */
+/*     int currentLine = 0;     // Current line number */
+/*     // Calculate the maximum width of text that can fit in the minimap */
+/*     float maxTextWidth = mainWindow->parameters.minimap_width / scale; */
+
+/*     useShader("simple"); */
+/*     drawMinimapRegion(wm, mainWindow, buffer); */
+
+/*     /\* // Draw the minimap background *\/ */
+/*     /\* drawRectangle((Vec2f){sw - mainWindow->parameters.minimap_width, sw}, (Vec2f){sw - mainWindow->parameters.minimap_width, sw}, CT.modeline); *\/ */
+
+/*     // UPDATE LERP */
+/*     if (mainWindow->parameters.minimap_lerp_active) { */
+/*         // Lerp minimap_width towards target_width */
+/*         mainWindow->parameters.minimap_width = lerp(mainWindow->parameters.minimap_width, mainWindow->parameters.minimap_target_width, 0.1f); */
+
+/*         // Check if close enough to stop lerping */
+/*         if (fabs(mainWindow->parameters.minimap_width - mainWindow->parameters.minimap_target_width) < 1.0f) { */
+/*             mainWindow->parameters.minimap_width = mainWindow->parameters.minimap_target_width; */
+/*             mainWindow->parameters.minimap_lerp_active = false; */
+
+/*             // If the target width is 0, disable the minimap */
+/*             if (mainWindow->parameters.minimap_target_width == 0.0f) { */
+/*                 mainWindow->parameters.minimap = false; */
+/*             } */
+/*         } */
+/*     } */
+
+/*     // Iterate through each character in the buffer to draw syntax highlights */
+/*     for (size_t i = 0; i <= buffer->size; i++) { */
+/*         // Check for word end or line end */
+/*         if (buffer->content[i] == ' ' || buffer->content[i] == '\n' || i == buffer->size) { */
+/*             // If there's a word to draw */
+/*             if (i > wordStart) { */
+/*                 drawWordInMinimap(buffer, minimapX, startY, lineStart, wordStart, i, maxTextWidth, scale, lineHeight); */
+/*             } */
+/*             wordStart = i + 1;  // Update start of next word */
+/*         } */
+
+/*         // Check for line end */
+/*         if (buffer->content[i] == '\n' || i == buffer->size) { */
+/*             // Handle comments that extend until the end of the line */
+/*             if (buffer->syntaxArray.used > 0) { */
+/*                 drawMinimapComment(buffer, minimapX, startY, lineStart, i, maxTextWidth, scale, lineHeight); */
+/*             } */
+
+/*             startY -= (lineHeight + 2);  // Move up for the next line and add 2 pixel spacing */
+/*             lineStart = i + 1;           // Update the start of the next line */
+/*             wordStart = lineStart;        // Reset word start to the beginning of the next line */
+/*             currentLine++; */
+/*         } */
+/*     } */
+
+/*     // Draw the minimap cursor */
+/*     drawMinimapCursor(wm, mainWindow, buffer); */
+/*     flush(); */
+/* } */
 
 void drawHollowPoint(Buffer *buffer, Window *win, size_t position, Color color) {
     float x = win->x - win->scroll.x; // Start position adjusted for horizontal scroll
@@ -582,7 +721,8 @@ void drawHollowCursor(Buffer *buffer, Window *win, Color defaultColor) {
     drawHollowPoint(buffer, win, buffer->point, cursorColor);
 }
 
-
+// TODO cursor color lerp for crystalcursor-mode,
+// also make gay-mode cursor look good.
 void drawCursor(Buffer *buffer, Window *win, Color defaultColor) {
     float startX = fringe + win->x - win->scroll.x;
     float cursorX = startX;

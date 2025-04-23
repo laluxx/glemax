@@ -10,9 +10,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include "globals.h"
+#include "bytecode.h"
+#include "dired.h"
 #include "lsp.h"
+#include "symbols.h"
 
 // Hope doing this long enough will make me understand something..
+// The separation between C implementations and their symbolic representations is there
+// The system already supports both C and Guile
 
 // TODO Change this file at compile time
 // collect all the functions that are not
@@ -25,6 +30,22 @@
 
 Commands commands = {0};
 
+
+/**
+   Major mode for gay people.
+*/
+void gay_mode() {
+    gay = !gay;
+}
+
+
+/**
+   Toggle saving of minibuffer history (Savehist mode).
+*/
+void savehist_mode() {
+    savehist = !savehist;
+}
+
 /**
    Major mode for editing C code.
 */
@@ -32,17 +53,22 @@ void c_mode(Buffer *buffer) {
     // NOTE How we don't have to update the modeline
     // because we do it 144 times a second wich i love and hate at the same time.
     setMajorMode(buffer, "c");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
+
+/**
+   Highlight nested parentheses, brackets, and braces according to their depth.
+*/
+void rainbow_delimiters_mode() {
+    rainbow_delimiters = !rainbow_delimiters;
+}
+
+
 
 /**
    Major mode for editing Scheme code.
 */
 void scheme_mode(Buffer *buffer) {
     setMajorMode(buffer, "scheme");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -50,8 +76,6 @@ void scheme_mode(Buffer *buffer) {
 */
 void html_mode(Buffer *buffer) {
     setMajorMode(buffer, "html");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -59,8 +83,6 @@ void html_mode(Buffer *buffer) {
 */
 void glsl_mode(Buffer *buffer) {
     setMajorMode(buffer, "glsl");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -68,8 +90,6 @@ void glsl_mode(Buffer *buffer) {
 */
 void zig_mode(Buffer *buffer) {
     setMajorMode(buffer, "zig");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -77,8 +97,6 @@ void zig_mode(Buffer *buffer) {
 */
 void odin_mode(Buffer *buffer) {
     setMajorMode(buffer, "odin");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -86,8 +104,6 @@ void odin_mode(Buffer *buffer) {
 */
 void make_mode(Buffer *buffer) {
     setMajorMode(buffer, "make");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -95,8 +111,6 @@ void make_mode(Buffer *buffer) {
 */
 void commonlisp_mode(Buffer *buffer) {
     setMajorMode(buffer, "commonlisp");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -104,8 +118,6 @@ void commonlisp_mode(Buffer *buffer) {
 */
 void scss_mode(Buffer *buffer) {
     setMajorMode(buffer, "scss");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -113,8 +125,6 @@ void scss_mode(Buffer *buffer) {
 */
 void haskell_mode(Buffer *buffer) {
     setMajorMode(buffer, "haskell");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -122,8 +132,6 @@ void haskell_mode(Buffer *buffer) {
 */
 void lua_mode(Buffer *buffer) {
     setMajorMode(buffer, "lua");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -131,8 +139,6 @@ void lua_mode(Buffer *buffer) {
 */
 void rust_mode(Buffer *buffer) {
     setMajorMode(buffer, "rust");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -140,8 +146,6 @@ void rust_mode(Buffer *buffer) {
 */
 void bash_mode(Buffer *buffer) {
     setMajorMode(buffer, "bash");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -149,8 +153,6 @@ void bash_mode(Buffer *buffer) {
 */
 void elisp_mode(Buffer *buffer) {
     setMajorMode(buffer, "elisp");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -158,8 +160,6 @@ void elisp_mode(Buffer *buffer) {
 */
 void python_mode(Buffer *buffer) {
     setMajorMode(buffer, "python");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -167,8 +167,6 @@ void python_mode(Buffer *buffer) {
 */
 void ocaml_mode(Buffer *buffer) {
     setMajorMode(buffer, "ocaml");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -176,8 +174,6 @@ void ocaml_mode(Buffer *buffer) {
 */
 void css_mode(Buffer *buffer) {
     setMajorMode(buffer, "css");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -185,8 +181,6 @@ void css_mode(Buffer *buffer) {
 */
 void javascript_mode(Buffer *buffer) {
     setMajorMode(buffer, "javascript");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -194,8 +188,6 @@ void javascript_mode(Buffer *buffer) {
 */
 void julia_mode(Buffer *buffer) {
     setMajorMode(buffer, "julia");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -203,8 +195,6 @@ void julia_mode(Buffer *buffer) {
 */
 void cpp_mode(Buffer *buffer) {
     setMajorMode(buffer, "cpp");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -212,8 +202,6 @@ void cpp_mode(Buffer *buffer) {
 */
 void go_mode(Buffer *buffer) {
     setMajorMode(buffer, "go");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -221,8 +209,6 @@ void go_mode(Buffer *buffer) {
 */
 void json_mode(Buffer *buffer) {
     setMajorMode(buffer, "json");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 /**
@@ -230,8 +216,6 @@ void json_mode(Buffer *buffer) {
 */
 void regex_mode(Buffer *buffer) {
     setMajorMode(buffer, "regex");
-    clearSyntaxArray(buffer);
-    parseSyntax(buffer);
 }
 
 
@@ -458,6 +442,21 @@ void gemini() {
     wm.activeWindow->buffer->readOnly = true;
 }
 
+
+
+
+
+/**
+   Create an interactive Eshell buffer.
+*/
+void eshell() {
+    switch_or_split_window(&wm, "*eshell*", &wm.activeWindow->parameters);
+}
+
+
+
+
+
 /**
    View the log of recent echo-area messages: the '*Messages*' buffer.
 */
@@ -505,6 +504,13 @@ void initCommands() {
     addVoidCommand(         &commands, "eval-buffer",                        "Execute the accessible portion of current buffer as Guile scheme code.",          eval_buffer);
     addVoidCommand(         &commands, "eval-region",                        "Execute the region as Guile scheme code.",                                        eval_region);
     addVoidCommand(         &commands, "load-user-init-file",                "Load a user init-file, used at startup.",                                         load_user_init_file);
+    addVoidCommand(         &commands, "savehist-mode",                      "Toggle saving of minibuffer history (Savehist mode).",                            savehist_mode);
+    addVoidCommand(         &commands, "savehist-save",                      "save savehist in state.sxp.",                                                     savehist_save); 
+    addVoidCommand(         &commands, "savehist-load",                      "Load savehist from state.sxp.",                                                   savehist_load);
+    addVoidCommand(         &commands, "savehist-clear",                     "Clear savehist from state.sxp.",                                                  savehist_clear);
+    addVoidCommand(         &commands, "rainbow-delimiters-mode",            "Highlight nested parentheses, brackets, and braces according to their depth.",    rainbow_delimiters_mode);
+    addVoidCommand(         &commands, "eshell",                             "Create an interactive Eshell buffer.",                                            eshell);
+    addVoidCommand(         &commands, "gay-mode",                           "Major mode for gay people",                                                       gay_mode);
 
     // Buffer
     addBufferCommand(       &commands, "fundamental-mode",                   "Major mode not specialized for anything in particular.",                          fundamental_mode);
@@ -553,6 +559,8 @@ void initCommands() {
     addBufferCommand(       &commands, "backward-kill-word",                 "Kill characters backward until encountering the beginning of a word.",            backward_kill_word);
     addBufferCommand(       &commands, "goto-definition",                    "Find definitions of the symbol under point.",                                     goto_definition);
     addBufferCommand(       &commands, "insert-guile-symbols",               "Find all Scheme symbols and insert them in the active buffer.",                   insert_guile_symbols);
+    addBufferCommand(       &commands, "parse-and-push-compilation-syntax",  "go read it bruh",                                                                 parse_and_push_compilation_syntax);
+    addBufferCommand(       &commands, "parse-and-push-dired-syntax",        "go read it bruh",                                                                 parse_and_push_dired_syntax);
 
     // BM
     addBufferManagerCommand(&commands, "keep-lines",                         "Delete all lines except those containing matches for REGEXP.",                    keep_lines);
@@ -563,6 +571,9 @@ void initCommands() {
     addBufferManagerCommand(&commands, "load-font",                          "load a new global font and adjust windows.",                                      load_font);
     addBufferManagerCommand(&commands, "execute-extended-command",           "Read a command name, then read the arguments and call the command.",              execute_extended_command);
     addBufferManagerCommand(&commands, "change-major-mode",                  "Read a major-mode name, then update the active buffer major mode to it.",         change_major_mode);
+    addBufferManagerCommand(&commands, "insert-shell-command",               "Insert the output of SHELL-COMMAND at point",                                     insert_shell_command);
+    addBufferManagerCommand(&commands, "append-shell-command",               "append the output of SHELL-COMMAND and point at buffer->size",                    append_shell_command);
+    addBufferManagerCommand(&commands, "eval-bytecode",                      "Prompt the minibuffer for bytecode to eval at runtime",                           eval_bytecode);
 
     // BSA
     addBufferShiftArgCommand(&commands, "forward-word",                      "Move point forward ARG words (backward if ARG is negative).",                     forward_word);
@@ -575,7 +586,6 @@ void initCommands() {
     addBufferShiftArgCommand(&commands, "backward-sexp",                     "Move backward across one balanced expression (sexp).",                            backward_sexp);
     addBufferShiftArgCommand(&commands, "indent-region",                     "Indent each nonblank line in the region.",                                        indent_region);
     addBufferShiftArgCommand(&commands, "indent-line",                       "Indent current line.",                                                            indent_line);
-
 
     // WSA
     addWindowShiftArgCommand(&commands, "next-line",                         "Move cursor vertically down ARG lines.",                                          next_line);
@@ -626,7 +636,6 @@ void addWindowShiftArgCommand(Commands *cmds, const char *name, const char *desc
 }
 
 
-
 void addCommand(Commands *cmds, const char *name, const char *description,
                 CommandType type, void *func) {
     ensureCapacity(cmds);
@@ -655,7 +664,6 @@ void addCommand(Commands *cmds, const char *name, const char *description,
     case CMD_TYPE_C_WINDOWSHIFTARG:
         newCommand->func.windowShiftArg_func = (WindowShiftArgFunc)func;
         break;
-
     case CMD_TYPE_SCHEME:
         // For Scheme commands, `func` should be a `char*` (the Scheme expression)
         newCommand->func.scheme_expr = strdup((char *)func);
@@ -758,11 +766,11 @@ void executeBufferArgCommand(const char *name, Buffer *buffer, int arg) {
     printf("Command '%s' not found.\n", name);
 }
 
-void executeBufferManagerCommand(const char *name, BufferManager *manager) {
+void executeBufferManagerCommand(const char *name, BufferManager *bm) {
     for (size_t i = 0; i < commands.size; ++i) {
         if (strcmp(commands.commands[i].name, name) == 0) {
             if (commands.commands[i].type == CMD_TYPE_C_BUFFERMANAGER) {
-                commands.commands[i].func.bufferManager_func(manager);
+                commands.commands[i].func.bufferManager_func(bm);
             } else {
                 printf("Error: '%s' requires a BufferManager\n", name);
             }
@@ -772,11 +780,11 @@ void executeBufferManagerCommand(const char *name, BufferManager *manager) {
     printf("Command '%s' not found.\n", name);
 }
 
-void executeWindowManagerCommand(const char *name, WindowManager *manager) {
+void executeWindowManagerCommand(const char *name, WindowManager *wm) {
     for (size_t i = 0; i < commands.size; ++i) {
         if (strcmp(commands.commands[i].name, name) == 0) {
             if (commands.commands[i].type == CMD_TYPE_C_WINDOWMANAGER) {
-                commands.commands[i].func.windowManager_func(manager);
+                commands.commands[i].func.windowManager_func(wm);
             } else {
                 printf("Error: '%s' requires a WindowManager\n", name);
             }

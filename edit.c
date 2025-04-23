@@ -1,8 +1,9 @@
 #include "edit.h"
+#include "lsp.h"
+#include "bytecode.h"
 #include "editor.h"
 #include "buffer.h"
 #include "commands.h"
-#include "draw.h"
 #include "keychords.h"
 #include "faces.h"
 #include "symbols.h"
@@ -19,7 +20,10 @@
 #include <unistd.h>
 #include "globals.h"
 #include "syntax.h"
-#include "lsp.h"
+#include "undo.h"
+#include <dirent.h>
+#include "dired.h"
+#include "draw.h"
 
 
 jmp_buf env; // NOTE Global jump buffer
@@ -1660,15 +1664,12 @@ void forward_word(Buffer *buffer, bool shift, int arg) {
    Move backward until encountering the beginning of a word.
 */
 void backward_word(Buffer *buffer, bool shift, int arg) {
-    forward_word(buffer, -arg, shift);
+    forward_word(buffer, shift, -arg);
 }
 
 
 
-
-
-
-// FIXME incorrect fr fr
+// FIXME Just wrong
 void transpose_subr(Buffer *buffer, void (*mover)(Buffer *, bool, int), int arg) {
     if (buffer == NULL || mover == NULL) return;
 
@@ -2044,6 +2045,7 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
     if (buffer->region.active) buffer->region.active = false;
     if (isearch.searching) {
         add_to_history(nh, prompt->content, minibuffer->content);
+        resetHistoryIndex(nh, prompt->content);
         isearch.lastSearch = strdup(minibuffer->content);
         minibuffer->size = 0;
         minibuffer->point = 0;
@@ -2053,6 +2055,7 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
         prompt->content = strdup("");
     } else if (strcmp(prompt->content, "Find file: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
+        resetHistoryIndex(nh, prompt->content);
         find_file(bm, wm);
         minibuffer->size = 0;
         minibuffer->point = 0;
@@ -2062,46 +2065,80 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
         // inside the key callback (for now) TODO
     } else if (strcmp(prompt->content, "M-x ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
+        resetHistoryIndex(nh, prompt->content);
         execute_extended_command(bm);
     } else if (strcmp(prompt->content, "Eval: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
+        resetHistoryIndex(nh, prompt->content);
         eval_expression(bm); // Let eval_expression handle everything
     }
     else if (strcmp(prompt->content, "Keep lines containing match for regexp: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
+        resetHistoryIndex(nh, prompt->content);
         keep_lines(bm);
     }
     else if (strcmp(prompt->content, "Switch font to: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
+        resetHistoryIndex(nh, prompt->content);
         load_font(bm);
     }
     else if (strcmp(prompt->content, "Switch to buffer: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
+        resetHistoryIndex(nh, prompt->content);
         switch_to_buffer(bm);
     }
     else if (strcmp(prompt->content, "Change major mode: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
+        resetHistoryIndex(nh, prompt->content);
         wm->activeWindow->buffer->major_mode = strdup(buffer->content);
     }
 
     else if (strcmp(prompt->content, "Goto line: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
+        resetHistoryIndex(nh, prompt->content);
         goto_line(bm);
         minibuffer->size = 0;
         minibuffer->point = 0;
         minibuffer->content[0] = '\0';
         prompt->content = strdup("");
     }
+
+    else if (strcmp(prompt->content, "Eval bytecode: ") == 0) {
+        add_to_history(nh, prompt->content, minibuffer->content);
+        resetHistoryIndex(nh, prompt->content);
+        cleanBuffer(bm, "prompt");
+        execute_bytecode(minibuffer->content, minibuffer, true);
+    }
+
     else if (strcmp(prompt->content, "Shell command: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
+        resetHistoryIndex(nh, prompt->content);
         cleanBuffer(bm, "prompt");
-        execute_shell_command(bm, minibuffer->content);
+        execute_shell_command(minibuffer->content, minibuffer);
         // TODO apply syntax to minibuffer once
         /* apply_ansi_color_syntax(minibuffer); */
+    }
+
+    else if (strcmp(prompt->content, "Insert shell command: ") == 0) {
+        add_to_history(nh, prompt->content, minibuffer->content);
+        resetHistoryIndex(nh, prompt->content);
+        cleanBuffer(bm, "prompt");
+        insert_shell_command(bm);
+        /* apply_ansi_color_syntax(minibuffer); // TODO */
+    }
+    else if (strcmp(prompt->content, "Append shell command: ") == 0) {
+        add_to_history(nh, prompt->content, minibuffer->content);
+        resetHistoryIndex(nh, prompt->content);
+        cleanBuffer(bm, "prompt");
+        append_shell_command(bm);
+        /* apply_ansi_color_syntax(minibuffer); // TODO */
    }
+
+
 
     else if (strcmp(prompt->content, "Symbol: ") == 0) {
         add_to_history(nh, prompt->content, minibuffer->content);
+        resetHistoryIndex(nh, prompt->content);
         cleanBuffer(bm, "prompt");
 
         // Get the vertico content
@@ -2149,6 +2186,7 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
         // Reset cursor position to the beginning
         minibuffer->point = 0;
 
+
         free(symbol_results);
     }
 
@@ -2173,12 +2211,12 @@ void enter(Buffer *buffer, BufferManager *bm, WindowManager *wm,
             insertChar(buffer, '\n');
         }
 
+
         if (electric_indent_mode) {
             indent_line(buffer, shiftPressed, arg);
         }
     }
 }
-
 
 // NOTE We create files when they don't exist (and directories to get to that file)
 // automatically, add an option to do it on save-buffer instead of find-file
@@ -2223,9 +2261,6 @@ int mkdirp(const char *path, mode_t mode) {
 
     return 0;
 }
-
-
-
 
 const char *getProjectRoot(const char *path) {
     const char *lastSlash = strrchr(path, '/');
@@ -2317,6 +2352,35 @@ void find_file(BufferManager *bm, WindowManager *wm) {
         fullPath[sizeof(fullPath) - 1] = '\0';
     }
 
+    // Check if the path is a directory
+    struct stat st;
+    if (stat(fullPath, &st) == 0 && S_ISDIR(st.st_mode)) {
+        // Create a temporary buffer with the directory path
+        Buffer tempBuffer = {0};
+        tempBuffer.path = strdup(fullPath);
+        if (!tempBuffer.path) {
+            message("Memory allocation failed");
+            return;
+        }
+
+        // Save current buffer and temporarily set active buffer
+        Buffer *prevBuffer = wm->activeWindow->buffer;
+        wm->activeWindow->buffer = &tempBuffer;
+
+        // Use dired_jump to handle the directory
+        bool success = dired_jump(wm);
+        
+        // Restore previous buffer if dired_jump failed
+        if (!success) {
+            wm->activeWindow->buffer = prevBuffer;
+        }
+        
+        // Clean up
+        free(tempBuffer.path);
+        return;
+    }
+
+    // Handle regular files
     // Create directories if they don't exist
     char *dirPath = strdup(fullPath);
     if (!dirPath) {
@@ -2330,7 +2394,7 @@ void find_file(BufferManager *bm, WindowManager *wm) {
         if (mkdirp(dirPath, 0755) != 0) {
             char errMsg[256];
             snprintf(errMsg, sizeof(errMsg), "Failed to create directory %s: %s",
-                     dirPath, strerror(errno));
+                    dirPath, strerror(errno));
             message(errMsg);
             free(dirPath);
             return;
@@ -2348,7 +2412,7 @@ void find_file(BufferManager *bm, WindowManager *wm) {
         if (!file) {
             char errMsg[256];
             snprintf(errMsg, sizeof(errMsg), "Failed to create file %s: %s", fullPath,
-                     strerror(errno));
+                    strerror(errno));
             message(errMsg);
             return;
         }
@@ -2359,7 +2423,7 @@ void find_file(BufferManager *bm, WindowManager *wm) {
     char displayPath[PATH_MAX];
     if (strncmp(fullPath, homeDir, strlen(homeDir)) == 0) {
         snprintf(displayPath, sizeof(displayPath), "~%s",
-                 fullPath + strlen(homeDir));
+                fullPath + strlen(homeDir));
     } else {
         strncpy(displayPath, fullPath, sizeof(displayPath) - 1);
         displayPath[sizeof(displayPath) - 1] = '\0';
@@ -2400,7 +2464,7 @@ void find_file(BufferManager *bm, WindowManager *wm) {
         return;
     }
 
-    // NOTE Notify LSP client if this file is in a workspace
+    // Notify LSP client if this file is in a workspace
     LspClient* client = get_client_for_current_buffer();
     if (client && client->initialized) {
         lsp_notify_did_open(fileBuffer);
@@ -2440,10 +2504,12 @@ void find_file(BufferManager *bm, WindowManager *wm) {
     // Switch to new buffer and parse syntax
     switchToBuffer(bm, fileBuffer->name);
     if (major_mode_supported(fileBuffer)) {
-        parseSyntax(fileBuffer);  // idk
+        clearSyntaxArray(fileBuffer);
+        parseSyntax(fileBuffer);
     }
+    
     fill_scopes(fileBuffer, &fileBuffer->scopes);
-    updateDiffs(fileBuffer); // TODO if git_dir_p()
+    updateDiffs(fileBuffer);
 
     // Show appropriate message
     if (isNewFile) {
@@ -2454,6 +2520,444 @@ void find_file(BufferManager *bm, WindowManager *wm) {
         message(msg);
     }
 }
+
+
+// REWRITE
+/* void find_file(BufferManager *bm, WindowManager *wm) { */
+/*     Buffer *minibuffer = getBuffer(bm, "minibuffer"); */
+/*     Buffer *prompt = getBuffer(bm, "prompt"); */
+
+/*     // Initial minibuffer setup */
+/*     if (minibuffer->size == 0) { */
+/*         minibuffer->size = 0; */
+/*         minibuffer->content[0] = '\0'; */
+/*         minibuffer->point = 0; */
+
+/*         // Use the path of the buffer in the active window */
+/*         if (wm->activeWindow && wm->activeWindow->buffer && wm->activeWindow->buffer->path) { */
+/*             char *pathForMinibuffer = strdup(wm->activeWindow->buffer->path); */
+/*             if (pathForMinibuffer) { */
+/*                 trimTrailingFile(pathForMinibuffer); */
+/*                 setBufferContent(minibuffer, pathForMinibuffer, true); */
+/*                 free(pathForMinibuffer); */
+/*             } */
+/*         } */
+
+/*         free(prompt->content); */
+/*         prompt->content = strdup("Find file: "); */
+/*         switchToBuffer(bm, "minibuffer"); */
+/*         return; */
+/*     } */
+
+/*     // Resolve path with home directory expansion */
+/*     const char *homeDir = getenv("HOME"); */
+/*     if (!homeDir) { */
+/*         message("Environment variable HOME is not set"); */
+/*         return; */
+/*     } */
+
+/*     char fullPath[PATH_MAX]; */
+/*     const char *filePath = minibuffer->content; */
+
+/*     if (filePath[0] == '~') { */
+/*         snprintf(fullPath, sizeof(fullPath), "%s%s", homeDir, filePath + 1); */
+/*     } else { */
+/*         strncpy(fullPath, filePath, sizeof(fullPath) - 1); */
+/*         fullPath[sizeof(fullPath) - 1] = '\0'; */
+/*     } */
+
+/*     // Check if the path is a directory */
+/*     struct stat st; */
+/*     if (stat(fullPath, &st) == 0 && S_ISDIR(st.st_mode)) { */
+/*         // Handle directory - create a Dired buffer */
+/*         char displayPath[PATH_MAX]; */
+/*         if (strncmp(fullPath, homeDir, strlen(homeDir)) == 0) { */
+/*             snprintf(displayPath, sizeof(displayPath), "~%s", */
+/*                      fullPath + strlen(homeDir)); */
+/*         } else { */
+/*             strncpy(displayPath, fullPath, sizeof(displayPath) - 1); */
+/*             displayPath[sizeof(displayPath) - 1] = '\0'; */
+/*         } */
+
+/*         // Check if we already have a Dired buffer for this directory */
+/*         char bufferName[PATH_MAX + 32]; */
+/*         snprintf(bufferName, sizeof(bufferName), "Dired: %s", displayPath); */
+        
+/*         Buffer *existingBuffer = getBuffer(bm, bufferName); */
+/*         if (existingBuffer) { */
+/*             // Switch to existing Dired buffer */
+/*             wm->activeWindow->buffer = existingBuffer; */
+/*             switchToBuffer(bm, bufferName); */
+/*             return; */
+/*         } */
+
+/*         // Create new Dired buffer */
+/*         Buffer *diredBuffer = generate_new_buffer(bufferName, fullPath, fontPath); */
+/*         if (!diredBuffer) { */
+/*             message("Failed to create Dired buffer"); */
+/*             return; */
+/*         } */
+
+/*         // Initialize Dired data structure */
+/*         Dired *dired = dired_new(fullPath, diredBuffer); */
+/*         if (!dired) { */
+/*             message("Failed to read directory"); */
+/*             freeBuffer(diredBuffer); */
+/*             return; */
+/*         } */
+
+/*         // Format the directory listing */
+/*         char *diredContent = dired_format_all_entries(dired); */
+/*         if (!diredContent) { */
+/*             message("Failed to format directory listing"); */
+/*             dired_free(dired); */
+/*             freeBuffer(diredBuffer); */
+/*             return; */
+/*         } */
+
+/*         // Set buffer content and properties */
+/*         setBufferContent(diredBuffer, diredContent, true); */
+/*         free(diredContent); */
+/*         dired_free(dired); */
+
+/*         // Set major mode to dired */
+/*         setMajorMode(diredBuffer, "dired"); */
+
+/*         // Switch to the new buffer */
+/*         wm->activeWindow->buffer = diredBuffer; */
+/*         switchToBuffer(bm, bufferName); */
+/*         message("Dired buffer created"); */
+/*         return; */
+/*     } */
+
+/*     // Rest of the function remains the same for file handling */
+/*     // (original code for handling regular files) */
+/*     // ... [previous file handling code] ... */
+
+/*     // Create directories if they don't exist */
+/*     char *dirPath = strdup(fullPath); */
+/*     if (!dirPath) { */
+/*         message("Memory allocation failed"); */
+/*         return; */
+/*     } */
+
+/*     char *lastSlash = strrchr(dirPath, '/'); */
+/*     if (lastSlash) { */
+/*         *lastSlash = '\0'; */
+/*         if (mkdirp(dirPath, 0755) != 0) { */
+/*             char errMsg[256]; */
+/*             snprintf(errMsg, sizeof(errMsg), "Failed to create directory %s: %s", */
+/*                      dirPath, strerror(errno)); */
+/*             message(errMsg); */
+/*             free(dirPath); */
+/*             return; */
+/*         } */
+/*     } */
+/*     free(dirPath); */
+
+/*     // Try to open existing file first */
+/*     FILE *file = fopen(fullPath, "r"); */
+/*     bool isNewFile = false; */
+
+/*     if (!file) { */
+/*         // Create new file if it doesn't exist */
+/*         file = fopen(fullPath, "w+"); */
+/*         if (!file) { */
+/*             char errMsg[256]; */
+/*             snprintf(errMsg, sizeof(errMsg), "Failed to create file %s: %s", fullPath, */
+/*                      strerror(errno)); */
+/*             message(errMsg); */
+/*             return; */
+/*         } */
+/*         isNewFile = true; */
+/*     } */
+
+/*     // Create display path with ~ notation if applicable */
+/*     char displayPath[PATH_MAX]; */
+/*     if (strncmp(fullPath, homeDir, strlen(homeDir)) == 0) { */
+/*         snprintf(displayPath, sizeof(displayPath), "~%s", */
+/*                  fullPath + strlen(homeDir)); */
+/*     } else { */
+/*         strncpy(displayPath, fullPath, sizeof(displayPath) - 1); */
+/*         displayPath[sizeof(displayPath) - 1] = '\0'; */
+/*     } */
+
+/*     // Check if the buffer already exists */
+/*     Buffer *existingBuffer = getBuffer(bm, displayPath); */
+/*     if (existingBuffer) { */
+/*         if (find_file_focus_existing) { */
+/*             // Find the window that already displays the buffer */
+/*             Window *win = wm->head; */
+/*             while (win != NULL) { */
+/*                 if (win->buffer == existingBuffer) { */
+/*                     // Make this window the active one */
+/*                     wm->activeWindow = win; */
+/*                     switchToBuffer(bm, displayPath); */
+/*                     fclose(file); */
+/*                     return; */
+/*                 } */
+/*                 win = win->next; */
+/*             } */
+/*         } else { */
+/*             // Allow the same buffer to be displayed in multiple windows */
+/*             wm->activeWindow->buffer = existingBuffer; */
+/*             switchToBuffer(bm, displayPath); */
+/*             fclose(file); */
+/*             return; */
+/*         } */
+/*     } */
+
+/*     // Create and setup the buffer */
+/*     newBuffer(bm, wm, displayPath, displayPath, fontPath); */
+/*     Buffer *fileBuffer = getBuffer(bm, displayPath); */
+    
+/*     if (!fileBuffer) { */
+/*         message("Failed to create buffer"); */
+/*         fclose(file); */
+/*         return; */
+/*     } */
+
+/*     // NOTE Notify LSP client if this file is in a workspace */
+/*     LspClient* client = get_client_for_current_buffer(); */
+/*     if (client && client->initialized) { */
+/*         lsp_notify_did_open(fileBuffer); */
+/*     } */
+
+/*     recenter(wm->activeWindow, true); */
+
+/*     if (!isNewFile) { */
+/*         // Read existing file content */
+/*         char readBuffer[1024]; */
+/*         size_t bytesRead; */
+
+/*         while ((bytesRead = fread(readBuffer, 1, sizeof(readBuffer), file)) > 0) { */
+/*             // Ensure buffer capacity */
+/*             if (fileBuffer->size + bytesRead >= fileBuffer->capacity) { */
+/*                 fileBuffer->capacity = (fileBuffer->size + bytesRead) * 2; */
+/*                 char *newContent = realloc(fileBuffer->content, fileBuffer->capacity); */
+/*                 if (!newContent) { */
+/*                     message("Failed to resize buffer"); */
+/*                     free(fileBuffer->content); */
+/*                     fclose(file); */
+/*                     return; */
+/*                 } */
+/*                 fileBuffer->content = newContent; */
+/*             } */
+
+/*             // Copy read data to buffer */
+/*             memcpy(fileBuffer->content + fileBuffer->size, readBuffer, bytesRead); */
+/*             fileBuffer->size += bytesRead; */
+/*         } */
+/*     } */
+
+/*     // Null terminate buffer content */
+/*     fileBuffer->content[fileBuffer->size] = '\0'; */
+/*     fclose(file); */
+
+/*     // Switch to new buffer and parse syntax */
+/*     switchToBuffer(bm, fileBuffer->name); */
+/*     if (major_mode_supported(fileBuffer)) { */
+/*         clearSyntaxArray(fileBuffer); */
+/*         parseSyntax(fileBuffer); */
+/*     } */
+    
+/*     fill_scopes(fileBuffer, &fileBuffer->scopes); */
+/*     updateDiffs(fileBuffer); */
+
+/*     // Show appropriate message */
+/*     if (isNewFile) { */
+/*         message("(New file)"); */
+/*     } else { */
+/*         char msg[256]; */
+/*         snprintf(msg, sizeof(msg), "Loaded %s", displayPath); */
+/*         message(msg); */
+/*     } */
+/* } */
+
+
+// TODO DIRED
+/* void find_file(BufferManager *bm, WindowManager *wm) { */
+/*     Buffer *minibuffer = getBuffer(bm, "minibuffer"); */
+/*     Buffer *prompt = getBuffer(bm, "prompt"); */
+
+/*     // Initial minibuffer setup */
+/*     if (minibuffer->size == 0) { */
+/*         minibuffer->size = 0; */
+/*         minibuffer->content[0] = '\0'; */
+/*         minibuffer->point = 0; */
+
+/*         // Use the path of the buffer in the active window */
+/*         if (wm->activeWindow && wm->activeWindow->buffer && wm->activeWindow->buffer->path) { */
+/*             char *pathForMinibuffer = strdup(wm->activeWindow->buffer->path); */
+/*             if (pathForMinibuffer) { */
+/*                 trimTrailingFile(pathForMinibuffer); */
+/*                 setBufferContent(minibuffer, pathForMinibuffer, true); */
+/*                 free(pathForMinibuffer); */
+/*             } */
+/*         } */
+
+/*         free(prompt->content); */
+/*         prompt->content = strdup("Find file: "); */
+/*         switchToBuffer(bm, "minibuffer"); */
+/*         return; */
+/*     } */
+
+/*     // Resolve path with home directory expansion */
+/*     const char *homeDir = getenv("HOME"); */
+/*     if (!homeDir) { */
+/*         message("Environment variable HOME is not set"); */
+/*         return; */
+/*     } */
+
+/*     char fullPath[PATH_MAX]; */
+/*     const char *filePath = minibuffer->content; */
+
+/*     if (filePath[0] == '~') { */
+/*         snprintf(fullPath, sizeof(fullPath), "%s%s", homeDir, filePath + 1); */
+/*     } else { */
+/*         strncpy(fullPath, filePath, sizeof(fullPath) - 1); */
+/*         fullPath[sizeof(fullPath) - 1] = '\0'; */
+/*     } */
+
+/*     // Create directories if they don't exist */
+/*     char *dirPath = strdup(fullPath); */
+/*     if (!dirPath) { */
+/*         message("Memory allocation failed"); */
+/*         return; */
+/*     } */
+
+/*     char *lastSlash = strrchr(dirPath, '/'); */
+/*     if (lastSlash) { */
+/*         *lastSlash = '\0'; */
+/*         if (mkdirp(dirPath, 0755) != 0) { */
+/*             char errMsg[256]; */
+/*             snprintf(errMsg, sizeof(errMsg), "Failed to create directory %s: %s", */
+/*                      dirPath, strerror(errno)); */
+/*             message(errMsg); */
+/*             free(dirPath); */
+/*             return; */
+/*         } */
+/*     } */
+/*     free(dirPath); */
+
+/*     // Try to open existing file first */
+/*     FILE *file = fopen(fullPath, "r"); */
+/*     bool isNewFile = false; */
+
+/*     if (!file) { */
+/*         // Create new file if it doesn't exist */
+/*         file = fopen(fullPath, "w+"); */
+/*         if (!file) { */
+/*             char errMsg[256]; */
+/*             snprintf(errMsg, sizeof(errMsg), "Failed to create file %s: %s", fullPath, */
+/*                      strerror(errno)); */
+/*             message(errMsg); */
+/*             return; */
+/*         } */
+/*         isNewFile = true; */
+/*     } */
+
+/*     // Create display path with ~ notation if applicable */
+/*     char displayPath[PATH_MAX]; */
+/*     if (strncmp(fullPath, homeDir, strlen(homeDir)) == 0) { */
+/*         snprintf(displayPath, sizeof(displayPath), "~%s", */
+/*                  fullPath + strlen(homeDir)); */
+/*     } else { */
+/*         strncpy(displayPath, fullPath, sizeof(displayPath) - 1); */
+/*         displayPath[sizeof(displayPath) - 1] = '\0'; */
+/*     } */
+
+/*     // Check if the buffer already exists */
+/*     Buffer *existingBuffer = getBuffer(bm, displayPath); */
+/*     if (existingBuffer) { */
+/*         if (find_file_focus_existing) { */
+/*             // Find the window that already displays the buffer */
+/*             Window *win = wm->head; */
+/*             while (win != NULL) { */
+/*                 if (win->buffer == existingBuffer) { */
+/*                     // Make this window the active one */
+/*                     wm->activeWindow = win; */
+/*                     switchToBuffer(bm, displayPath); */
+/*                     fclose(file); */
+/*                     return; */
+/*                 } */
+/*                 win = win->next; */
+/*             } */
+/*         } else { */
+/*             // Allow the same buffer to be displayed in multiple windows */
+/*             wm->activeWindow->buffer = existingBuffer; */
+/*             switchToBuffer(bm, displayPath); */
+/*             fclose(file); */
+/*             return; */
+/*         } */
+/*     } */
+
+/*     // Create and setup the buffer */
+/*     newBuffer(bm, wm, displayPath, displayPath, fontPath); */
+/*     Buffer *fileBuffer = getBuffer(bm, displayPath); */
+    
+/*     if (!fileBuffer) { */
+/*         message("Failed to create buffer"); */
+/*         fclose(file); */
+/*         return; */
+/*     } */
+
+/*     // NOTE Notify LSP client if this file is in a workspace */
+/*     LspClient* client = get_client_for_current_buffer(); */
+/*     if (client && client->initialized) { */
+/*         lsp_notify_did_open(fileBuffer); */
+/*     } */
+
+/*     recenter(wm->activeWindow, true); */
+
+/*     if (!isNewFile) { */
+/*         // Read existing file content */
+/*         char readBuffer[1024]; */
+/*         size_t bytesRead; */
+
+/*         while ((bytesRead = fread(readBuffer, 1, sizeof(readBuffer), file)) > 0) { */
+/*             // Ensure buffer capacity */
+/*             if (fileBuffer->size + bytesRead >= fileBuffer->capacity) { */
+/*                 fileBuffer->capacity = (fileBuffer->size + bytesRead) * 2; */
+/*                 char *newContent = realloc(fileBuffer->content, fileBuffer->capacity); */
+/*                 if (!newContent) { */
+/*                     message("Failed to resize buffer"); */
+/*                     free(fileBuffer->content); */
+/*                     fclose(file); */
+/*                     return; */
+/*                 } */
+/*                 fileBuffer->content = newContent; */
+/*             } */
+
+/*             // Copy read data to buffer */
+/*             memcpy(fileBuffer->content + fileBuffer->size, readBuffer, bytesRead); */
+/*             fileBuffer->size += bytesRead; */
+/*         } */
+/*     } */
+
+/*     // Null terminate buffer content */
+/*     fileBuffer->content[fileBuffer->size] = '\0'; */
+/*     fclose(file); */
+
+/*     // Switch to new buffer and parse syntax */
+/*     switchToBuffer(bm, fileBuffer->name); */
+/*     if (major_mode_supported(fileBuffer)) { */
+/*         clearSyntaxArray(fileBuffer); */
+/*         parseSyntax(fileBuffer); // idk */
+/*     } */
+    
+/*     fill_scopes(fileBuffer, &fileBuffer->scopes); */
+/*     updateDiffs(fileBuffer); // TODO if git_dir_p() */
+
+/*     // Show appropriate message */
+/*     if (isNewFile) { */
+/*         message("(New file)"); */
+/*     } else { */
+/*         char msg[256]; */
+/*         snprintf(msg, sizeof(msg), "Loaded %s", displayPath); */
+/*         message(msg); */
+/*     } */
+/* } */
 
 
 
@@ -2647,7 +3151,15 @@ void updateSyntaxHighlighting(Buffer *buffer, int index, int lengthChange) {
     }
 }
 
-// TODO do the mark wrap thing DOIT
+
+
+
+
+
+
+
+
+
 /**
  * Moves memory within a buffer and adjusts syntax ranges or highlighting as needed.
  * This function is a wrapper around memmove, with additional logic for buffer management.
@@ -2675,8 +3187,8 @@ void *mm(void *dest, const void *src, size_t n, Buffer *buffer, int index, int l
         longjmp(env, 1); // Jump back to the MM macro on failure
     }
 
-    // Move syntax memory ranges for fundamental mode
-    if (major_mode_is(buffer, "fundamental")) msm(buffer, index, lengthChange);
+    // Move syntax memory ranges for non TS modes
+    if (!major_mode_supported(buffer)) msm(buffer, index, lengthChange);
 
 
     // Update syntax highlighting for supported major modes
@@ -2690,26 +3202,10 @@ void *mm(void *dest, const void *src, size_t n, Buffer *buffer, int index, int l
         }
     }
 
+    if (!inhibit_screenshot) screenshot(buffer);
+
     return result;
 }
-
-
-// Memmove wrapper NOTE DON'T USE DIRECTLY use MM macro instead.
-/* void *mm(void *dest, const void *src, size_t n, Buffer *buffer, int index, */
-/*          int lengthChange) { */
-/*     if (buffer->readOnly) { */
-/*         message("Buffer is read-only: Can't modify #<buffer %s>", buffer->name); */
-/*         longjmp(env, 1); // Jump back to the MM macro */
-/*     } */
-
-/*     // Perform the memory move */
-/*     void *result = memmove(dest, src, n); */
-
-/*     // Adjust syntax ranges after the memory move */
-/*     if (major_mode_is(buffer, "fundamental")) msm(buffer, index, lengthChange); */
-
-/*     return result; */
-/* } */
 
 void backspace(Buffer *buffer, bool electric_pair_mode) {
     if (buffer->point > 0 && electric_pair_mode) {
@@ -2753,111 +3249,173 @@ void backspace(Buffer *buffer, bool electric_pair_mode) {
     }
 }
 
+void execute_shell_command_at_point(BufferManager *bm, char *command, int arg) {
+    // TODO extract thing at point run it as shell command and insert the output
+    // after ARG lines
+}
+
 /* TODO (Shell command succeeded with no output) */
 /* in this case clear the minibuffer then go to the previous buffer */
-void execute_shell_command(BufferManager *bm, char *command) {
-    char *output = NULL;
-    char current_dir[PATH_MAX];
-    char target_dir[PATH_MAX];
-    bool dir_changed = false;
+void execute_shell_command(char *command, Buffer *outputBuffer) {
+  char *output = NULL;
+  char current_dir[PATH_MAX];
+  char target_dir[PATH_MAX];
+  bool dir_changed = false;
 
-    // Get current working directory
-    if (getcwd(current_dir, sizeof(current_dir)) == NULL) {
-        message("Failed to get current directory");
-        return;
-    }
+  // Get current working directory
+  if (getcwd(current_dir, sizeof(current_dir)) == NULL) {
+    message("Failed to get current directory");
+    return;
+  }
 
-    // If we have a last buffer with a path, change to its directory
-    const char *homeDir = getenv("HOME");
-    char fullPath[PATH_MAX];
-    const char *filePath = wm.activeWindow->buffer->path;
+  // If we have a last buffer with a path, change to its directory
+  const char *homeDir = getenv("HOME");
+  char fullPath[PATH_MAX];
+  const char *filePath = wm.activeWindow->buffer->path;
 
-    // Resolve full path from buffer path
-    if (filePath[0] == '~') {
-        if (homeDir) {
-            snprintf(fullPath, sizeof(fullPath), "%s%s", homeDir, filePath + 1);
-        } else {
-            message("HOME environment variable not set");
-            return;
-        }
+  // Resolve full path from buffer path
+  if (filePath[0] == '~') {
+    if (homeDir) {
+      snprintf(fullPath, sizeof(fullPath), "%s%s", homeDir, filePath + 1);
     } else {
-        strncpy(fullPath, filePath, sizeof(fullPath) - 1);
-        fullPath[sizeof(fullPath) - 1] = '\0';
+      message("HOME environment variable not set");
+      return;
+    }
+  } else {
+    strncpy(fullPath, filePath, sizeof(fullPath) - 1);
+    fullPath[sizeof(fullPath) - 1] = '\0';
+  }
+
+  // Get directory part of the path
+  strncpy(target_dir, fullPath, sizeof(target_dir) - 1);
+  target_dir[sizeof(target_dir) - 1] = '\0';
+  char *last_slash = strrchr(target_dir, '/');
+  if (last_slash) {
+    *last_slash = '\0'; // Truncate at last slash to get directory path
+
+    // Change to target directory
+    if (chdir(target_dir) == 0) {
+      dir_changed = true;
+    } else {
+      char errMsg[256];
+      snprintf(errMsg, sizeof(errMsg), "Failed to change directory: %s",
+               strerror(errno));
+      message(errMsg);
+      return;
+    }
+  }
+
+  // Execute the command
+  FILE *pipe = popen(command, "r");
+  if (pipe == NULL) {
+    message("Failed to execute command");
+    if (dir_changed) {
+      chdir(current_dir); // Restore original directory
+    }
+    return;
+  }
+
+  // Read command output
+  char buffer[128];
+  size_t output_size = 0;
+  while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+    size_t chunk_length = strlen(buffer);
+    char *new_output = realloc(output, output_size + chunk_length + 1);
+    if (new_output == NULL) {
+      free(output);
+      pclose(pipe);
+      message("Failed to allocate memory for command output");
+      if (dir_changed) {
+        chdir(current_dir);
+      }
+      return;
+    }
+    output = new_output;
+    memcpy(output + output_size, buffer, chunk_length);
+    output_size += chunk_length;
+  }
+
+  // Process output
+  if (output != NULL) {
+    output[output_size] = '\0';
+    if (output_size > 0 && output[output_size - 1] == '\n') {
+      output[output_size - 1] = '\0';
     }
 
-    // Get directory part of the path
-    strncpy(target_dir, fullPath, sizeof(target_dir) - 1);
-    target_dir[sizeof(target_dir) - 1] = '\0';
-    char *last_slash = strrchr(target_dir, '/');
-    if (last_slash) {
-        *last_slash = '\0';  // Truncate at last slash to get directory path
-            
-        // Change to target directory
-        if (chdir(target_dir) == 0) {
-            dir_changed = true;
-        } else {
-            char errMsg[256];
-            snprintf(errMsg, sizeof(errMsg), "Failed to change directory: %s", strerror(errno));
-            message(errMsg);
-            return;
-        }
+    if (strcmp(outputBuffer->name, "minibuffer") == 0) {
+        setBufferContent(outputBuffer, output, true);
+        minibuffer->point = 0;
+    } else {
+        // TODO 
     }
+    free(output);
+  }
 
-    // Execute the command
-    FILE *pipe = popen(command, "r");
-    if (pipe == NULL) {
-        message("Failed to execute command");
-        if (dir_changed) {
-            chdir(current_dir);  // Restore original directory
-        }
+  pclose(pipe);
+
+  // Restore original working directory if we changed it
+  if (dir_changed) {
+    if (chdir(current_dir) != 0) {
+      message("Failed to restore original directory");
+    }
+  }
+}
+
+
+/**
+   new
+*/
+void insert_shell_command(BufferManager *bm) {
+    Buffer *minibuffer     = getBuffer(bm, "minibuffer");
+    Buffer *prompt         = getBuffer(bm, "prompt");
+
+    if (minibuffer->size == 0) {
+        minibuffer->size = 0;
+        minibuffer->point = 0;
+        minibuffer->content[0] = '\0';
+        free(prompt->content);
+        prompt->content = strdup("Insert shell command: ");
+        switchToBuffer(bm, "minibuffer");
         return;
     }
 
-    // Read command output
-    char buffer[128];
-    size_t output_size = 0;
-    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
-        size_t chunk_length = strlen(buffer);
-        char *new_output = realloc(output, output_size + chunk_length + 1);
-        if (new_output == NULL) {
-            free(output);
-            pclose(pipe);
-            message("Failed to allocate memory for command output");
-            if (dir_changed) {
-                chdir(current_dir);
-            }
-            return;
-        }
-        output = new_output;
-        memcpy(output + output_size, buffer, chunk_length);
-        output_size += chunk_length;
-    }
+    insertShellCommand(wm.activeWindow->buffer, minibuffer->content, true);
 
-    // Process output
-    if (output != NULL) {
-        output[output_size] = '\0';
-        if (output_size > 0 && output[output_size - 1] == '\n') {
-            output[output_size - 1] = '\0';
-        }
-
-        Buffer *minibuffer = getBuffer(bm, "minibuffer");
-        setBufferContent(minibuffer, output, true);
-        minibuffer->point = 0;
-        free(output);
-
-
-    }
-
-    pclose(pipe);
-
-    // Restore original working directory if we changed it
-    if (dir_changed) {
-        if (chdir(current_dir) != 0) {
-            message("Failed to restore original directory");
-        }
-    }
-
+    // Clear minibuffer after operation
+    minibuffer->size = 0;
+    minibuffer->point = 0;
+    minibuffer->content[0] = '\0';
+    prompt->content = strdup("");
+    switchToBuffer(bm, wm.activeWindow->buffer->name);
 }
+
+void append_shell_command(BufferManager *bm) {
+    Buffer *minibuffer     = getBuffer(bm, "minibuffer");
+    Buffer *prompt         = getBuffer(bm, "prompt");
+
+    if (minibuffer->size == 0) {
+        minibuffer->size = 0;
+        minibuffer->point = 0;
+        minibuffer->content[0] = '\0';
+        free(prompt->content);
+        prompt->content = strdup("Append shell command: ");
+        switchToBuffer(bm, "minibuffer");
+        return;
+    }
+
+
+    appendShellCommand(wm.activeWindow->buffer, minibuffer->content, true);
+
+    // Clear minibuffer after operation
+    minibuffer->size = 0;
+    minibuffer->point = 0;
+    minibuffer->content[0] = '\0';
+    prompt->content = strdup("");
+    switchToBuffer(bm, wm.activeWindow->buffer->name);
+}
+
+
+
 
 /**
    Execute string COMMAND in inferior shell; display output, if any.
@@ -2977,34 +3535,6 @@ void switch_to_buffer(BufferManager *bm) {
     free(target_buffer_name);
 }
 
-
-/**
-   Show help for SYMBOL, a variable, function, macro, or face.
-*/
-void helpful_symbol(BufferManager *bm) {
-    Buffer *minibuffer     = getBuffer(bm, "minibuffer");
-    Buffer *prompt         = getBuffer(bm, "prompt");
-    Buffer *previousBuffer = getPreviousBuffer(bm);
-
-    // TODO IMPORTANT Recursive minibuffer
-    if (minibuffer->size == 0) {
-        minibuffer->size = 0;
-        minibuffer->point = 0;
-        minibuffer->content[0] = '\0';
-        free(prompt->content);
-        prompt->content = strdup("Symbol: ");
-        switchToBuffer(bm, "minibuffer");
-        return;
-    }
-
-
-    // Clear minibuffer after operation
-    minibuffer->size = 0;
-    minibuffer->point = 0;
-    minibuffer->content[0] = '\0';
-    prompt->content = strdup("");
-    switchToBuffer(bm, previousBuffer->name);
-}
 
 #include "commands.h"
 
@@ -4478,7 +5008,7 @@ void insert_guile_symbols(Buffer *buffer) {
 
 
 
-int getGlobalArg(Buffer *argBuffer) {
+int getGlobalArg() {
     if (argBuffer->size == 0 || argBuffer->content[0] == '\0') {
         return 1;
     } else {

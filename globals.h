@@ -76,7 +76,7 @@ extern bool   vertico_mode;
 extern size_t vertico_max_lines;
 extern bool   find_file_focus_existing;
 extern size_t max_gemini_redirections;
-extern bool   revert_buffer_mode;
+
 /* extern bool   scroll_bar_mode; */
 extern bool   scroll_bar;
 
@@ -112,9 +112,18 @@ extern bool ctrlPressed;
 extern bool altPressed;
 extern bool lerp_minimap_on_startup;
 
-
-
 extern bool region_alpha;
 extern size_t region_alpha_amount;
+extern bool savehist;
+extern bool auto_revert;
+
+extern char *state_path;
+extern size_t sxp_indentation;
+extern bool verbose_completion;
+extern bool gay;
+extern char *gay_shader;
+extern bool rainbow_delimiters;
+extern bool inhibit_screenshot;
+extern bool word_based_undo;
 
 #endif

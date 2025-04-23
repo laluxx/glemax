@@ -18,7 +18,10 @@ char *commentfontPath = "./assets/fonts/CartographCF/CartographCF-BoldItalic.otf
 
 /* char *fontPath = "fan.otf"; */
 char *fontPath = "jet-nerd-medium.ttf";
-Font* nerdFont;
+
+NerdFont *nerdFont;
+int nerdFontSize = 15;
+char *nerdFontPath = "./assets/fonts/nerd.tff";
 
 
 Font *globalFontCache[MAX_FONT_SCALE_INDEX] = {NULL};

@@ -5,6 +5,7 @@
 #define PACKAGE_VERSION "1.0"
 
 #include <bfd.h>
+#include "buffer.h"
 
 #undef PACKAGE
 #undef PACKAGE_VERSION
@@ -45,6 +46,8 @@ char *findSymbolsByName(const char *name_pattern);
 void findSymbolsByAddressRange(bfd_vma start_addr, bfd_vma end_addr);
 
 void freeSymbols();
+
+void helpful_symbol(BufferManager *bm);
 
 
 #endif /* SYMBOLS_H */

@@ -17,7 +17,11 @@ extern Font *minifont;
 
 extern int fontincrement; // NOTE unused
 extern int minifontsize;
-extern Font *nerdFont;    // NOTE unused
+
+
+extern NerdFont* nerdFont;
+extern int nerdFontSize;
+extern char* nerdFontPath;
 
 
 #define MAX_FONT_SCALE 27

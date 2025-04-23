@@ -79,4 +79,24 @@ void highlightColumns(Buffer *buffer, int numColors, ...);
 void msm(Buffer *buffer, int index, int lengthChange);
 
 bool major_mode_is_supported(char *grammar);
+
+Color *getRainbowDelimiterColor(TSNode node);
+Color *getIdentifierColor(TSNode node);
+
+
+// TODO it's bad.
+/* typedef struct { */
+/*     uint32_t byte_offset; */
+/*     int32_t depth; */
+/*     Color* color; */
+/* } DelimiterCacheEntry; */
+
+/* typedef struct { */
+/*     DelimiterCacheEntry* entries; */
+/*     size_t count; */
+/*     size_t capacity; */
+/* } DelimitersCache; */
+
+void parse_and_push_compilation_syntax(Buffer *buffer);
+
 #endif // SYNTAX_H

@@ -10,14 +10,6 @@ Theme themes[10];
 Theme currentTheme;
 Theme previousTheme;
 
-
-// TODO take the alpha as a parameter
-/* Color hexToColor(const char *hex) { */
-/*     int r, g, b; */
-/*     sscanf(hex, "#%02x%02x%02x", &r, &g, &b); */
-/*     return (Color){r / 255.0f, g / 255.0f, b / 255.0f, 1.0f}; */
-/* } */
-
 Color hexToColor(const char *hex) {
     int r, g, b, a = 255; // NOTE Default alpha to 255)
     if (strlen(hex) == 9) { //#RRGGBBAA
@@ -102,6 +94,27 @@ void updateThemeInterpolation() {
         currentTheme.diff_hl_bg            = lerpColor(startTheme.diff_hl_bg, endTheme.diff_hl_bg, interpolationProgress);
         currentTheme.clock                 = lerpColor(startTheme.clock, endTheme.clock, interpolationProgress);
 
+        currentTheme.rainbow_delimiters_base_face = lerpColor(startTheme.rainbow_delimiters_base_face, endTheme.rainbow_delimiters_base_face, interpolationProgress);
+        currentTheme.rainbow_delimiters_depth_1_face = lerpColor(startTheme.rainbow_delimiters_depth_1_face, endTheme.rainbow_delimiters_depth_1_face, interpolationProgress);
+        currentTheme.rainbow_delimiters_depth_2_face = lerpColor(startTheme.rainbow_delimiters_depth_2_face, endTheme.rainbow_delimiters_depth_2_face, interpolationProgress);
+        currentTheme.rainbow_delimiters_depth_3_face = lerpColor(startTheme.rainbow_delimiters_depth_3_face, endTheme.rainbow_delimiters_depth_3_face, interpolationProgress);
+        currentTheme.rainbow_delimiters_depth_4_face = lerpColor(startTheme.rainbow_delimiters_depth_4_face, endTheme.rainbow_delimiters_depth_4_face, interpolationProgress);
+        currentTheme.rainbow_delimiters_depth_5_face = lerpColor(startTheme.rainbow_delimiters_depth_5_face, endTheme.rainbow_delimiters_depth_5_face, interpolationProgress);
+        currentTheme.rainbow_delimiters_depth_6_face = lerpColor(startTheme.rainbow_delimiters_depth_6_face, endTheme.rainbow_delimiters_depth_6_face, interpolationProgress);
+
+        // TODO Diredfl..
+
+        currentTheme.diredfl_dir_priv    = lerpColor(startTheme.diredfl_dir_priv,    endTheme.diredfl_dir_priv,    interpolationProgress);  
+        currentTheme.diredfl_read_priv   = lerpColor(startTheme.diredfl_read_priv,   endTheme.diredfl_read_priv,   interpolationProgress);  
+        currentTheme.diredfl_write_priv  = lerpColor(startTheme.diredfl_write_priv,  endTheme.diredfl_write_priv,  interpolationProgress);  
+        currentTheme.diredfl_exec_priv   = lerpColor(startTheme.diredfl_exec_priv,   endTheme.diredfl_exec_priv,   interpolationProgress);  
+        currentTheme.diredfl_no_priv     = lerpColor(startTheme.diredfl_no_priv,     endTheme.diredfl_no_priv,     interpolationProgress);  
+        currentTheme.diredfl_number      = lerpColor(startTheme.diredfl_number,      endTheme.diredfl_number,      interpolationProgress);  
+        currentTheme.diredfl_date_time   = lerpColor(startTheme.diredfl_date_time,   endTheme.diredfl_date_time,   interpolationProgress);  
+        currentTheme.diredfl_dir_name    = lerpColor(startTheme.diredfl_dir_name,    endTheme.diredfl_dir_name,    interpolationProgress);  
+        currentTheme.diredfl_file_suffix = lerpColor(startTheme.diredfl_file_suffix, endTheme.diredfl_file_suffix, interpolationProgress);  
+        currentTheme.diredfl_dir_heading = lerpColor(startTheme.diredfl_dir_heading, endTheme.diredfl_dir_heading, interpolationProgress);  
+    
         if (interpolationProgress >= 1.0f) {
             interpolationProgress = 1.0f;
         }
@@ -194,6 +207,23 @@ void initThemes() {
         .diff_hl_bg            = hexToColor("#1d3930"),
         .diff_hl_change_bg     = hexToColor("#383040"),
         .header_line           = hexToColor("#1e2528"),
+        .rainbow_delimiters_base_face    = hexToColor("#6bd9db"),
+        .rainbow_delimiters_depth_1_face = hexToColor("#6bd9db"),
+        .rainbow_delimiters_depth_2_face = hexToColor("#ab98b5"),
+        .rainbow_delimiters_depth_3_face = hexToColor("#5D8272"),
+        .rainbow_delimiters_depth_4_face = hexToColor("#807f96"),
+        .rainbow_delimiters_depth_5_face = hexToColor("#4d9391"),
+        .rainbow_delimiters_depth_6_face = hexToColor("#c79af4"),
+        .diredfl_dir_heading   = hexToColor("#80bcb6"),
+        .diredfl_dir_priv      = hexToColor("#4d9391"),
+        .diredfl_read_priv     = hexToColor("#35BF88"),
+        .diredfl_write_priv    = hexToColor("#bc90d4"), 
+        .diredfl_exec_priv     = hexToColor("#cd5c60"),  
+        .diredfl_no_priv       = hexToColor("#545c5e"),    
+        .diredfl_number        = hexToColor("#cd5c60"),     
+        .diredfl_date_time     = hexToColor("#9d81ba"),  
+        .diredfl_dir_name      = hexToColor("#4d9391"),   
+        .diredfl_file_suffix   = hexToColor("#ab98b5"),
     };
     themes[1] = (Theme){
         .name                  = "Gum",
@@ -210,7 +240,7 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#272C3A"),
         .minibuffer_prompt     = hexToColor("#9587DD"),
         .region                = hexToColor("#14171e"),
-        .region_fg             = hexToColor("#14171e"),
+        .region_fg             = hexToColor("#bebec4"),
         .message               = hexToColor("#D4D4D6"),
         .type                  = hexToColor("#11ccb2"),
         .string                = hexToColor("#62D2DB"),
@@ -232,6 +262,23 @@ void initThemes() {
         .diff_hl_insert_cursor = hexToColor("#49bdb0"),
         .diff_hl_bg            = hexToColor("#1e383b"),
         .diff_hl_change_bg     = hexToColor("#413a34"),
+        .rainbow_delimiters_base_face    = hexToColor("#11ccb2"),
+        .rainbow_delimiters_depth_1_face = hexToColor("#11ccb2"),
+        .rainbow_delimiters_depth_2_face = hexToColor("#47ba99"),
+        .rainbow_delimiters_depth_3_face = hexToColor("#62D2DB"),
+        .rainbow_delimiters_depth_4_face = hexToColor("#9d81ba"),
+        .rainbow_delimiters_depth_5_face = hexToColor("#35BF88"),
+        .rainbow_delimiters_depth_6_face = hexToColor("#687184"),
+        .diredfl_dir_heading   = hexToColor("#63E8C1"),
+        .diredfl_dir_priv      = hexToColor("#9587DD"),
+        .diredfl_read_priv     = hexToColor("#49bdb0"),
+        .diredfl_write_priv    = hexToColor("#f5c791"), 
+        .diredfl_exec_priv     = hexToColor("#e55c7a"),  
+        .diredfl_no_priv       = hexToColor("#454459"),    
+        .diredfl_number        = hexToColor("#e361c3"),     
+        .diredfl_date_time     = hexToColor("#c79af4"),  
+        .diredfl_dir_name      = hexToColor("#9587DD"),   
+        .diredfl_file_suffix   = hexToColor("#41b0f3"),
     };
     themes[2] = (Theme){
         .name                  = "ocean",
@@ -248,7 +295,7 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#32324A"),
         .minibuffer_prompt     = hexToColor("#738FD7"),
         .region                = hexToColor("#2E403B"),
-        .region_fg             = hexToColor("#2E403B"),
+        .region_fg             = hexToColor("#bebec4"),
         .message               = hexToColor("#E6E6E8"),
         .type                  = hexToColor("#d24b83"),
         .string                = hexToColor("#7CF083"),
@@ -270,6 +317,23 @@ void initThemes() {
         .diff_hl_insert_cursor = hexToColor("#35BF88"),
         .diff_hl_bg            = hexToColor("#1f3b38"),
         .diff_hl_change_bg     = hexToColor("#403732"),
+        .rainbow_delimiters_base_face    = hexToColor("#807f96"),
+        .rainbow_delimiters_depth_1_face = hexToColor("#807f96"),
+        .rainbow_delimiters_depth_2_face = hexToColor("#9d81ba"),
+        .rainbow_delimiters_depth_3_face = hexToColor("#4d9391"),
+        .rainbow_delimiters_depth_4_face = hexToColor("#a0586c"),
+        .rainbow_delimiters_depth_5_face = hexToColor("#53859d"),
+        .rainbow_delimiters_depth_6_face = hexToColor("#5D8272"),
+        .diredfl_dir_heading   = hexToColor("#4ca6e8"),
+        .diredfl_dir_priv      = hexToColor("#738FD7"),
+        .diredfl_read_priv     = hexToColor("#35BF88"),
+        .diredfl_write_priv    = hexToColor("#dbac66"), 
+        .diredfl_exec_priv     = hexToColor("#e84c58"),  
+        .diredfl_no_priv       = hexToColor("#545c5e"),    
+        .diredfl_number        = hexToColor("#eed891"),     
+        .diredfl_date_time     = hexToColor("#9587DD"),  
+        .diredfl_dir_name      = hexToColor("#738FD7"),   
+        .diredfl_file_suffix   = hexToColor("#cea2ca"),
     };
     themes[3] = (Theme){
         .name                  = "temple",
@@ -286,7 +350,7 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#4e333b"),
         .minibuffer_prompt     = hexToColor("#4EB8CA"),
         .region                = hexToColor("#402E33"),
-        .region_fg             = hexToColor("#402E33"),
+        .region_fg             = hexToColor("#bebec4"),
         .message               = hexToColor("#EEDCC1"),
         .type                  = hexToColor("#b9c791"),
         .string                = hexToColor("#fbaed2"),
@@ -308,6 +372,23 @@ void initThemes() {
         .diff_hl_insert_cursor = hexToColor("#4FA8A3"),
         .diff_hl_bg            = hexToColor("#324446"),
         .diff_hl_change_bg     = hexToColor("#4d3f3b"),
+        .rainbow_delimiters_base_face    = hexToColor("#4EB8CA"),
+        .rainbow_delimiters_depth_1_face = hexToColor("#4EB8CA"),
+        .rainbow_delimiters_depth_2_face = hexToColor("#91b9c7"),
+        .rainbow_delimiters_depth_3_face = hexToColor("#4FA8A3"),
+        .rainbow_delimiters_depth_4_face = hexToColor("#c791aa"),
+        .rainbow_delimiters_depth_5_face = hexToColor("#807f96"),
+        .rainbow_delimiters_depth_6_face = hexToColor("#74B09A"),
+        .diredfl_dir_heading   = hexToColor("#91b9c7"),
+        .diredfl_dir_priv      = hexToColor("#4EB8CA"),
+        .diredfl_read_priv     = hexToColor("#4FA8A3"),
+        .diredfl_write_priv    = hexToColor("#D7936D"), 
+        .diredfl_exec_priv     = hexToColor("#C74A4D"),  
+        .diredfl_no_priv       = hexToColor("#697375"),    
+        .diredfl_number        = hexToColor("#ef6787"),     
+        .diredfl_date_time     = hexToColor("#ef6787"),  
+        .diredfl_dir_name      = hexToColor("#4EB8CA"),   
+        .diredfl_file_suffix   = hexToColor("#4FA8A3"),
     };
     themes[4] = (Theme){
         .name                  = "dark+",
@@ -324,7 +405,7 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#4b474c"),
         .minibuffer_prompt     = hexToColor("#237AD3"),
         .region                = hexToColor("#113d69"),
-        .region_fg             = hexToColor("#113d69"),
+        .region_fg             = hexToColor("#a9a9a9"),
         .message               = hexToColor("#d4d4d4"),
         .type                  = hexToColor("#35CDAF"),
         .string                = hexToColor("#DB8E73"),
@@ -346,6 +427,23 @@ void initThemes() {
         .diff_hl_insert_cursor = hexToColor("#579C4C"),
         .diff_hl_bg            = hexToColor("#293727"),
         .diff_hl_change_bg     = hexToColor("#223743"),
+        .rainbow_delimiters_base_face    = hexToColor("#d4d4d4"),
+        .rainbow_delimiters_depth_1_face = hexToColor("#C586C0"),
+        .rainbow_delimiters_depth_2_face = hexToColor("#DB8E73"),
+        .rainbow_delimiters_depth_3_face = hexToColor("#579C4C"),
+        .rainbow_delimiters_depth_4_face = hexToColor("#85DDFF"),
+        .rainbow_delimiters_depth_5_face = hexToColor("#BB80B3"),
+        .rainbow_delimiters_depth_6_face = hexToColor("#D7BA7D"),
+        .diredfl_dir_heading   = hexToColor("#339CDB"),
+        .diredfl_dir_priv      = hexToColor("#37474F"),
+        .diredfl_read_priv     = hexToColor("#D7BA7D"),
+        .diredfl_write_priv    = hexToColor("#D16969"), 
+        .diredfl_exec_priv     = hexToColor("#579C4C"),  
+        .diredfl_no_priv       = hexToColor("#37474F"),    
+        .diredfl_number        = hexToColor("#DB8E73"),     
+        .diredfl_date_time     = hexToColor("#85DDFF"),  
+        .diredfl_dir_name      = hexToColor("#339CDB"),   
+        .diredfl_file_suffix   = hexToColor("#8b8b8b"),
     };
     themes[5] = (Theme){
         .name                  = "doom-one",
@@ -362,7 +460,7 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#303035"),
         .minibuffer_prompt     = hexToColor("#51afef"),
         .region                = hexToColor("#42444a"),
-        .region_fg             = hexToColor("#42444a"),
+        .region_fg             = hexToColor("#959ba5"),
         .message               = hexToColor("#BBC2CF"),
         .type                  = hexToColor("#ECBE7B"),
         .string                = hexToColor("#98be65"),
@@ -384,6 +482,23 @@ void initThemes() {
         .diff_hl_insert_cursor = hexToColor("#98be65"),
         .diff_hl_bg            = hexToColor("#3e493d"),
         .diff_hl_change_bg     = hexToColor("#4b3d38"),
+        .rainbow_delimiters_base_face    = hexToColor("#bbc2cf"),
+        .rainbow_delimiters_depth_1_face = hexToColor("#51afef"),
+        .rainbow_delimiters_depth_2_face = hexToColor("#c678dd"),
+        .rainbow_delimiters_depth_3_face = hexToColor("#98be65"),
+        .rainbow_delimiters_depth_4_face = hexToColor("#a9a1e1"),
+        .rainbow_delimiters_depth_5_face = hexToColor("#4db5bd"),
+        .rainbow_delimiters_depth_6_face = hexToColor("#51afef"),
+        .diredfl_dir_heading   = hexToColor("#51afef"),
+        .diredfl_dir_priv      = hexToColor("#51afef"),
+        .diredfl_read_priv     = hexToColor("#ECBE7B"),
+        .diredfl_write_priv    = hexToColor("#ff6c6b"), 
+        .diredfl_exec_priv     = hexToColor("#98be65"),  
+        .diredfl_no_priv       = hexToColor("#5B6268"),    
+        .diredfl_number        = hexToColor("#da8548"),     
+        .diredfl_date_time     = hexToColor("#46D9FF"),  
+        .diredfl_dir_name      = hexToColor("#51afef"),   
+        .diredfl_file_suffix   = hexToColor("#808591"),
     };
     themes[6] = (Theme){
         .name                  = "city-lights",
@@ -400,7 +515,7 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#303035"),
         .minibuffer_prompt     = hexToColor("#5EC4FF"),
         .region                = hexToColor("#28323B"),
-        .region_fg             = hexToColor("#28323B"),
+        .region_fg             = hexToColor("#808f9d"),
         .message               = hexToColor("#A0B3C5"),
         .type                  = hexToColor("#EBBF83"),
         .string                = hexToColor("#539AFC"),
@@ -422,6 +537,23 @@ void initThemes() {
         .diff_hl_insert_cursor = hexToColor("#8BD49C"),
         .diff_hl_bg            = hexToColor("#334842"),
         .diff_hl_change_bg     = hexToColor("#423a31"),
+        .rainbow_delimiters_base_face    = hexToColor("#A0B3C5"),
+        .rainbow_delimiters_depth_1_face = hexToColor("#5EC4FF"),
+        .rainbow_delimiters_depth_2_face = hexToColor("#E27E8D"),
+        .rainbow_delimiters_depth_3_face = hexToColor("#8BD49C"),
+        .rainbow_delimiters_depth_4_face = hexToColor("#B62D65"),
+        .rainbow_delimiters_depth_5_face = hexToColor("#33CED8"),
+        .rainbow_delimiters_depth_6_face = hexToColor("#5EC4FF"),
+        .diredfl_dir_heading   = hexToColor("#5EC4FF"),
+        .diredfl_dir_priv      = hexToColor("#5EC4FF"),
+        .diredfl_read_priv     = hexToColor("#EBBF83"),
+        .diredfl_write_priv    = hexToColor("#D95468"), 
+        .diredfl_exec_priv     = hexToColor("#8BD49C"),  
+        .diredfl_no_priv       = hexToColor("#56697A"),    
+        .diredfl_number        = hexToColor("#D98E48"),     
+        .diredfl_date_time     = hexToColor("#70E1E8"),  
+        .diredfl_dir_name      = hexToColor("#5EC4FF"),   
+        .diredfl_file_suffix   = hexToColor("#6b7a87"),
     };
     themes[7] = (Theme){
         .name                  = "Molokai",
@@ -438,7 +570,7 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#303035"),
         .minibuffer_prompt     = hexToColor("#fd971f"),
         .region                = hexToColor("#4e4e4e"),
-        .region_fg             = hexToColor("#4e4e4e"),
+        .region_fg             = hexToColor("#ababa9"),
         .message               = hexToColor("#D6D6D4"),
         .type                  = hexToColor("#66d9ef"),
         .string                = hexToColor("#e2c770"),
@@ -460,6 +592,23 @@ void initThemes() {
         .diff_hl_insert_cursor = hexToColor("#9ac334"),
         .diff_hl_bg            = hexToColor("#353f23"),
         .diff_hl_change_bg     = hexToColor("#396872"),
+        .rainbow_delimiters_base_face    = hexToColor("#d6d6d4"),
+        .rainbow_delimiters_depth_1_face = hexToColor("#fb2874"),
+        .rainbow_delimiters_depth_2_face = hexToColor("#fd971f"),
+        .rainbow_delimiters_depth_3_face = hexToColor("#b6e63e"),
+        .rainbow_delimiters_depth_4_face = hexToColor("#66d9ef"),
+        .rainbow_delimiters_depth_5_face = hexToColor("#fb2874"),
+        .rainbow_delimiters_depth_6_face = hexToColor("#fd971f"),
+        .diredfl_dir_heading   = hexToColor("#268bd2"),
+        .diredfl_dir_priv      = hexToColor("#268bd2"),
+        .diredfl_read_priv     = hexToColor("#e2c770"),
+        .diredfl_write_priv    = hexToColor("#e74c3c"), 
+        .diredfl_exec_priv     = hexToColor("#b6e63e"),  
+        .diredfl_no_priv       = hexToColor("#555556"),    
+        .diredfl_number        = hexToColor("#fd971f"),     
+        .diredfl_date_time     = hexToColor("#66d9ef"),  
+        .diredfl_dir_name      = hexToColor("#268bd2"),   
+        .diredfl_file_suffix   = hexToColor("#8b8c8b"),
     };
     themes[8] = (Theme){
         .name                  = "doom-monokai-ristretto",
@@ -476,7 +625,7 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#403838"),
         .minibuffer_prompt     = hexToColor("#f9cc6c"),
         .region                = hexToColor("#403838"),
-        .region_fg             = hexToColor("#403838"),
+        .region_fg             = hexToColor("#ccc0c2"),
         .message               = hexToColor("#fff1f3"),
         .type                  = hexToColor("#85dacc"),
         .string                = hexToColor("#f9cc6c"),
@@ -498,6 +647,23 @@ void initThemes() {
         .diff_hl_insert_cursor = hexToColor("#adda78"),
         .diff_hl_bg            = hexToColor("#454935"),
         .diff_hl_change_bg     = hexToColor("#533934"),
+        .rainbow_delimiters_base_face    = hexToColor("#fff1f3"),
+        .rainbow_delimiters_depth_1_face = hexToColor("#fd6883"),
+        .rainbow_delimiters_depth_2_face = hexToColor("#f38d70"),
+        .rainbow_delimiters_depth_3_face = hexToColor("#adda78"),
+        .rainbow_delimiters_depth_4_face = hexToColor("#85dacc"),
+        .rainbow_delimiters_depth_5_face = hexToColor("#fd6883"),
+        .rainbow_delimiters_depth_6_face = hexToColor("#f38d70"),
+        .diredfl_dir_heading   = hexToColor("#85dacc"),
+        .diredfl_dir_priv      = hexToColor("#85dacc"),
+        .diredfl_read_priv     = hexToColor("#f9cc6c"),
+        .diredfl_write_priv    = hexToColor("#fd6883"), 
+        .diredfl_exec_priv     = hexToColor("#adda78"),  
+        .diredfl_no_priv       = hexToColor("#615959"),    
+        .diredfl_number        = hexToColor("#f38d70"),     
+        .diredfl_date_time     = hexToColor("#85dacc"),  
+        .diredfl_dir_name      = hexToColor("#85dacc"),   
+        .diredfl_file_suffix   = hexToColor("#aa9fa0"),
     };
     themes[9] = (Theme){
         .name                  = "doom-nord",
@@ -514,7 +680,7 @@ void initThemes() {
         .isearch_highlight     = hexToColor("#5a7087"),
         .minibuffer_prompt     = hexToColor("#81A1C1"),
         .region                = hexToColor("#434C5E"),
-        .region_fg             = hexToColor("#434C5E"),
+        .region_fg             = hexToColor("#bcbfc3"),
         .message               = hexToColor("#ECEFF4"),
         .type                  = hexToColor("#8FBCBB"),
         .string                = hexToColor("#A3BE8C"),
@@ -536,6 +702,23 @@ void initThemes() {
         .diff_hl_insert_cursor = hexToColor("#A3BE8C"),
         .diff_hl_bg            = hexToColor("#454f4f"),
         .diff_hl_change_bg     = hexToColor("#4e4449"),
+        .rainbow_delimiters_base_face    = hexToColor("#ECEFF4"),
+        .rainbow_delimiters_depth_1_face = hexToColor("#81A1C1"),
+        .rainbow_delimiters_depth_2_face = hexToColor("#B48EAD"),
+        .rainbow_delimiters_depth_3_face = hexToColor("#A3BE8C"),
+        .rainbow_delimiters_depth_4_face = hexToColor("#5D80AE"),
+        .rainbow_delimiters_depth_5_face = hexToColor("#8FBCBB"),
+        .rainbow_delimiters_depth_6_face = hexToColor("#81A1C1"),
+        .diredfl_dir_heading   = hexToColor("#81A1C1"),
+        .diredfl_dir_priv      = hexToColor("#81A1C1"),
+        .diredfl_read_priv     = hexToColor("#EBCB8B"),
+        .diredfl_write_priv    = hexToColor("#BF616A"), 
+        .diredfl_exec_priv     = hexToColor("#A3BE8C"),  
+        .diredfl_no_priv       = hexToColor("#4C566A"),    
+        .diredfl_number        = hexToColor("#D08770"),     
+        .diredfl_date_time     = hexToColor("#88C0D0"),  
+        .diredfl_dir_name      = hexToColor("#81A1C1"),   
+        .diredfl_file_suffix   = hexToColor("#a0a4ac"),
     };
 
     currentThemeIndex = 0;

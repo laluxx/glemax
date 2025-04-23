@@ -17,9 +17,8 @@ void drawMark(Buffer *buffer, Window *win, Color markColor);
 void drawMiniCursor(Buffer *buffer, Font *font, float x, float y, Color color);
 void drawCursor(Buffer *buffer, Window *win, Color defaultColor);
 
-/* void drawScrollbars(Window *win, Color *xcolor, Color *ycolor); */
-/* void drawScrollbars(Window *win, Color *xcolor, Color *ycolor, float xThickness, float yThickness); */
 void drawScrollbar(Window *win, Color *color, size_t thickness);
+void drawMinimapRegion(WindowManager *wm, Window *mainWindow, Buffer *buffer);
 
 // SCOPES
 Color getScopeColor(int level);

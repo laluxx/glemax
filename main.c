@@ -33,17 +33,23 @@
 #include "symbols.h"
 #include "debugger.h"
 #include "lsp.h"
+#include "undo.h"
+#include "modeline.h"
+#include "bytecode.h"
+#include "dired.h"
 
 // [/] MAYBE One thing that we really should do, is to
 // make the minibuffer just a window, not a special
 // case to handle in every function that interact with it or maybe not,
 // since we will always have only one minibuffer (even if recursive)
 
+// TODO Parse Partial S-Expression State
+// TODO do the mark wrap thing DOIT
+
 // FIXME many functions calculate the same exact data
 // so the same stuff is recalculated like 6 or more times per frame
 // i hate it, but i hate refactoring more
 
-// TODO  - Torrent client
 
 // TODO Music visualizer
 //  - Sync cursor blink with music
@@ -51,20 +57,20 @@
 
 // TODO display-line-numbers-mode
 //  - Option to color the last line with a different color
+//  - Option to to color the current line number
 //  ~ Option for vim suckers
 
-// TODO IMPORTANT Don't make xclip a dependencie if you have it in path
+// TODO IMPORTANT Don't make xclip a dependency if you have it in path
 // use it, if you don't, don't, then actually fix the problem
 // with a crossplatform clipboard module
 
 
-// TODO Minor mode to make text-scale-increase() and text-scale-decrease() increase or
-// decrease the scale of *only* the text inside the region if active
+// TODO Increase or decrease the scale of *only* the text inside the region if active
 
-// TODO Get the list of functions in the current buffer and a size_T pos using tresitter ?
 
 // TODO hide-minibuffer-mode it will appear either lerped or not when message() is called
 // it will stay there for N seconds and them hide the minibuffer again either lerped or not
+
 // TODO draw diff-hl-mode fringe rectangles dimmed based on the scope level of the line
 // TODO drawBufferRectangle(size_t start, size_t end) it will draw 3 rectanglwees maximum
 // TODO diff-hl-mode should not rely on /bing/git and should do it interactively
@@ -74,23 +80,10 @@
 // TODO add ARG to next-theme and previous-theme to switch to that theme
 // TODO region-alpha global variable
 
-
-// SPECIAL BUFFER
-// TODO Make them *special* fr. I was thinking of a buffer of buffer
-// each *special* buffer usually has a major mode dedicated to it,
-// we don't have modes yet. each special mode will have a void function pointer
-// to a drawing function, a gemini client is a good first *special* buffer.
-// Where i can make mistakes on so i don't do them in dired
-
-
 // SCOPES
 // TODO Option to not render scopes on comments
 
-// DIFF-HL
-// TODO Option to draw diff-hl-bg ontop of the text
 
-// REGION
-// TODO Option to color text inside the region with CT.region_fg
 
 // SCROLL
 // TODO in updateScroll if we are going up or down fast, try to lerp 2 halfpages
@@ -111,7 +104,6 @@
 
 // NEW
 // TODO dabbrev-completion
-// TODO rainbow-delimiters-mode (we can do it for free now that we track scopes)
 // TODO revert-buffer-mode
 // TODO wdired
 // TODO iedit
@@ -126,8 +118,6 @@
 // TODO Object based undo system
 
 // FIXME use setBufferContent() to set the prompt aswell
-
-// TODO rainbow-delimiters-mode
 
 #include "editor.h"
 
@@ -181,32 +171,41 @@ static void inner_main(void *closure, int argc, char **argv) {
     registerMouseButtonCallback(mouseButtonCallback);
 
     setSwapInterval(true); // TRUE if vsync is on
-    enableAlphaBlending();
     
+    nerdFont = loadNerdFont(nerdFontPath, fontsize);
+
     font = loadFont(fontPath, fontsize, "fontname", tab);
+    loadUnicodeGlyph(font, 0x25CF); // ●
+    loadUnicodeGlyph(font, 0x25CB); // ○
+    loadUnicodeGlyph(font, 0x2014); // —
+
     commentfont = loadFont(commentfontPath, commentfontsize, "commentfontname", tab);
     initThemes();
     load_theme(first_theme_name);
     initLanguageParsers();
     initKillRing(&kr, kill_ring_max);
     initBufferManager(&bm);
-    newBuffer(&bm, &wm, "messages", "~/", fontPath);
+    messages = newBuffer(&bm, &wm, "messages", "~/", fontPath);
     /* newBuffer(&bm, &wm, "*clangd::stderr*", "~/", fontPath); */
 
 
     initCommands();
+    /* sxp_init(&buf); // NOTE We are currently doing every time we call savehist_save */
     initOpenssl();
     bfd_init();
     load_debug_symbols(argv[0]); // NOTE Load our debug symbols
-    newBuffer(&bm, &wm, "minibuffer", "~/", fontPath);
-    newBuffer(&bm, &wm, "prompt",     "~/", fontPath);
-    newBuffer(&bm, &wm, "vertico",    "~/", fontPath); // TODO
-    newBuffer(&bm, &wm, "message",    "~/", fontPath);
-    newBuffer(&bm, &wm, "arg",        "~/", fontPath);
-    newBuffer(&bm, &wm, "*scratch*",  "~/", fontPath);
 
-    setBufferContent(getBuffer(&bm, "*scratch*"), scratch_buffer_content, true);
+    // NOTE GLOBAL BUFFERS
+    minibuffer = newBuffer(&bm, &wm, "minibuffer", "~/", fontPath);
+    prompt     = newBuffer(&bm, &wm, "prompt",     "~/", fontPath);
+    vertico    = newBuffer(&bm, &wm, "vertico",    "~/", fontPath); // TODO
+    footer     = newBuffer(&bm, &wm, "footer",     "~/", fontPath);
+    argBuffer  = newBuffer(&bm, &wm, "argBuffer",  "~/", fontPath);
+    scratch    = newBuffer(&bm, &wm, "*scratch*",  "~/", fontPath);
 
+    setBufferContent(scratch, scratch_buffer_content, true);
+    setMajorMode(scratch, "scheme");
+    
     initWindowManager(&wm, &bm, font, sw, sh);
 
     if (argc > 1) {
@@ -228,23 +227,22 @@ static void inner_main(void *closure, int argc, char **argv) {
     
     load_user_init_file();
 
-    /* lspClient = initLsp("~/xos/projects/c/glemax", "c", &lspConfig); */
-    /* initialize_lsp_session(lspClient); */
     lspClients = initLspClients(LSP_CLIENTS_INITIAL_CAPACITY);
+
+    if (savehist) {
+        printf("Loading history...\n");
+        savehist_load();
+        printf("DONE!\n");
+    }
+    
+    direds_init();
 
     while (!windowShouldClose()) {
         sw = getScreenWidth();  // TODO Update in
         sh = getScreenHeight(); // the resize callback
 
+        // TODO Implement a LerpManager.
         if (theme_lerp_mode) updateThemeInterpolation();
-        
-        /* updateWindows(&wm, font, sw, sh); */ 
-        /* reloadShaders(); // NOTE Recompile all shaders each frame */
-        Buffer *prompt     = getBuffer(&bm, "prompt");
-        Buffer *minibuffer = getBuffer(&bm, "minibuffer");
-        Buffer *message    = getBuffer(&bm, "message");
-        Buffer *messages   = getBuffer(&bm, "messages");
-        Buffer *vertico    = getBuffer(&bm, "vertico");
         
         Window *win = wm.head;
         Window *activeWindow = wm.activeWindow;
@@ -317,13 +315,11 @@ static void inner_main(void *closure, int argc, char **argv) {
             if (win == wm.activeWindow) {
                 highlightHexColors(&wm, buffer->font, buffer, rainbow_mode);
                 useShader("simple");
-                /* if (region_alpha) { */
-                /*     Color rc = CT.region; */
-                /*     rc.a = region_alpha_amount; */
-                /*     drawRegion(&wm, buffer->font, rc); */
-                /* } else { */
-                /*     drawRegion(&wm, buffer->font, CT.region); */
-                /* } */
+                
+                if (!region_alpha) { // Behind text
+                    drawRegion(&wm, buffer->font, CT.region);
+                }
+
                 highlightMatchingBrackets(&wm, buffer->font, CT.show_paren_match);
                 if (isearch.searching)
                     highlightAllOccurrences(&wm, minibuffer->content, font,
@@ -362,10 +358,7 @@ static void inner_main(void *closure, int argc, char **argv) {
                     Color rc = CT.region;
                     rc.a = 0.5; // 1H wasted here
                     drawRegion(&wm, buffer->font, rc);
-                } else {
-                    drawRegion(&wm, buffer->font, CT.region);
                 }
-
 
                 if (win->parameters.scrollBar) drawScrollbar(win, &CT.error, scroll_bar_thickness);
                 
@@ -402,12 +395,6 @@ static void inner_main(void *closure, int argc, char **argv) {
         }
         
         // MINIBUFFER TEXT TODO Syntax highlighting based on shell-command
-         /* drawTextEx(minibuffer->font, minibuffer->content, promptWidth + fringe, */
-         /*           minibufferHeight - */
-         /*           (minibuffer->font->ascent - minibuffer->font->descent), */
-         /*           1.0, 1.0, CT.text, CT.bg, minibuffer->point, cursorVisible, */
-         /*           "text"); */
-
         drawMinibuffer(minibuffer, promptWidth + fringe,
                        minibufferHeight - (minibuffer->font->ascent - minibuffer->font->descent),
                        cursorVisible);
@@ -425,8 +412,8 @@ static void inner_main(void *closure, int argc, char **argv) {
         
         float lastLineY = minibufferHeight - (lineHeight * lineCount) + getCharacterWidth(minibuffer->font, 32);
         
-        drawTextEx(minibuffer->font, message->content, promptWidth + lastLineWidth,
-                   lastLineY, 1.0, 1.0, CT.message, CT.bg, message->point,
+        drawTextEx(minibuffer->font, footer->content, promptWidth + lastLineWidth,
+                   lastLineY, 1.0, 1.0, CT.message, CT.bg, footer->point,
                    cursorVisible, "text");
 
         drawFPS(font, 400.0, 400.0, RED);
@@ -441,12 +428,20 @@ static void inner_main(void *closure, int argc, char **argv) {
         endDrawing();
     }
     
+
+    if (savehist) {
+        printf("saving hist...\n");
+        savehist_save(&nh, state_path);
+        printf("DONE!\n");
+    }
+    
     freeLanguageParsers();
     freeFont(font);
     freeKillRing(&kr);
     freeBufferManager(&bm);
     freeWindowManager(&wm);
     freeSymbols();
+    direds_free();
     closeWindow();
 }
 
@@ -460,23 +455,18 @@ int main(int argc, char **argv) {
 // TODO comment-dwim M-; or R-c
 void keyCallback(int key, int action, int mods) {
     Window * win = wm.activeWindow;
-    Buffer *buffer = isCurrentBuffer(&bm, "minibuffer") ? getBuffer(&bm, "minibuffer") : wm.activeWindow->buffer;
     
     Buffer *minibuffer = getBuffer(&bm, "minibuffer");
-    Buffer *prompt = getBuffer(&bm, "prompt");
-    Buffer *messageBuffer = getBuffer(&bm, "message");
-    Buffer *argBuffer = getBuffer(&bm, "arg");
+    Buffer *buffer = isCurrentBuffer(&bm, "minibuffer")
+                         ? minibuffer
+                         : wm.activeWindow->buffer;
+
     int arg = getGlobalArg(argBuffer);
 
-
-    /* bool shiftPressed = mods & GLFW_MOD_SHIFT; */
-    /* bool ctrlPressed = mods & GLFW_MOD_CONTROL; */
-    /* bool altPressed = mods & GLFW_MOD_ALT; */
-
+    // NOTE Global
     shiftPressed = mods & GLFW_MOD_SHIFT;
     ctrlPressed  = mods & GLFW_MOD_CONTROL;
     altPressed   = mods & GLFW_MOD_ALT;
-
 
     if (action == GLFW_PRESS || action == GLFW_REPEAT) {
         /* // NOTE Handle global arg */
@@ -497,9 +487,9 @@ void keyCallback(int key, int action, int mods) {
             cleanBuffer(&bm, "minibuffer");
         }
         
-        cleanBuffer(&bm, "message");
+        cleanBuffer(&bm, "footer");
         
-        cleanBuffer(&bm, "arg");
+        cleanBuffer(&bm, "argBuffer");
         
         switch (key) {
             
@@ -537,57 +527,26 @@ void keyCallback(int key, int action, int mods) {
             }
             break;
 
-
         case KEY_BACKSLASH:
-
             if (ctrlPressed) {
                 minimap_mode(&wm);
             }
-
-            /* if (ctrlPressed) { */
-            /*     if (minimap_easing_mode) { */
-            /*         if (!minimap) { */
-            /*             // Enable the minimap with easing */
-            /*             minimap = true; */
-            /*             minimap_target_width = 110.0f + minimap_left_padding; // Target width for enabling */
-            /*             minimap_lerp_active = true; */
-
-            /*             // If show_scroll_bar_with_minimap is true, enable the scrollbar and start lerping its width */
-            /*             if (show_scroll_bar_with_minimap) { */
-            /*                 win->parameters.scrollBar = true; */
-            /*                 // Start lerping the scrollbar width from 0 to scroll_bar_thickness */
-            /*                 // This is handled in the drawScrollbar function using the lerpFactor */
-            /*             } */
-            /*         } else { */
-            /*             // Disable the minimap with easing */
-            /*             minimap_target_width = 0.0f; // Target width for disabling */
-            /*             minimap_lerp_active = true; */
-            /*         } */
-            /*     } else { */
-            /*         // Immediate toggle without easing */
-            /*         minimap = !minimap; */
-            /*         minimap_width = minimap ? 110.0f + minimap_left_padding : 0.0f; */
-
-            /*         // Handle scrollbar visibility immediately */
-            /*         if (minimap) { */
-            /*             if (show_scroll_bar_with_minimap) { */
-            /*                 win->parameters.scrollBar = true; */
-            /*             } */
-            /*         } else { */
-            /*             if (hide_scroll_bar_with_minimap) { */
-            /*                 win->parameters.scrollBar = false; */
-            /*             } */
-            /*         } */
-            /*     } */
-            /* } */
             break;
-
 
         case KEY_UNKNOWN:
             scroll(win, 1);
             break;
 
-            
+        case KEY_SLASH:
+            if (ctrlPressed) {
+                if (shiftPressed) {
+                    redo(buffer);
+                } else {
+                    undo(buffer);
+                }
+            }
+          break;
+
         case KEY_SPACE:
             if (ctrlPressed && shiftPressed) {
                 set_mark(buffer, buffer->point);
@@ -606,7 +565,15 @@ void keyCallback(int key, int action, int mods) {
             if (altPressed && shiftPressed) beginning_of_buffer(buffer);
             break;
         case KEY_ENTER:
-            enter(buffer, &bm, &wm, minibuffer, prompt, indentation, electric_indent_mode, sw, sh, &nh, arg);
+            if (strcmp(buffer->name, "*eshell*") == 0) {
+                char *command = buffer_substring(buffer, line_beginning_position(buffer), buffer->point );
+                insertChar(buffer, '\n');
+                appendShellCommand(buffer, command, true);
+            } if (buffer->readOnly && major_mode_is(buffer, "dired")) {
+                dired_find_file(&bm, &wm, dired_for_buffer(buffer));
+            } else {
+                enter(buffer, &bm, &wm, minibuffer, prompt, indentation, electric_indent_mode, sw, sh, &nh, arg);
+            }
             break;
         case KEY_Y:
             if (ctrlPressed)
@@ -624,6 +591,9 @@ void keyCallback(int key, int action, int mods) {
                 ctrl_x_pressed = false;
                 eatchar = true;
             }
+
+            if (altPressed && shiftPressed) eval_bytecode(&bm);
+
             break;
             
         case KEY_3:
@@ -651,6 +621,12 @@ void keyCallback(int key, int action, int mods) {
             scroll_up(win, arg);
             break;
 
+        case KEY_9:
+            if (major_mode_is(buffer, "dired") && buffer->readOnly) {
+                dired_toggle_details(dired_for_buffer(buffer));
+            }
+            break;
+
         case KEY_Z:
             /* printfSyntaxTree() */
             /* moveTo(buffer, 10, 300); */
@@ -661,7 +637,10 @@ void keyCallback(int key, int action, int mods) {
 
                 message("Minibuffer major mode is: %s", minibuffer->major_mode);
 
-                toggle_vsync();
+                /* appendShellCommand(buffer, "ls -ls", true); */
+                /* insertShellCommand(buffer, "cal", true); */
+                savehist_save();
+
                 /* insertSyntax(&buffer->syntaxArray, */
                 /*              (Syntax){buffer->region.start, */
                 /*                       buffer->region.end, */
@@ -769,12 +748,15 @@ void keyCallback(int key, int action, int mods) {
                 message("C-c-");
             } else if (altPressed) {
                 capitalize_word(buffer);
+            } else if (wm.activeWindow->buffer->region.active) {
+                compile_and_execute_region(&bm);
+                parse_and_push_compilation_syntax(wm.activeWindow->buffer);
+                eatchar = true;
             }
             break;
             
         case KEY_V:
             if (ctrlPressed) {
-                /* eval_expression(&bm); */
                 scroll(win, arg);
             }
             break;
@@ -808,13 +790,27 @@ void keyCallback(int key, int action, int mods) {
                     cleanBuffer(&bm, "prompt");
                     cleanBuffer(&bm, "vertico");
                     previousBuffer(&bm); // Go out of the minibuffer.
-                    cleanBuffer(&bm, "message");
+                    cleanBuffer(&bm, "footer");
                 }
 
                 ce.count = 0;
                 
             } else if (altPressed) {
                 goto_line(&bm);
+            } else {
+                if (major_mode_is(buffer, "dired") && buffer->readOnly) {
+                    printf("Reverting dired...\n");
+                    dired_revert(dired_for_buffer(buffer));
+
+                    Dired *dired = dired_for_buffer(buffer);
+                    if (dired) {
+                        dired_revert(dired);
+                    } else {
+                        printf("dired for buffer didn't work :(\n");
+                    }
+
+                    printf("DONE!\n");
+                }
             }
             break;
             
@@ -831,6 +827,8 @@ void keyCallback(int key, int action, int mods) {
         case KEY_6:
             if (altPressed && shiftPressed) delete_indentation(buffer, arg);
             break;
+
+
 
         case KEY_TAB:
             if (isCurrentBuffer(&bm, "minibuffer")) {
@@ -870,7 +868,7 @@ void keyCallback(int key, int action, int mods) {
                     }
                 }
             } else {
-                // Existing code for indentation
+                // Indentation
                 if (buffer->region.active) {
                     indent_region(buffer, shiftPressed, arg);
                 } else {
@@ -879,6 +877,7 @@ void keyCallback(int key, int action, int mods) {
                 }
             }
             break;
+
         case KEY_DOWN:
             if (ctrlPressed) {
                 forward_paragraph(buffer, shiftPressed);
@@ -919,6 +918,7 @@ void keyCallback(int key, int action, int mods) {
                     ctrl_c_pressed = false;
                 } else if (ctrl_x_pressed) {
                     set_goal_column(buffer);
+                    ctrl_x_pressed = false;
                 } else {
                     next_line(win, shiftPressed, shiftPressed);
                 }
@@ -931,6 +931,9 @@ void keyCallback(int key, int action, int mods) {
             } else if (ctrl_c_pressed) {
                 ctrl_c_pressed = false;
                 end_of_buffer(buffer);
+                eatchar = true;
+            } else if (major_mode_is(buffer, "dired") && buffer->readOnly) {
+                next_line(wm.activeWindow, false, 1);
                 eatchar = true;
             }
             break;
@@ -954,6 +957,9 @@ void keyCallback(int key, int action, int mods) {
                 ctrl_c_pressed = false;
                 beginning_of_buffer(buffer);
                 eatchar = true;
+            } else if (major_mode_is(buffer, "dired") && buffer->readOnly) {
+                previous_line(wm.activeWindow, false, 1);
+                eatchar = true;
             }
             break;
         case KEY_F:
@@ -974,7 +980,7 @@ void keyCallback(int key, int action, int mods) {
             } else if (ctrlPressed) {
                 left_char(buffer, shiftPressed, arg);
             } else if (altPressed) {
-                backward_word(buffer, 1, shiftPressed);
+                backward_word(buffer, shiftPressed, 1);
             } else if (ctrl_x_pressed) {
                 switch_to_buffer(&bm);
                 eatchar = true;
@@ -1046,6 +1052,9 @@ void keyCallback(int key, int action, int mods) {
             } else if (ctrl_x_pressed) {
                 other_window(&wm, 1);
                 eatchar = true;
+            } else if (buffer->readOnly && major_mode_is(buffer, "dired")) {
+                dired_find_file_other_window(&bm, &wm, dired_for_buffer(buffer));
+                eatchar = true;
             }
             break;
             
@@ -1086,11 +1095,17 @@ void keyCallback(int key, int action, int mods) {
                 other_window(&wm, 1);
             } else if (ctrlPressed) {
                 recenter(win, false);
+            } else if (ctrl_x_pressed && ctrlPressed) {
+                dired_toggle(&wm);
             } else  if (ctrl_c_pressed) {
                 keep_lines(&bm);
                 ctrl_c_pressed = false;
                 eatchar = true;
+            } else if (buffer->readOnly && major_mode_is(buffer, "dired")) {
+                dired_find_file(&bm, &wm, dired_for_buffer(buffer));
+                eatchar = true;
             }
+
             break;
         case KEY_J:
             if (altPressed && wm.count <= 1)  {
@@ -1101,8 +1116,16 @@ void keyCallback(int key, int action, int mods) {
             } else if (altPressed) {
                 other_window(&wm, 1);
             } else if (ctrlPressed) {
-                /* enter(buffer, &bm, &wm, minibuffer, prompt, indentation, electric_indent_mode, sw, sh, &nh, arg); */
-                eval_last_sexp();
+                if (ctrl_x_pressed) {
+                    dired_jump(&wm);
+                    ctrl_x_pressed = false;
+                } else {
+                    /* enter(buffer, &bm, &wm, minibuffer, prompt, indentation, electric_indent_mode, sw, sh, &nh, arg); */
+                    eval_last_sexp();
+                }
+            } else if (major_mode_is(buffer, "dired") && buffer->readOnly) {
+                next_line(wm.activeWindow, false, 1);
+                eatchar = true;
             }
             break;
         case KEY_H:
@@ -1112,6 +1135,9 @@ void keyCallback(int key, int action, int mods) {
                 ctrl_h_pressed = true;
             } else if (altPressed && wm.count <= 1) {
                 split_window_right(&wm, &wm.activeWindow->parameters);
+            } else if (buffer->readOnly && major_mode_is(buffer, "dired")) {
+                dired_up_directory(&bm, &wm, dired_for_buffer(buffer));
+                eatchar = true;
             }
             break;
             
@@ -1130,8 +1156,12 @@ void keyCallback(int key, int action, int mods) {
                 } else {
                     kill_line(buffer);
                 }
+            } else if (major_mode_is(buffer, "dired") && buffer->readOnly)  {
+                previous_line(wm.activeWindow, false, 1);
+                eatchar = true;
             }
             break;
+
         case KEY_LEFT_BRACKET:
             if (altPressed && shiftPressed) {
                 backward_paragraph(buffer, false);
@@ -1308,6 +1338,9 @@ void textCallback(unsigned int codepoint) {
                     // NOTE Syntax updating and scope filling could be done in insertChar();
                     // But we will lose on the "free" buffering we already have here.
                     fill_scopes(buffer, &buffer->scopes);
+                    if (codepoint == ' ' && word_based_undo) {
+                        screenshot(buffer);
+                    }
                 }
 
                 if (electric_indent_mode && (codepoint == '}' || codepoint == ';')) {
@@ -1511,53 +1544,6 @@ void drawRegion(WindowManager *wm, Font *font, Color regionColor) {
     }
 }
 
-// TODO Modeline *modeline = &win->modeline;
-void drawModelines(WindowManager *wm, Font *font, float minibufferHeight, Color color) {
-    for (Window *win = wm->head; win != NULL; win = win->next) {
-        bool isBottom = true;
-        for (Window *checkWin = wm->head; checkWin != NULL; checkWin = checkWin->next) {
-            if (win != checkWin && win->x == checkWin->x && win->y - win->height == checkWin->y) {
-                isBottom = false;
-                break;
-            }
-        }
-        
-        // Use win->buffer->font to calculate modelineBaseY
-        float modelineBaseY = win->y - win->height + win->buffer->font->ascent - win->buffer->font->descent;
-        if (isBottom) {
-            modelineBaseY += minibufferHeight;
-            modelineBaseY -= win->buffer->font->ascent - win->buffer->font->descent;
-        }
-        
-        useShader("simple");
-        float width = win->splitOrientation == VERTICAL ? win->width - 1 : win->width;
-        drawRectangle((Vec2f){win->x, modelineBaseY}, (Vec2f){width, win->modeline.height}, color);
-        flush();
-        
-        // Draw each segment in the modeline
-        useShader("text");
-        float spaceWidth = getCharacterWidth(font, ' ');
-        float segmentX = fringe + spaceWidth + win->x;
-
-        // Update modeline segments NOTE We should not do it every frame N times
-        // where N is the number of modelines we have
-        updateSegments(&win->modeline, win->buffer);
-        
-        for (size_t i = 0; i < win->modeline.segments.count; i++) {
-            Segment segment = win->modeline.segments.segment[i];
-            if (strlen(segment.content) == 0) continue; // Skip drawing if the segment is empty
-            
-            float textY = modelineBaseY + (font->ascent - font->descent);
-            
-            for (size_t j = 0; j < strlen(segment.content); j++) {
-                drawChar(font, segment.content[j], segmentX, textY, 1.0, 1.0, CT.text);
-                segmentX += getCharacterWidth(font, segment.content[j]);
-            }
-            segmentX += spaceWidth;
-        }
-        flush();
-    }
-}
 
 
 void drawFringe(Window *win) {
@@ -1810,7 +1796,11 @@ void drawBuffer(Window *win, Buffer *buffer, bool cursorVisible, bool colorPoint
         diffIndex++;
     }
 
-    useShader(buffer_shader);
+    if (!gay) {
+        useShader(buffer_shader);
+    } else {
+        useShader(gay_shader);
+    }
 
     float x = startX;
     while (text[charIndex] != '\0') {
@@ -1880,7 +1870,7 @@ void drawBuffer(Window *win, Buffer *buffer, bool cursorVisible, bool colorPoint
                        charIndex < buffer->syntaxArray.items[index].end) {
                 currentColor = *buffer->syntaxArray.items[index].color;
             } else {
-                currentColor = CT.text;
+                currentColor = CT.text; // _-> CT.error
             }
 
             // Animation and drawing
@@ -2188,7 +2178,7 @@ void updateScroll(Window *window) {
         viewRight -= (window->parameters.minimap_width + minimap_padding);
     }
 
-    // Vertical scrolling logic (unchanged)
+    // Vertical scrolling logic)
     if (cursorY < viewTop || cursorY + minibuffer->font->ascent +
         minibuffer->font->descent /* lineHeight */
         > viewBottom) {

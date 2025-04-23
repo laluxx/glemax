@@ -223,8 +223,7 @@ char *findSymbolsByName(const char *name_pattern) {
             if (symbols.array[i].flags & BSF_OBJECT)
                 pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "OBJECT ");
             if (symbols.array[i].flags & BSF_CONSTRUCTOR)
-                pos +=
-                    snprintf(flags_str + pos, sizeof(flags_str) - pos, "CONSTRUCTOR ");
+                pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "CONSTRUCTOR ");
             if (symbols.array[i].flags & BSF_WARNING)
                 pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "WARNING ");
             if (symbols.array[i].flags & BSF_INDIRECT)
@@ -280,157 +279,109 @@ char *findSymbolsByName(const char *name_pattern) {
     return buffer;
 }
 
-    // TODO Buffer agnostic vertico system
-    /* void findSymbolsByName(const char *name_pattern) { */
-    /*     if (symbols.count == 0) { */
-    /*         message("No symbols loaded. Call print_debug_symbols() first."); */
-    /*         return; */
-    /*     } */
-
-    /*     // First pass: find the maximum name length */
-    /*     size_t max_name_len = 0; */
-    /*     for (size_t i = 0; i < symbols.count; i++) { */
-    /*         if (strstr(symbols.array[i].name, name_pattern) != NULL) { */
-    /*             size_t len = strlen(symbols.array[i].name); */
-    /*             if (len > max_name_len) */
-    /*                 max_name_len = len; */
-    /*         } */
-    /*     } */
-
-    /*     if (max_name_len == 0) { */
-    /*         printf("No matching symbols found.\n"); */
-    /*         return; */
-    /*     } */
-
-    /*     // Second pass: print the symbols */
-    /*     int found = 0; */
-    /*     for (size_t i = 0; i < symbols.count; i++) { */
-    /*         if (strstr(symbols.array[i].name, name_pattern) != NULL) { */
-    /*             // Prepare address string */
-    /*             char addr_buf[20]; */
-    /*             snprintf(addr_buf, sizeof(addr_buf), "0x%08lx", */
-    /*                      (unsigned long)symbols.array[i].value); */
-
-    /*             // Prepare size string */
-    /*             char size_buf[20]; */
-    /*             snprintf(size_buf, sizeof(size_buf), "%lu", */
-    /*                      (unsigned long)symbols.array[i].size); */
-
-    /*             // Prepare flags string */
-    /*             char flags_str[256] = {0}; */
-    /*             int pos = 0; */
-    /*             if (symbols.array[i].flags & BSF_FUNCTION) */
-    /*                 pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "FUNC "); */
-    /*             if (symbols.array[i].flags & BSF_GLOBAL) */
-    /*                 pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "GLOBAL "); */
-    /*             if (symbols.array[i].flags & BSF_LOCAL) */
-    /*                 pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "LOCAL "); */
-    /*             if (symbols.array[i].flags & BSF_WEAK) */
-    /*                 pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "WEAK "); */
-    /*             if (symbols.array[i].flags & BSF_DEBUGGING) */
-    /*                 pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "DEBUG "); */
-    /*             if (symbols.array[i].flags & BSF_DYNAMIC) */
-    /*                 pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "DYNAMIC "); */
-    /*             if (symbols.array[i].flags & BSF_OBJECT) */
-    /*                 pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "OBJECT "); */
-    /*             if (symbols.array[i].flags & BSF_CONSTRUCTOR) */
-    /*                 pos += */
-    /*                     snprintf(flags_str + pos, sizeof(flags_str) - pos, "CONSTRUCTOR "); */
-    /*             if (symbols.array[i].flags & BSF_WARNING) */
-    /*                 pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "WARNING "); */
-    /*             if (symbols.array[i].flags & BSF_INDIRECT) */
-    /*                 pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "INDIRECT "); */
-    /*             if (symbols.array[i].flags & BSF_FILE) */
-    /*                 pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "FILE "); */
-    /*             if (pos > 0) */
-    /*                 flags_str[pos - 1] = '\0'; // Remove trailing space */
-
-    /*             // Print the line */
-    /*             printf("%-*s  %10s  %10s  %20s  %s\n", (int)max_name_len, */
-    /*                    symbols.array[i].name, addr_buf, size_buf, */
-    /*                    symbols.array[i].section_name ? symbols.array[i].section_name : "", */
-    /*                    flags_str); */
-    /*             found++; */
-    /*         } */
-    /*     } */
-
-    /*     printf("Found %d matching symbols.\n", found); */
-    /* } */
-
-    void findSymbolsByAddressRange(bfd_vma start_addr, bfd_vma end_addr) {
-        if (symbols.count == 0) {
-            message("No symbols loaded. Call print_debug_symbols() first.");
-            return;
-        }
-
-        // First pass: find the maximum name length
-        size_t max_name_len = 0;
-        for (size_t i = 0; i < symbols.count; i++) {
-            if (symbols.array[i].value >= start_addr &&
-                symbols.array[i].value <= end_addr) {
-                size_t len = strlen(symbols.array[i].name);
-                if (len > max_name_len)
-                    max_name_len = len;
-            }
-        }
-
-        if (max_name_len == 0) {
-            printf("No symbols found in this address range.\n");
-            return;
-        }
-
-        // Second pass: print the symbols
-        int found = 0;
-        for (size_t i = 0; i < symbols.count; i++) {
-            if (symbols.array[i].value >= start_addr &&
-                symbols.array[i].value <= end_addr) {
-                // Prepare address string
-                char addr_buf[20];
-                snprintf(addr_buf, sizeof(addr_buf), "0x%08lx",
-                         (unsigned long)symbols.array[i].value);
-
-                // Prepare size string
-                char size_buf[20];
-                snprintf(size_buf, sizeof(size_buf), "%lu",
-                         (unsigned long)symbols.array[i].size);
-
-                // Prepare flags string
-                char flags_str[256] = {0};
-                int pos = 0;
-                if (symbols.array[i].flags & BSF_FUNCTION)
-                    pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "FUNC ");
-                if (symbols.array[i].flags & BSF_GLOBAL)
-                    pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "GLOBAL ");
-                if (symbols.array[i].flags & BSF_LOCAL)
-                    pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "LOCAL ");
-                if (symbols.array[i].flags & BSF_WEAK)
-                    pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "WEAK ");
-                if (symbols.array[i].flags & BSF_DEBUGGING)
-                    pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "DEBUG ");
-                if (symbols.array[i].flags & BSF_DYNAMIC)
-                    pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "DYNAMIC ");
-                if (symbols.array[i].flags & BSF_OBJECT)
-                    pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "OBJECT ");
-                if (symbols.array[i].flags & BSF_CONSTRUCTOR)
-                    pos +=
-                        snprintf(flags_str + pos, sizeof(flags_str) - pos, "CONSTRUCTOR ");
-                if (symbols.array[i].flags & BSF_WARNING)
-                    pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "WARNING ");
-                if (symbols.array[i].flags & BSF_INDIRECT)
-                    pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "INDIRECT ");
-                if (symbols.array[i].flags & BSF_FILE)
-                    pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "FILE ");
-                if (pos > 0)
-                    flags_str[pos - 1] = '\0'; // Remove trailing space
-
-                // Print the line
-                printf("%-*s  %10s  %10s  %20s  %s\n", (int)max_name_len,
-                       symbols.array[i].name, addr_buf, size_buf,
-                       symbols.array[i].section_name ? symbols.array[i].section_name : "",
-                       flags_str);
-                found++;
-            }
-        }
-
-        printf("Found %d symbols in this address range.\n", found);
+void findSymbolsByAddressRange(bfd_vma start_addr, bfd_vma end_addr) {
+    if (symbols.count == 0) {
+        message("No symbols loaded. Call print_debug_symbols() first.");
+        return;
     }
+
+    // First pass: find the maximum name length
+    size_t max_name_len = 0;
+    for (size_t i = 0; i < symbols.count; i++) {
+        if (symbols.array[i].value >= start_addr &&
+            symbols.array[i].value <= end_addr) {
+            size_t len = strlen(symbols.array[i].name);
+            if (len > max_name_len)
+                max_name_len = len;
+        }
+    }
+
+    if (max_name_len == 0) {
+        printf("No symbols found in this address range.\n");
+        return;
+    }
+
+    // Second pass: print the symbols
+    int found = 0;
+    for (size_t i = 0; i < symbols.count; i++) {
+        if (symbols.array[i].value >= start_addr &&
+            symbols.array[i].value <= end_addr) {
+            // Prepare address string
+            char addr_buf[20];
+            snprintf(addr_buf, sizeof(addr_buf), "0x%08lx",
+                     (unsigned long)symbols.array[i].value);
+
+            // Prepare size string
+            char size_buf[20];
+            snprintf(size_buf, sizeof(size_buf), "%lu",
+                     (unsigned long)symbols.array[i].size);
+
+            // Prepare flags string
+            char flags_str[256] = {0};
+            int pos = 0;
+            if (symbols.array[i].flags & BSF_FUNCTION)
+                pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "FUNC ");
+            if (symbols.array[i].flags & BSF_GLOBAL)
+                pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "GLOBAL ");
+            if (symbols.array[i].flags & BSF_LOCAL)
+                pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "LOCAL ");
+            if (symbols.array[i].flags & BSF_WEAK)
+                pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "WEAK ");
+            if (symbols.array[i].flags & BSF_DEBUGGING)
+                pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "DEBUG ");
+            if (symbols.array[i].flags & BSF_DYNAMIC)
+                pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "DYNAMIC ");
+            if (symbols.array[i].flags & BSF_OBJECT)
+                pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "OBJECT ");
+            if (symbols.array[i].flags & BSF_CONSTRUCTOR)
+                pos +=
+                    snprintf(flags_str + pos, sizeof(flags_str) - pos, "CONSTRUCTOR ");
+            if (symbols.array[i].flags & BSF_WARNING)
+                pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "WARNING ");
+            if (symbols.array[i].flags & BSF_INDIRECT)
+                pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "INDIRECT ");
+            if (symbols.array[i].flags & BSF_FILE)
+                pos += snprintf(flags_str + pos, sizeof(flags_str) - pos, "FILE ");
+            if (pos > 0)
+                flags_str[pos - 1] = '\0'; // Remove trailing space
+
+            // Print the line
+            printf("%-*s  %10s  %10s  %20s  %s\n", (int)max_name_len,
+                   symbols.array[i].name, addr_buf, size_buf,
+                   symbols.array[i].section_name ? symbols.array[i].section_name : "",
+                   flags_str);
+            found++;
+        }
+    }
+
+    printf("Found %d symbols in this address range.\n", found);
+}
+
+
+/**
+   Show help for SYMBOL, a variable, function, macro, or face.
+*/
+void helpful_symbol(BufferManager *bm) {
+    Buffer *minibuffer     = getBuffer(bm, "minibuffer");
+    Buffer *prompt         = getBuffer(bm, "prompt");
+    Buffer *previousBuffer = getPreviousBuffer(bm);
+
+    // TODO IMPORTANT Recursive minibuffer
+    if (minibuffer->size == 0) {
+        minibuffer->size = 0;
+        minibuffer->point = 0;
+        minibuffer->content[0] = '\0';
+        free(prompt->content);
+        prompt->content = strdup("Symbol: ");
+        switchToBuffer(bm, "minibuffer");
+        return;
+    }
+
+
+    // Clear minibuffer after operation
+    minibuffer->size = 0;
+    minibuffer->point = 0;
+    minibuffer->content[0] = '\0';
+    prompt->content = strdup("");
+    switchToBuffer(bm, previousBuffer->name);
+}

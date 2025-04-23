@@ -98,7 +98,9 @@ void delete_blank_lines(Buffer *buffer, int arg);
 void save_buffer(BufferManager *bm, Buffer *buffer);
 
 // MINIBUFFER FUNCTIONS
-void execute_shell_command(BufferManager *bm, char *command);
+/* void execute_shell_command(BufferManager *bm, char *command); */
+/* void execute_shell_command(char *command); */
+void execute_shell_command(char *command, Buffer *outputBuffer);
 void shell_command(BufferManager *bm);
 void execute_extended_command(BufferManager *bm);
 void eval_expression(BufferManager *bm);
@@ -123,7 +125,6 @@ char *getBufferDirectory(const char *path);
 
 void read_only_mode(Buffer *buffer);
 
-void helpful_symbol(BufferManager *bm);
 
 // EXTENSION
 /* void insert_guile_symbols(Buffer *buffer, BufferManager *bm); */
@@ -168,7 +169,8 @@ size_t find_visual_line_end(Buffer *buffer, Window *win, size_t start_pos);
 
 void change_major_mode(BufferManager *bm);
 void handle_minibuffer_command(BufferManager *bm, WindowManager *wm, Buffer *minibuffer, Buffer *prompt, NamedHistories *nh);
-int getGlobalArg(Buffer *argBuffer);
+/* int getGlobalArg(Buffer *argBuffer); */
+int getGlobalArg();
 
 
 bool bobp(Buffer *b);
@@ -176,5 +178,8 @@ bool eobp(Buffer *b);
 void forward_line(Buffer *b, int n);
 bool looking_at(Buffer *b, const char *regex);
 int current_column(Buffer *buffer);
+
+void insert_shell_command(BufferManager *bm);
+void append_shell_command(BufferManager *bm);
 
 #endif

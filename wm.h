@@ -31,4 +31,6 @@ void updateWindowDimensions(Window *win, int x, int y, int width, int height);
 void updateWindows(WindowManager *wm, Font *font, int newWidth, int newHeight);
 void delete_other_windows(WindowManager *wm);
 
+void split_or_take_over_window(WindowManager *wm, char *buffer_name, WindowParameters *parameters);
+
 #endif // WM_H

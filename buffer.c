@@ -1,19 +1,32 @@
 #include "buffer.h"
+#include "draw.h"
 #include "edit.h"
 #include "faces.h"
+#include <linux/limits.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include "lsp.h"
 #include "syntax.h"
 #include "isearch.h"
 #include "globals.h"
 #include "theme.h"
 #include "draw.h"
 #include "git.h"
+#include "undo.h"
+#include <unistd.h>
 
 double mouseX;
 double mouseY;
+
+// NOTE Global buffers
+Buffer *minibuffer;
+Buffer *prompt;
+Buffer *vertico;
+Buffer *footer;
+Buffer *argBuffer;
+Buffer *scratch;
+Buffer *messages;
+
 
 void updateDiffs(Buffer *buffer) {
     if (buffer->path) {
@@ -72,74 +85,85 @@ void removeDisplayWindowFromBuffer(Buffer *buffer, Window *window) {
 // --^
 
 void initBuffer(Buffer *buffer, const char *name, const char *path) {
+    // Initialize basic buffer properties
+    memset(buffer, 0, sizeof(Buffer));  // Zero out the entire struct
+    
+    // Allocate and initialize content
     buffer->capacity = 1024;
     buffer->content = malloc(buffer->capacity);
-
     if (!buffer->content) {
         fprintf(stderr, "Failed to allocate memory for buffer content.\n");
         exit(EXIT_FAILURE);
     }
-    buffer->content[0] = '\0'; // Initialize content as empty string
-
+    buffer->content[0] = '\0';  // Empty string
     buffer->size = 0;
     buffer->point = 0;
-    buffer->readOnly = false;
-    buffer->name = strdup(name);
-    buffer->path = strdup(path);
+
+    // Initialize strings with proper null checks
+    buffer->name = name ? strdup(name) : strdup("unnamed");
+    buffer->path = path ? strdup(path) : strdup("");
+    buffer->url = strdup("");
+    buffer->fontPath = strdup(fontPath ? fontPath : "");
+    buffer->major_mode = strdup("fundamental");
+
+    // Initialize region and scale
     buffer->region.active = false;
-    buffer->scale.index = 0;
-    buffer->goal_column = -1;
     buffer->region.mark = 0;
     buffer->region.marked = false;
+    buffer->scale.index = 0;
+    buffer->goal_column = -1;
 
+    // Initialize state flags
+    buffer->readOnly = false;
+    buffer->modified = false;
+    buffer->version = 0;
     buffer->animatedLineNumber = -1;
     buffer->animationStartTime = 0.0f;
 
-    buffer->modified = false;
-    buffer->version = 0;
-
-
-    // Initialize BufferWindows structure
+    // Initialize window tracking
     buffer->displayWindows.windows = NULL;
     buffer->displayWindows.windowCount = 0;
     buffer->displayWindows.windowCapacity = 0;
 
-    FILE *file = fopen(path, "r");
+    // Initialize undo system
+    initUndos(&buffer->undos);
+
+    // Try to load file content if path exists
+    FILE *file = path ? fopen(path, "r") : NULL;
     if (file) {
         fseek(file, 0, SEEK_END);
         buffer->originalSize = ftell(file);
         fseek(file, 0, SEEK_SET);
 
         buffer->originalContent = malloc(buffer->originalSize + 1);
-        fread(buffer->originalContent, 1, buffer->originalSize, file);
-        buffer->originalContent[buffer->originalSize] = '\0';
+        if (buffer->originalContent) {
+            size_t bytes_read = fread(buffer->originalContent, 1, buffer->originalSize, file);
+            buffer->originalContent[bytes_read] = '\0';
+            
+            // Set buffer content from file
+            setBufferContent(buffer, buffer->originalContent, false);
+        }
         fclose(file);
-
     } else {
-        // FIXME This else is reached
-        /* buffer->originalContent = NULL; */
-        /* buffer->originalSize = 0; */
-
-        buffer->originalContent = strdup(buffer->content);
+        // For new buffers
+        buffer->originalContent = strdup("");
         buffer->originalSize = 0;
     }
 
-    setMajorMode(buffer, "fundamental");
-    
-    buffer->url = strdup(""); // NaU
-    buffer->fontPath = strdup(fontPath);  // Use the global fontPath initially
-
-    // Initialize syntax tree
+    // Initialize syntax highlighting
     buffer->tree = ts_parser_parse_string(inferParserForLanguage("c"), NULL, buffer->content, buffer->size);
     initSyntaxArray(&buffer->syntaxArray, 10);
 
+    // Initialize scopes
     buffer->scopes.items = NULL;
     buffer->scopes.count = 0;
     buffer->scopes.capacity = 0;
 
-    buffer->diffs = (Diffs){NULL, 0, 0};
+    // Initialize diffs
+    buffer->diffs.array = NULL;
+    buffer->diffs.count = 0;
+    buffer->diffs.capacity = 0;
 }
-
 
 /**
  * Create and return a buffer with a name based on NAME.
@@ -171,7 +195,11 @@ Buffer* generate_new_buffer(const char* name, const char* path, const char* font
     
     inferMajorMode(buffer);
     initScale(&buffer->scale);
-    buffer->fontPath = strdup(fontPath);
+
+    if (fontPath) {
+        /* buffer->fontPath = strdup(fontPath); // FIXME */
+        buffer->fontPath = fontPath; // FIXME
+    }
     
     // Initialize display windows array
     buffer->displayWindows.windows = NULL;
@@ -199,62 +227,100 @@ Buffer* generate_new_buffer(const char* name, const char* path, const char* font
     }
     buffer->font = globalFontCache[buffer->scale.index];
     
+    screenshot(buffer);
     return buffer;
 }
 
 
-void newBuffer(BufferManager *bm, WindowManager *wm, const char *name,
-               const char *path, char *fontPath) {
-    Buffer *buffer = malloc(sizeof(Buffer));
-    if (buffer == NULL) {
-        fprintf(stderr, "Failed to allocate memory for new buffer.\n");
-        return;
+Buffer* newBuffer(BufferManager *bm, WindowManager *wm, const char *name,
+                 const char *path, const char *fontPath) {
+    // Validate inputs
+    if (!name || !path || !fontPath) {
+        fprintf(stderr, "newBuffer: Invalid arguments\n");
+        return NULL;
     }
 
+    Buffer *buffer = malloc(sizeof(Buffer));
+    if (!buffer) {
+        fprintf(stderr, "Failed to allocate memory for new buffer '%s'\n", name);
+        return NULL;
+    }
+
+    // Initialize buffer core properties
     initBuffer(buffer, name, path);
     inferMajorMode(buffer);
     initScale(&buffer->scale);
+    
+    // Copy font path (check for allocation failure)
     buffer->fontPath = strdup(fontPath);
+    if (!buffer->fontPath) {
+        fprintf(stderr, "Failed to allocate font path for buffer '%s'\n", name);
+        free(buffer);
+        return NULL;
+    }
 
-    // Initialize the display windows array
+    // Initialize display windows tracking
     buffer->displayWindows.windows = NULL;
     buffer->displayWindows.windowCount = 0;
     buffer->displayWindows.windowCapacity = 0;
 
-    // Use the global font cache
+    // Load or reuse font from global cache
     if (!globalFontCache[buffer->scale.index]) {
-        globalFontCache[buffer->scale.index] =
-            loadFont(fontPath, fontsize, "name", tab);
+        globalFontCache[buffer->scale.index] = loadFont(fontPath, fontsize, "name", tab);
+        if (!globalFontCache[buffer->scale.index]) {
+            fprintf(stderr, "Failed to load font for buffer '%s'\n", name);
+            free(buffer->fontPath);
+            free(buffer);
+            return NULL;
+        }
     }
     buffer->font = globalFontCache[buffer->scale.index];
 
+    // Expand buffer manager array if needed
     if (bm->count >= bm->capacity) {
-        bm->capacity *= 2;
-        Buffer **newBuffers =
-            realloc(bm->buffers, sizeof(Buffer *) * bm->capacity);
-        if (newBuffers == NULL) {
-            fprintf(stderr, "Failed to expand buffer bm capacity.\n");
-            free(buffer); // Free allocated buffer on failure
-            return;
+        size_t new_capacity = bm->capacity ? bm->capacity * 2 : 4;
+        Buffer **newBuffers = realloc(bm->buffers, sizeof(Buffer *) * new_capacity);
+        if (!newBuffers) {
+            fprintf(stderr, "Failed to expand buffer manager capacity\n");
+            free(buffer->fontPath);
+            free(buffer);
+            return NULL;
         }
         bm->buffers = newBuffers;
+        bm->capacity = new_capacity;
     }
 
+    // Add buffer to manager
     bm->buffers[bm->count++] = buffer;
+    bm->activeIndex = bm->count - 1;
 
-    // Set the buffer in the active window, ensuring it is immediately visible and
-    // correctly positioned
-    if (wm->activeWindow) {
+    // Update active name (check for allocation failure)
+    char *newActiveName = strdup(name);
+    if (!newActiveName) {
+        fprintf(stderr, "Failed to update active buffer name\n");
+        // Rollback - remove buffer from manager
+        bm->count--;
+        free(buffer->fontPath);
+        free(buffer);
+        return NULL;
+    }
+    free(bm->activeName);
+    bm->activeName = newActiveName;
+
+    // Associate with active window if available
+    if (wm && wm->activeWindow) {
         wm->activeWindow->buffer = buffer;
         wm->activeWindow->y = sh - buffer->font->ascent + buffer->font->descent;
-        wm->activeWindow->height =
-            wm->activeWindow->y; // Adjust height to maintain text position
+        wm->activeWindow->height = wm->activeWindow->y;
+        
+        // Add window to buffer's display list
+        addDisplayWindowToBuffer(buffer, wm->activeWindow);
     }
 
-    // Optionally set the global active buffer if needed
-    bm->activeIndex = bm->count - 1;
-    free(bm->activeName);
-    bm->activeName = strdup(name);
+    // Optional debug screenshot
+    screenshot(buffer);
+
+    return buffer;
 }
 
 void freeBuffer(Buffer *buffer) {
@@ -269,12 +335,12 @@ void freeBuffer(Buffer *buffer) {
     buffer->capacity = 0;
     buffer->point = 0;
     free(buffer->diffs.array);
+    freeUndos(&buffer->undos);
     // Free window-buffer (displayWindows) relationships
     free(buffer->displayWindows.windows);
     buffer->displayWindows.windows = NULL;
     buffer->displayWindows.windowCount = 0;
     buffer->displayWindows.windowCapacity = 0;
-    
 }
 
 // TODO Graveyard
@@ -300,7 +366,6 @@ void freeBufferManager(BufferManager *bm) {
     bm->capacity = 0;
     bm->activeIndex = -1;
 }
-
 
 void switchToBuffer(BufferManager *bm, const char *bufferName) {
     // If the option is enabled, check if any window is already displaying the buffer
@@ -330,22 +395,6 @@ void switchToBuffer(BufferManager *bm, const char *bufferName) {
     // If the buffer doesn't exist, show an error message
     message("Buffer not found.");
 }
-
-
-// TODO Option to just focus the window if it's displaying that buffer
-/* void switchToBuffer(BufferManager *bm, const char *bufferName) { */
-/*     for (int i = 0; i < bm->count; i++) { */
-/*         if (strcmp(bm->buffers[i]->name, bufferName) == 0) { */
-/*             if (strcmp(getActiveBuffer(bm)->name, "minibuffer") != 0) { */
-/*                 bm->lastBuffer = getActiveBuffer(bm); */
-/*             } */
-/*             bm->activeIndex = i; */
-/*             fill_scopes(bm->buffers[i], &bm->buffers[i]->scopes); */
-/*             return; */
-/*         } */
-/*     } */
-/* } */
-
 
 Buffer *getActiveBuffer(BufferManager *bm) {
     if (bm->activeIndex >= 0) {
@@ -412,7 +461,6 @@ void updateRegion(Buffer *buffer, size_t new_point) {
     }
 }
 
-
 void deactivateRegion(Buffer *buffer) {
     buffer->region.active = false;
 }
@@ -467,6 +515,262 @@ void appendToBuffer(Buffer *buffer, const char *content) {
     buffer->size = newSize;
 }
 
+void executeAndOutputShellCommand(Buffer *buffer, const char *command, bool insertMode, size_t insertPos, bool pointAtSize) {
+    if (!buffer || !command) return; // Wasted cycles
+
+    // Save current directory
+    char currentDir[PATH_MAX];
+    if (!getcwd(currentDir, sizeof(currentDir))) {
+        perror("Failed to get current directory");
+        return;
+    }
+
+    // Change to buffer's directory if it has a path
+    if (buffer->path && buffer->path[0] != '\0') {
+        char dirPath[PATH_MAX];
+        strncpy(dirPath, buffer->path, sizeof(dirPath));
+        
+        // Extract directory part
+        char *lastSlash = strrchr(dirPath, '/');
+        if (lastSlash) {
+            *lastSlash = '\0';
+            
+            // Handle ~/ prefix
+            if (dirPath[0] == '~') {
+                const char *home = getenv("HOME");
+                if (home) {
+                    char expandedPath[PATH_MAX];
+                    snprintf(expandedPath, sizeof(expandedPath), "%s%s", home, dirPath + 1);
+                    strncpy(dirPath, expandedPath, sizeof(dirPath));
+                }
+            }
+            
+            if (chdir(dirPath) != 0) {
+                perror("Failed to change to buffer's directory");
+                // Continue with current directory
+            }
+        }
+    }
+
+    // Execute command and capture output
+    FILE *pipe = popen(command, "r");
+    if (!pipe) {
+        perror("Failed to execute command");
+        chdir(currentDir); // Restore directory
+        return;
+    }
+
+    // For insert mode, we need to collect all output first
+    char *output = NULL;
+    size_t outputSize = 0;
+    char chunk[4096];
+    
+    while (fgets(chunk, sizeof(chunk), pipe) != NULL) {
+        size_t chunkLen = strlen(chunk);
+        
+        if (insertMode) {
+            // Collect output for later insertion
+            char *newOutput = realloc(output, outputSize + chunkLen + 1);
+            if (!newOutput) {
+                perror("Failed to allocate memory for command output");
+                free(output);
+                pclose(pipe);
+                chdir(currentDir);
+                return;
+            }
+            output = newOutput;
+            memcpy(output + outputSize, chunk, chunkLen);
+            outputSize += chunkLen;
+        } else {
+            // Directly append to buffer
+            appendToBuffer(buffer, chunk);
+        }
+    }
+
+    // Clean up pipe
+    int status = pclose(pipe);
+    if (status == -1) {
+        perror("Failed to close command pipe");
+    }
+
+    if (insertMode && output) {
+        output[outputSize] = '\0';
+        
+        // Insert the collected output at the specified position
+        if (insertPos > buffer->size) insertPos = buffer->size;
+        
+        // Make space for the new content
+        size_t newSize = buffer->size + outputSize;
+        if (buffer->capacity < newSize + 1) {
+            size_t newCapacity = (newSize + 1) * 2;
+            char *newContent = realloc(buffer->content, newCapacity);
+            if (!newContent) {
+                perror("Failed to allocate memory for buffer content");
+                free(output);
+                chdir(currentDir);
+                return;
+            }
+            buffer->content = newContent;
+            buffer->capacity = newCapacity;
+        }
+        
+        // Move existing content to make space
+        memmove(buffer->content + insertPos + outputSize, 
+                buffer->content + insertPos,
+                buffer->size - insertPos);
+        
+        // Insert the new content
+        memcpy(buffer->content + insertPos, output, outputSize);
+        buffer->size = newSize;
+        buffer->content[buffer->size] = '\0';
+        
+        // Update point if requested
+        if (pointAtSize) {
+            buffer->point = insertPos + outputSize;
+        }
+        
+        free(output);
+    } else if (!insertMode && pointAtSize) {
+        // For append mode, just move point to end if requested
+        buffer->point = buffer->size;
+    }
+
+    // Report command status if it failed
+    if (status != -1 && WEXITSTATUS(status) != 0) {
+        char errorMsg[256];
+        snprintf(errorMsg, sizeof(errorMsg), "Command exited with status %d", WEXITSTATUS(status));
+        if (insertMode) {
+            // Need to insert error message too
+            executeAndOutputShellCommand(buffer, errorMsg, insertMode, insertPos, pointAtSize);
+        } else {
+            appendToBuffer(buffer, errorMsg);
+        }
+    }
+
+    // Restore original directory
+    if (chdir(currentDir) != 0) {
+        perror("Failed to restore original directory");
+    }
+}
+
+void appendShellCommand(Buffer *buffer, char *command, bool pointAtSize) {
+    executeAndOutputShellCommand(buffer, command, false, 0, pointAtSize);
+}
+
+void insertShellCommand(Buffer *buffer, char *command, bool pointAtSize) {
+    executeAndOutputShellCommand(buffer, command, true, buffer->point, pointAtSize);
+}
+
+/**
+   Return the contents of part of the current buffer as a string.
+*/
+char *buffer_substring(Buffer *buffer, size_t start, size_t end) {
+    if (!buffer || !buffer->content) {return NULL;}
+    
+    // Clamp positions to buffer bounds
+    if (start > buffer->size) start = buffer->size;
+    if (end > buffer->size) end = buffer->size;
+    
+    // Ensure start <= end
+    if (start > end) {
+        size_t temp = start;
+        start = end;
+        end = temp;
+    }
+    
+    // Calculate substring length
+    size_t length = end - start;
+    if (length == 0) {
+        return strdup("");  // Return empty string
+    }
+    
+    // Allocate memory for substring (+1 for null terminator)
+    char *substring = malloc(length + 1);
+    if (!substring) {
+        return NULL;
+    }
+    
+    // Copy the substring
+    memcpy(substring, buffer->content + start, length);
+    substring[length] = '\0';
+    
+    return substring;
+}
+
+
+size_t line_beginning_position(Buffer *buffer) {
+    if (!buffer || buffer->size == 0 || buffer->point == 0) {
+        return 0;
+    }
+    
+    size_t pos = buffer->point;
+    // Walk backwards until we hit a newline or start of buffer
+    while (pos > 0 && buffer->content[pos - 1] != '\n') {
+        pos--;
+    }
+    
+    return pos;
+}
+
+size_t line_beginning_position_at(Buffer *buffer, size_t line_number) {
+    if (!buffer || buffer->size == 0 || line_number == 0) {
+        return 0;
+    }
+
+    size_t pos = 0;
+    size_t current_line = 1;  // Line numbers start at 1
+
+    // Special case: first line
+    if (line_number == 1) {
+        return 0;
+    }
+
+    // Scan through the buffer to find the start of the requested line
+    while (pos < buffer->size && current_line < line_number) {
+        if (buffer->content[pos] == '\n') {
+            current_line++;
+            // Skip the newline character to get to start of next line
+            pos++;
+        } else {
+            pos++;
+        }
+    }
+
+    // If we reached the end of buffer before finding the line
+    if (current_line < line_number) {
+        return buffer->size;  // Return end of buffer
+    }
+
+    return pos;
+}
+
+size_t line_end_position_at(Buffer *buffer, size_t pos) {
+    if (!buffer || pos >= buffer->size) return buffer->size;
+    
+    for (size_t i = pos; i < buffer->size; i++) {
+        if (buffer->content[i] == '\n') {
+            return i;
+        }
+    }
+    return buffer->size;
+}
+
+
+size_t line_end_position(Buffer *buffer) {
+    if (!buffer || buffer->size == 0) {
+        return 0;
+    }
+    
+    size_t pos = buffer->point;
+    // Walk forward until we hit a newline or end of buffer
+    while (pos < buffer->size && buffer->content[pos] != '\n') {
+        pos++;
+    }
+    
+    return pos;
+}
+
+
 #include "editor.h"
 
 #include <stdarg.h>
@@ -474,9 +778,11 @@ void appendToBuffer(Buffer *buffer, const char *content) {
 
 void message(const char *format, ...) {
     Buffer *minibuffer = getBuffer(&bm, "minibuffer");
-    Buffer *messageBuffer = getBuffer(&bm, "message");
+    Buffer *messageBuffer = getBuffer(&bm, "footer");
     Buffer *messagesBuffer = getBuffer(&bm, "messages");
-    
+
+    if (!messageBuffer || !minibuffer || !messagesBuffer) return;
+
     // First, format the message with variable arguments
     va_list args;
     va_start(args, format);
@@ -576,6 +882,8 @@ Buffer *getBufferUnderCursor(WindowManager *wm) {
 void setMajorMode(Buffer *buffer, char *mode) {
     buffer->major_mode = strdup(mode);
     // TODO Clear SyntaxArray or assume each major mode does it
+    clearSyntaxArray(buffer);
+    parseSyntax(buffer);
 }
 
 // Is an hashmap for this an overkill ?
@@ -707,258 +1015,6 @@ bool major_mode_is(Buffer *buffer, char *mode) {
     return strstr(buffer->major_mode, mode) != NULL;
 }
 
-// MODELINE TODO Whatever it's doing make it faster
-
-void addSegment(Segments *segments, const char *name, const char *content) {
-    segments->segment = realloc(segments->segment, (segments->count + 1) * sizeof(Segment));
-    segments->segment[segments->count].name = strdup(name);
-    segments->segment[segments->count].content = strdup(content);
-    segments->count++;
-}
-
-void initSegments(Segments *segments) {
-    segments->segment = NULL;
-    segments->count = 0;
-    addSegment(segments, "logo",          "NaL");
-    addSegment(segments, "modified",      "NaM");
-    addSegment(segments, "version",       "NaV");
-    addSegment(segments, "changed",       "Nothing");
-    addSegment(segments, "readonly",      "NaR");
-    addSegment(segments, "noOtherWindow", "NoW");
-    addSegment(segments, "name",          "NAME");
-    addSegment(segments, "url",           "NaU");
-    addSegment(segments, "line-number",   "LINE-NUMBER");
-    addSegment(segments, "scroll",        "Top");
-    addSegment(segments, "lsp",           "NOLSP");
-    addSegment(segments, "path",          "NaP");
-    addSegment(segments, "region-chars",  "NaRC");
-    addSegment(segments, "region-lines",  "NaRL");
-    addSegment(segments, "isearch",       "[NaC]");
-    // TODO Right allign segments from
-    // here to the right of the modeline
-    addSegment(segments, "mode",          "Maybe");
-    addSegment(segments, "scale",         "NaN");
-    addSegment(segments, "completions",   "NaC");
-    addSegment(segments, "branch",        "NaB");
-}
-
-void updateSegments(Modeline *modeline, Buffer *buffer) {
-    for (size_t i = 0; i < modeline->segments.count; i++) {
-        Segment *segment = &modeline->segments.segment[i];
-
-        if (strcmp(segment->name, "line-number") == 0) {
-            int lineNumber = getLineNumber(buffer);
-            free(segment->content);
-            char lineNumStr[32];
-            snprintf(lineNumStr, sizeof(lineNumStr), "L%d", lineNumber);
-            segment->content = strdup(lineNumStr);
-        }
-        else if (strcmp(segment->name, "branch") == 0) {
-            free(segment->content);
-            char* branch = getGitBranch(buffer->path);
-            segment->content = branch;
-        }
-        else if (strcmp(segment->name, "name") == 0) {
-            free(segment->content);
-            segment->content = strdup(buffer->name);
-        }
-        else if (strcmp(segment->name, "url") == 0) {
-            free(segment->content);
-            segment->content = strdup(buffer->url);
-        }
-        else if (strcmp(segment->name, "completions") == 0) {
-            free(segment->content);
-            if (ce.count != 0) {
-                char content[128];
-                snprintf(content, sizeof(content), "%d", ce.count);
-                segment->content = strdup(content);
-            } else {
-                segment->content = strdup("");
-            }
-        }
-        else if (strcmp(segment->name, "lsp") == 0) {
-            free(segment->content);
-            char *bufferDir = getBufferDirectory(buffer->path);
-            if (lspp()) {
-                segment->content = strdup("LSP");
-            } else {
-                segment->content = strdup("");
-            }
-        }
-
-        else if (strcmp(segment->name, "path") == 0) {
-            free(segment->content);
-            if (strcmp(buffer->name, buffer->path) != 0) {
-                segment->content = strdup(buffer->path);
-            } else {
-                segment->content = strdup("");
-            }
-        }
-
-        else if (strcmp(segment->name, "modified") == 0) {
-            free(segment->content);
-            if (buffer->modified) {
-                segment->content = strdup("M");
-            } else {
-                segment->content = strdup("");
-            }
-        }
-        
-        else if (strcmp(segment->name, "version") == 0) {
-            free(segment->content);
-            char version_str[32]; // size_t
-            snprintf(version_str, sizeof(version_str), "%zu", buffer->version);
-            if (buffer->version != 0) {
-                segment->content = strdup(version_str);
-            } else {
-                segment->content = strdup("");
-            }
-        }
-
-        else if (strcmp(segment->name, "changed") == 0) {
-            free(segment->content);
-            if (strstr(buffer->content, buffer->originalContent)) {
-                segment->content = strdup("");
-            } else {
-              segment->content = strdup("C");
-            }
-        }
-        else if (strcmp(segment->name, "mode") == 0) {
-            free(segment->content);
-            segment->content = strdup(buffer->major_mode);
-        }
-        else if (strcmp(segment->name, "scale") == 0) {
-            free(segment->content);
-            char scaleStr[32];
-            snprintf(scaleStr, sizeof(scaleStr), "%d", buffer->scale.index);
-            segment->content = strdup(scaleStr);
-        }
-        else if (strcmp(segment->name, "isearch") == 0) {
-            free(segment->content);
-            if (isearch.count > 0) {
-                char countStr[32];
-                snprintf(countStr, sizeof(countStr), "[%zu]", isearch.count);
-                segment->content = strdup(countStr);
-            } else {
-                segment->content = strdup("");
-            }
-        }
-
-        else if (strcmp(segment->name, "readonly") == 0) {
-            free(segment->content);
-            if (buffer->readOnly) {
-                segment->content = strdup("R");
-            } else {
-                segment->content = strdup("");
-            }
-        }
-
-        else if (strcmp(segment->name, "noOtherWindow") == 0) {
-            free(segment->content);
-            if (modeline->window && modeline->window->parameters.noOtherWindow) {
-                segment->content = strdup("NoW");
-            } else {
-                segment->content = strdup("");
-            }
-        }
-
-
-        else if (strcmp(segment->name, "region-chars") == 0) {
-            if (buffer->region.active) {
-                free(segment ->content);
-                // Calculate the number of characters selected
-                size_t chars_selected = buffer->region.end - buffer->region.start;
-                char chars_str[32];
-                snprintf(chars_str, sizeof(chars_str), "%zu", chars_selected);
-                segment->content = strdup(chars_str);
-            } else {
-                segment->content = strdup("");
-            }
-            // removed
-        }
-
-        else if (strcmp(segment->name, "region-lines") == 0) {
-            if (buffer->region.active) {
-                free(segment ->content);
-                // Calculate the number of lines selected
-                size_t lines_selected = 0;
-                for (size_t i = buffer->region.start; i < buffer->region.end; i++) {
-                    if (buffer->content[i] == '\n') {
-                        lines_selected++;
-                    }
-                }
-                char lines_str[32];
-                snprintf(lines_str, sizeof(lines_str), "%zu", lines_selected);
-                segment->content = strdup(lines_str);
-            } else {
-                segment->content = strdup("");
-            }
-        }
-
-        else if (strcmp(segment->name, "logo") == 0) {
-            free(segment->content);
-            if (strcmp(buffer->major_mode, "c") == 0) {
-                segment->content = strdup("C");
-            } else if (strcmp(buffer->major_mode, "html") == 0) {
-                segment->content = strdup("H");
-            } else if (strcmp(buffer->major_mode, "d") == 0) {
-                segment->content = strdup("D");
-            } else if (strcmp(buffer->major_mode, "scheme") == 0) {
-                segment->content = strdup("S");
-            } else if (strcmp(buffer->major_mode, "glsl") == 0) {
-                segment->content = strdup("G");
-            } else if (strcmp(buffer->major_mode, "eterm") == 0) {
-                segment->content = strdup("TERM");
-            } else if (strcmp(buffer->major_mode, "gemini") == 0) {
-                segment->content = strdup("Gem");
-            } else if (strcmp(buffer->major_mode, "query") == 0) {
-                segment->content = strdup("Q");
-            } else if (strcmp(buffer->major_mode, "zig") == 0) {
-                segment->content = strdup("Z");
-            } else if (strcmp(buffer->major_mode, "odin") == 0) {
-                segment->content = strdup("O");
-            } else if (strcmp(buffer->major_mode, "make") == 0) {
-                segment->content = strdup("M");
-            } else if (strcmp(buffer->major_mode, "commonlisp") == 0) {
-                segment->content = strdup("C");
-            } else if (strcmp(buffer->major_mode, "scss") == 0) {
-                segment->content = strdup("SCSS");
-            } else if (strcmp(buffer->major_mode, "haskell") == 0) {
-                segment->content = strdup("H");
-            } else if (strcmp(buffer->major_mode, "lua") == 0) {
-                segment->content = strdup("L");
-            } else if (strcmp(buffer->major_mode, "rust") == 0) {
-                segment->content = strdup("R");
-            } else if (strcmp(buffer->major_mode, "bash") == 0) {
-                segment->content = strdup("B");
-            } else if (strcmp(buffer->major_mode, "elisp") == 0) {
-                segment->content = strdup("E");
-            } else if (strcmp(buffer->major_mode, "python") == 0) {
-                segment->content = strdup("P");
-            } else if (strcmp(buffer->major_mode, "ocaml") == 0) {
-                segment->content = strdup("ML");
-            } else if (strcmp(buffer->major_mode, "css") == 0) {
-                segment->content = strdup("CSS");
-            } else if (strcmp(buffer->major_mode, "javascript") == 0) {
-                segment->content = strdup("JS");
-            } else if (strcmp(buffer->major_mode, "julia") == 0) {
-                segment->content = strdup("JULIA");
-            } else if (strcmp(buffer->major_mode, "cpp") == 0) {
-                segment->content = strdup("CPP");
-            } else if (strcmp(buffer->major_mode, "go") == 0) {
-                segment->content = strdup("GO");
-            } else if (strcmp(buffer->major_mode, "json") == 0) {
-                segment->content = strdup("JSON");
-            } else if (strcmp(buffer->major_mode, "regex") == 0) {
-                segment->content = strdup("REGEX");
-            } else {
-              segment->content = strdup("F");
-            }
-        }
-    }
-}
-
-
 // TODO HANDLE global_visual_line_mode and the window parameter
 // also take a win instead of buffer can we please have only one function
 // split in 2 function getVisualLineNumber() and getLogicLineNumber()
@@ -980,7 +1036,6 @@ int lineNumberAtPoint(Buffer *buffer, size_t point) {
     }
     return lineCount;
 }
-
 
 // NOTE We could/should memoize them
 Color foregroundColorAtPoint(Buffer *buffer, size_t point) {
@@ -1019,8 +1074,10 @@ Color foregroundColorAtPoint(Buffer *buffer, size_t point) {
 }
 
 
-/* Returns a newly allocated string containing the text of the current line.
-   Caller is responsible for freeing the returned string. */
+/**
+   Returns a newly allocated string containing the text of the current line.
+   Caller is responsible for freeing the returned string.
+*/
 char* getCurrentLine(Buffer *buffer) {
     if (buffer->size == 0) return strdup("");
 
@@ -1098,7 +1155,7 @@ char* getNextBufferPath(BufferManager *bm) {
     return NULL;
 }
 
-
+// Supported TS Major modes
 bool major_mode_supported(Buffer *buffer) {
     if (   strcmp(buffer->major_mode, "c"     ) == 0
         || strcmp(buffer->major_mode, "html"  ) == 0
