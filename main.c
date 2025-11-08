@@ -2,6 +2,7 @@
 #include <obsidian/keychords.h>
 #include <obsidian/obsidian.h>
 #include <obsidian/theme.h>
+#include <obsidian/vertico.h>
 #include <obsidian/vulkan_setup.h>
 #include "buffer.h"
 
@@ -64,10 +65,18 @@ int main() {
     keychord_bind(&keymap, "C-f",         forward_char,         "Forward char",         PRESS | REPEAT);
     keychord_bind(&keymap, "C-n",         next_line,            "Next line",            PRESS | REPEAT);
     keychord_bind(&keymap, "C-p",         previous_line,        "Previous line",        PRESS | REPEAT);
-    keychord_bind(&keymap, "RET",         newline,              "Neline",               PRESS | REPEAT);
-    keychord_bind(&keymap, "C-j",         newline,              "Neline",               PRESS | REPEAT);
-    keychord_bind(&keymap, "C-m",         newline,              "Neline",               PRESS | REPEAT);
+    keychord_bind(&keymap, "<left>",      backward_char,        "Backward char",        PRESS | REPEAT);
+    keychord_bind(&keymap, "<right>",     forward_char,         "Forward char",         PRESS | REPEAT);
+    keychord_bind(&keymap, "<down>",      next_line,            "Next line",            PRESS | REPEAT);
+    keychord_bind(&keymap, "<up>",        previous_line,        "Previous line",        PRESS | REPEAT);
+    keychord_bind(&keymap, "C-e",         end_of_line,          "End of line",          PRESS | REPEAT);
+    keychord_bind(&keymap, "C-a",         beginning_of_line,    "Beginning of line",    PRESS | REPEAT);
+    keychord_bind(&keymap, "RET",         newline,              "Newline",              PRESS | REPEAT);
+    keychord_bind(&keymap, "C-j",         newline,              "Newline",              PRESS | REPEAT);
+    keychord_bind(&keymap, "C-m",         newline,              "Newline",              PRESS | REPEAT);
     keychord_bind(&keymap, "<backspace>", delete_backward_char, "Delete backward char", PRESS | REPEAT);
+    keychord_bind(&keymap, "C-d",         delete_char,          "Delete char",          PRESS | REPEAT);
+    keychord_bind(&keymap, "C-o",         open_line,            "Open line",            PRESS | REPEAT);
 
     while (!windowShouldClose()) {
         beginFrame();

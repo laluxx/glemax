@@ -98,6 +98,7 @@ bool rope_iter_next_char(rope_iter_t *iter, uint32_t *codepoint);
 bool rope_iter_prev_char(rope_iter_t *iter, uint32_t *codepoint);
 void rope_iter_seek_char(rope_iter_t *iter, size_t char_pos);
 void rope_iter_seek_byte(rope_iter_t *iter, size_t byte_pos);
+void rope_iter_destroy(rope_iter_t *iter);
 
 /* Line-based operations (newline-aware) */
 size_t rope_line_count(const rope_t *rope);
@@ -660,33 +661,49 @@ size_t rope_copy_bytes(const rope_t *rope, size_t byte_start, size_t byte_len,
     
     size_t copied = 0;
     rope_node_t *node = rope->root;
-    size_t offset = 0;
+    rope_node_t *stack[64];
+    int sp = 0;
+    size_t current_offset = 0;
     
-    /* Navigate to start position */
+    // Navigate to starting leaf
     while (node && !node->is_leaf) {
         if (byte_start < node->byte_weight) {
+            stack[sp++] = node;
             node = node->branch.left;
         } else {
+            current_offset += node->byte_weight;
             byte_start -= node->byte_weight;
-            offset += node->byte_weight;
             node = node->branch.right;
         }
     }
     
-    /* Copy data */
-    while (node && copied < byte_len) {
-        if (node->is_leaf) {
-            size_t to_copy = node->leaf.byte_len - byte_start;
-            if (to_copy > byte_len - copied) to_copy = byte_len - copied;
-            memcpy(buf + copied, node->leaf.data + byte_start, to_copy);
-            copied += to_copy;
-            byte_start = 0;
+    // Copy from leaves
+    while (node && node->is_leaf && copied < byte_len) {
+        size_t to_copy = node->leaf.byte_len - byte_start;
+        if (to_copy > byte_len - copied) {
+            to_copy = byte_len - copied;
         }
         
-        /* Move to next leaf - simplified traversal */
+        memcpy(buf + copied, node->leaf.data + byte_start, to_copy);
+        copied += to_copy;
+        byte_start = 0; // After first leaf, start from beginning
+        
+        // Move to next leaf if we need more data
         if (copied < byte_len) {
-            /* This would need proper tree traversal in production */
-            break;
+            // Find next leaf using stack
+            if (sp == 0) break;
+            
+            rope_node_t *parent = stack[--sp];
+            if (parent->branch.right) {
+                node = parent->branch.right;
+                // Find leftmost leaf in right subtree
+                while (node && !node->is_leaf) {
+                    stack[sp++] = node;
+                    node = node->branch.left;
+                }
+            } else {
+                node = NULL;
+            }
         }
     }
     
@@ -735,7 +752,7 @@ rope_t *rope_concat(rope_t *left, rope_t *right) {
 }
 
 /* ============================================================================
- * SPLIT OPERATIONS (PRODUCTION-GRADE)
+ * SPLIT OPERATIONS)
  * ========================================================================= */
 
 /* Split leaf node at byte position */
@@ -1068,6 +1085,7 @@ bool rope_validate_utf8(const rope_t *rope) {
     return valid;
 }
 
+
 /* ============================================================================
  * ITERATOR IMPLEMENTATION
  * ========================================================================= */
@@ -1079,6 +1097,60 @@ typedef struct {
     size_t leaf_byte_pos;
 } rope_iter_state_t;
 
+/* Helper: Find the leftmost (first) leaf from a given node */
+static rope_node_t *find_leftmost_leaf(rope_node_t *node, rope_node_t **stack, int *sp) {
+    while (node && !node->is_leaf) {
+        stack[(*sp)++] = node;
+        node = node->branch.left;
+    }
+    return node;
+}
+
+/* Helper: Find the rightmost (last) leaf from a given node */
+static rope_node_t *find_rightmost_leaf(rope_node_t *node, rope_node_t **stack, int *sp) {
+    while (node && !node->is_leaf) {
+        stack[(*sp)++] = node;
+        node = node->branch.right;
+    }
+    return node;
+}
+
+/* Helper: Navigate to next leaf in in-order traversal */
+static rope_node_t *next_leaf(rope_iter_state_t *state) {
+    if (state->sp == 0) {
+        return NULL; // No more nodes
+    }
+    
+    // Pop parent and try its right subtree
+    rope_node_t *parent = state->stack[--state->sp];
+    
+    if (parent->branch.right) {
+        // Find leftmost leaf in right subtree
+        return find_leftmost_leaf(parent->branch.right, state->stack, &state->sp);
+    }
+    
+    // No right child, continue up the stack
+    return next_leaf(state);
+}
+
+/* Helper: Navigate to previous leaf in reverse in-order traversal */
+static rope_node_t *prev_leaf(rope_iter_state_t *state) {
+    if (state->sp == 0) {
+        return NULL; // No more nodes
+    }
+    
+    // Pop parent and try its left subtree
+    rope_node_t *parent = state->stack[--state->sp];
+    
+    if (parent->branch.left) {
+        // Find rightmost leaf in left subtree
+        return find_rightmost_leaf(parent->branch.left, state->stack, &state->sp);
+    }
+    
+    // No left child, continue up the stack
+    return prev_leaf(state);
+}
+
 void rope_iter_init(rope_iter_t *iter, const rope_t *rope, size_t char_pos) {
     if (!iter) return;
     
@@ -1086,31 +1158,32 @@ void rope_iter_init(rope_iter_t *iter, const rope_t *rope, size_t char_pos) {
     iter->char_pos = char_pos;
     iter->byte_pos = rope ? rope_char_to_byte(rope, char_pos) : 0;
     
-    /* Allocate iterator state */
+    // Allocate iterator state
     rope_iter_state_t *state = (rope_iter_state_t *)calloc(1, sizeof(rope_iter_state_t));
     iter->internal = state;
     
     if (!rope || !rope->root) return;
     
-    /* Navigate to position */
+    // Navigate to the leaf containing char_pos
     rope_node_t *node = rope->root;
     size_t byte_offset = 0;
+    size_t target_byte = iter->byte_pos;
     
     while (node && !node->is_leaf) {
-        if (iter->byte_pos < node->byte_weight) {
+        if (target_byte < node->byte_weight) {
             state->stack[state->sp++] = node;
             node = node->branch.left;
         } else {
             byte_offset += node->byte_weight;
-            iter->byte_pos -= node->byte_weight;
+            target_byte -= node->byte_weight;
             node = node->branch.right;
         }
     }
     
     if (node && node->is_leaf) {
         state->current_leaf = node;
-        state->leaf_byte_pos = iter->byte_pos;
-        iter->byte_pos = byte_offset + state->leaf_byte_pos;
+        state->leaf_byte_pos = target_byte;
+        iter->byte_pos = byte_offset + target_byte;
     }
 }
 
@@ -1120,25 +1193,35 @@ bool rope_iter_next_char(rope_iter_t *iter, uint32_t *codepoint) {
     }
     
     rope_iter_state_t *state = (rope_iter_state_t *)iter->internal;
-    if (!state || !state->current_leaf) return false;
+    if (!state) return false;
+    
+    // If no current leaf, we've exhausted the iterator
+    if (!state->current_leaf) return false;
     
     rope_node_t *leaf = state->current_leaf;
-    size_t bytes_read;
     
+    // If we're at the end of current leaf, move to next
+    if (state->leaf_byte_pos >= leaf->leaf.byte_len) {
+        state->current_leaf = next_leaf(state);
+        state->leaf_byte_pos = 0;
+        
+        if (!state->current_leaf) {
+            return false; // No more leaves
+        }
+        
+        leaf = state->current_leaf;
+    }
+    
+    // Decode character
+    size_t bytes_read;
     *codepoint = utf8_decode(leaf->leaf.data + state->leaf_byte_pos,
                             leaf->leaf.byte_len - state->leaf_byte_pos,
                             &bytes_read);
     
+    // Update positions
     state->leaf_byte_pos += bytes_read;
     iter->byte_pos += bytes_read;
     iter->char_pos++;
-    
-    /* Move to next leaf if needed */
-    if (state->leaf_byte_pos >= leaf->leaf.byte_len) {
-        /* Find next leaf - simplified */
-        state->current_leaf = NULL;
-        state->leaf_byte_pos = 0;
-    }
     
     return true;
 }
@@ -1146,11 +1229,76 @@ bool rope_iter_next_char(rope_iter_t *iter, uint32_t *codepoint) {
 bool rope_iter_prev_char(rope_iter_t *iter, uint32_t *codepoint) {
     if (!iter || !iter->rope || iter->char_pos == 0) return false;
     
-    /* Navigate backwards - simplified implementation */
+    rope_iter_state_t *state = (rope_iter_state_t *)iter->internal;
+    if (!state) return false;
+    
+    // Move back one character
     iter->char_pos--;
+    
+    // If no current leaf or at beginning of leaf, find previous leaf
+    if (!state->current_leaf || state->leaf_byte_pos == 0) {
+        state->current_leaf = prev_leaf(state);
+        
+        if (!state->current_leaf) {
+            // No previous leaf, reinitialize from new position
+            rope_iter_state_t *new_state = (rope_iter_state_t *)calloc(1, sizeof(rope_iter_state_t));
+            free(state);
+            iter->internal = new_state;
+            state = new_state;
+            
+            // Navigate to position
+            rope_node_t *node = iter->rope->root;
+            size_t byte_pos = rope_char_to_byte(iter->rope, iter->char_pos);
+            size_t byte_offset = 0;
+            
+            while (node && !node->is_leaf) {
+                if (byte_pos < node->byte_weight) {
+                    state->stack[state->sp++] = node;
+                    node = node->branch.left;
+                } else {
+                    byte_offset += node->byte_weight;
+                    byte_pos -= node->byte_weight;
+                    node = node->branch.right;
+                }
+            }
+            
+            if (node && node->is_leaf) {
+                state->current_leaf = node;
+                state->leaf_byte_pos = byte_pos;
+            } else {
+                return false;
+            }
+        } else {
+            // Position at end of previous leaf
+            state->leaf_byte_pos = state->current_leaf->leaf.byte_len;
+        }
+    }
+    
+    // Now find the start of the character at char_pos
+    // We need to scan backwards in the current leaf to find character boundary
+    rope_node_t *leaf = state->current_leaf;
+    size_t scan_pos = 0;
+    size_t target_char = iter->char_pos;
+    size_t current_char = 0;
+    
+    // Count characters up to our position
+    while (scan_pos < state->leaf_byte_pos && scan_pos < leaf->leaf.byte_len) {
+        size_t char_len = utf8_char_len((uint8_t)leaf->leaf.data[scan_pos]);
+        if (scan_pos + char_len > state->leaf_byte_pos) break;
+        scan_pos += char_len;
+        current_char++;
+    }
+    
+    // Decode the character
+    size_t bytes_read;
+    *codepoint = utf8_decode(leaf->leaf.data + scan_pos,
+                            leaf->leaf.byte_len - scan_pos,
+                            &bytes_read);
+    
+    // Update positions
+    state->leaf_byte_pos = scan_pos;
     iter->byte_pos = rope_char_to_byte(iter->rope, iter->char_pos);
     
-    *codepoint = rope_char_at(iter->rope, iter->char_pos);
     return true;
 }
 
@@ -1169,6 +1317,14 @@ void rope_iter_seek_byte(rope_iter_t *iter, size_t byte_pos) {
     
     size_t char_pos = rope_byte_to_char(iter->rope, byte_pos);
     rope_iter_seek_char(iter, char_pos);
+}
+
+void rope_iter_destroy(rope_iter_t *iter) {
+    if (!iter) return;
+    if (iter->internal) {
+        free(iter->internal);
+        iter->internal = NULL;
+    }
 }
 
 /* ============================================================================

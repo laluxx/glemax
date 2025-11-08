@@ -76,8 +76,18 @@ void delete_backward_char() {
     }
 }
 
+void delete_char() {
+    buffer->rope = rope_delete_chars(buffer->rope, buffer->pt, 1);
+}
+
 void newline() {
     insert('\n');
+}
+
+
+void open_line() {
+    insert('\n');
+    buffer->pt--;
 }
 
 
@@ -197,6 +207,16 @@ void previous_line() {
     }
 }
 
+void end_of_line() {
+    buffer->pt = line_end_position();
+    update_goal_column();
+}
+
+void beginning_of_line() {
+    buffer->pt = line_beginning_position();
+    update_goal_column();
+}
+
 void draw_cursor(Buffer *buffer, float start_x, float start_y) {
     float x = start_x;
     float y = start_y;
@@ -204,36 +224,39 @@ void draw_cursor(Buffer *buffer, float start_x, float start_y) {
     size_t text_len = rope_char_length(buffer->rope);
     int lineCount = 0;
     
-    // Calculate cursor position
-    for (size_t i = 0; i < buffer->pt && i < text_len; i++) {
-        uint32_t ch = rope_char_at(buffer->rope, i);
-        
+    // Use iterator to calculate cursor position - O(n) instead of O(n log n)
+    rope_iter_t iter;
+    rope_iter_init(&iter, buffer->rope, 0);
+    
+    uint32_t ch;
+    size_t i = 0;
+    while (i < buffer->pt && rope_iter_next_char(&iter, &ch)) {
         if (ch == '\n') {
             lineCount++;
             x = start_x;
         } else if (ch < ASCII) {
             x += buffer->font->characters[ch].ax;
         }
+        i++;
     }
+    
+    rope_iter_destroy(&iter);
     
     y = start_y - lineCount * line_height - (buffer->font->descent * 2);
     
     buffer->cursor.x = x;
     buffer->cursor.y = y;
     
-    // Determine cursor width
-    float cursor_width;
+    // Determine cursor width - check character at cursor position
+    float cursor_width = buffer->font->characters[' '].ax; // Default
+    
     if (buffer->pt < text_len) {
         uint32_t ch = rope_char_at(buffer->rope, buffer->pt);
         if (ch == '\n') {
             cursor_width = buffer->font->characters[' '].ax;
         } else if (ch < ASCII) {
             cursor_width = buffer->font->characters[ch].ax;
-        } else {
-            cursor_width = buffer->font->characters[' '].ax;
         }
-    } else {
-        cursor_width = buffer->font->characters[' '].ax;
     }
     
     float cursor_height = buffer->font->ascent + buffer->font->descent;
@@ -266,12 +289,13 @@ void draw_buffer(Buffer *buffer, float start_x, float start_y) {
     float x = start_x;
     float y = start_y;
     float line_height = buffer->font->ascent + buffer->font->descent;
-    size_t text_len = rope_char_length(buffer->rope);
     
-    // Render each character individually
-    for (size_t i = 0; i < text_len; i++) {
-        uint32_t ch = rope_char_at(buffer->rope, i);
-        
+    rope_iter_t iter;
+    rope_iter_init(&iter, buffer->rope, 0);
+    
+    uint32_t ch;
+    size_t i = 0;
+    while (rope_iter_next_char(&iter, &ch)) {
         if (ch == '\n') {
             x = start_x;
             y -= line_height;
@@ -280,7 +304,10 @@ void draw_buffer(Buffer *buffer, float start_x, float start_y) {
             float advance = character(buffer->font, (unsigned char)ch, x, y, char_color);
             x += advance;
         }
+        i++;
     }
+    
+    rope_iter_destroy(&iter);
     
     draw_cursor(buffer, start_x, start_y);
 }
