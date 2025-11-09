@@ -7,6 +7,8 @@ size_t blink_cursor_blinks = 10;
 float blink_cursor_interval = 0.5;
 float blink_cursor_delay = 0.5;
 
+bool visible_mark_mode = false;
+
 Buffer* buffer_create(Font *font) {
     Buffer *buffer = (Buffer*)malloc(sizeof(Buffer));
     if (!buffer) return NULL;
@@ -19,7 +21,10 @@ Buffer* buffer_create(Font *font) {
     buffer->cursor.last_blink = 0.0;
     buffer->cursor.blink_count = 0;
     buffer->font = font;
-    
+
+    buffer->region.active = false;
+    buffer->region.mark = 0;
+
     return buffer;
 }
 
@@ -62,22 +67,49 @@ void insert(uint32_t codepoint) {
     }
     
     if (len > 0) {
+
+        if (buffer->pt < buffer->region.mark) buffer->region.mark++;
+
         buffer->rope = rope_insert_chars(buffer->rope, buffer->pt, utf8, len);
         buffer->pt++;
         update_goal_column();
     }
 }
 
+size_t delete(size_t pos, size_t count) {
+    if (count == 0) return pos;
+    
+    size_t text_len = rope_char_length(buffer->rope);
+    if (pos >= text_len) return pos;
+    
+    // Clamp count to available characters
+    if (pos + count > text_len) {
+        count = text_len - pos;
+    }
+    
+    // Update mark if region is active
+    size_t delete_end = pos + count;
+    if (buffer->region.mark >= delete_end) {
+        buffer->region.mark -= count;
+    } else if (buffer->region.mark > pos) {
+        buffer->region.mark = pos;
+    }
+
+    buffer->rope = rope_delete_chars(buffer->rope, pos, count);
+    return pos;
+}
+
+
 void delete_backward_char() {
     if (buffer->pt > 0) {
-        buffer->rope = rope_delete_chars(buffer->rope, buffer->pt - 1, 1);
+        delete(buffer->pt - 1, 1);
         buffer->pt--;
         update_goal_column();
     }
 }
 
 void delete_char() {
-    buffer->rope = rope_delete_chars(buffer->rope, buffer->pt, 1);
+    delete(buffer->pt, 1);
 }
 
 void newline() {
@@ -88,6 +120,7 @@ void newline() {
 void open_line() {
     insert('\n');
     buffer->pt--;
+    update_goal_column();    
 }
 
 
@@ -217,6 +250,147 @@ void beginning_of_line() {
     update_goal_column();
 }
 
+/// REGION
+
+bool transient_mark_mode = false;
+
+void set_mark_command() {
+    buffer->region.mark = buffer->pt;
+    if (transient_mark_mode) buffer->region.active = true;
+}
+
+void exchange_point_and_mark() {
+    size_t temp = buffer->pt;
+    buffer->pt = buffer->region.mark;
+    buffer->region.mark = temp;
+    update_goal_column();
+}
+
+// Get the bounds of the region (always returns min, max order)
+void region_bounds(size_t *start, size_t *end) {
+    if (buffer->region.mark < buffer->pt) {
+        *start = buffer->region.mark;
+        *end = buffer->pt;
+    } else {
+        *start = buffer->pt;
+        *end = buffer->region.mark;
+    }
+}
+
+void delete_region() {
+    size_t start, end;
+    region_bounds(&start, &end);
+    
+    // Nothing to delete if start == end
+    if (start == end) {
+        buffer->region.active = false;
+        return;
+    }
+    
+    size_t length = end - start;
+    delete(start, length);
+    buffer->pt = start;
+    buffer->region.active = false;
+    update_goal_column();
+}
+
+
+void kill(size_t start, size_t end) {
+    if (start >= end) return;
+    
+    size_t length = end - start;
+    
+    // Allocate buffer (worst case: 4 bytes per UTF-8 char + null terminator)
+    size_t buffer_size = length * 4 + 1;
+    char *text = (char *)malloc(buffer_size);
+    
+    if (text) {
+        size_t copied = rope_copy_chars(buffer->rope, start, length, text, buffer_size - 1);
+        text[copied] = '\0';  // Null terminate
+        setClipboardString(text);
+        free(text);
+    }
+    
+    delete(start, length);
+}
+
+
+void kill_line() {
+    size_t line_end = line_end_position();
+    size_t text_len = rope_char_length(buffer->rope);
+    
+    // If at end of line and not at end of buffer, kill the newline
+    if (buffer->pt == line_end && buffer->pt < text_len) {
+        kill(buffer->pt, buffer->pt + 1);
+    } else if (buffer->pt < line_end) {
+        kill(buffer->pt, line_end);
+    }
+}
+
+
+void kill_region() {
+    size_t start, end;
+    region_bounds(&start, &end);
+    
+    if (start == end) {
+        buffer->region.active = false;
+        return;
+    }
+    
+    kill(start, end);
+    buffer->pt = start;
+    buffer->region.active = false;
+    update_goal_column();
+}
+
+void yank() {
+    const char *clipboard_text = getClipboardString();
+    
+    if (clipboard_text && *clipboard_text) {
+        buffer->region.mark = buffer->pt;
+        // Insert each character from the clipboard
+        const char *p = clipboard_text;
+        while (*p) {
+            // Decode UTF-8
+            uint32_t codepoint = 0;
+            int bytes = 0;
+            
+            unsigned char c = (unsigned char)*p;
+            if (c < 0x80) {
+                codepoint = c;
+                bytes = 1;
+            } else if ((c & 0xE0) == 0xC0) {
+                codepoint = c & 0x1F;
+                bytes = 2;
+            } else if ((c & 0xF0) == 0xE0) {
+                codepoint = c & 0x0F;
+                bytes = 3;
+            } else if ((c & 0xF8) == 0xF0) {
+                codepoint = c & 0x07;
+                bytes = 4;
+            } else {
+                p++; // Invalid UTF-8, skip
+                continue;
+            }
+            
+            // Read continuation bytes
+            for (int i = 1; i < bytes; i++) {
+                p++;
+                if (!*p || (*p & 0xC0) != 0x80) {
+                    bytes = i; // Incomplete sequence
+                    break;
+                }
+                codepoint = (codepoint << 6) | (*p & 0x3F);
+            }
+            
+            insert(codepoint);
+            p++;
+        }
+        
+        update_goal_column();
+    }
+}
+
 void draw_cursor(Buffer *buffer, float start_x, float start_y) {
     float x = start_x;
     float y = start_y;
@@ -285,6 +459,53 @@ void draw_cursor(Buffer *buffer, float start_x, float start_y) {
     }
 }
 
+void draw_mark(Buffer *buffer, float start_x, float start_y) {
+    if (buffer->region.mark == buffer->pt) return;
+    float mark_x = start_x;
+    float mark_y = start_y;
+    float line_height = buffer->font->ascent + buffer->font->descent;
+    size_t text_len = rope_char_length(buffer->rope);
+    int lineCount = 0;
+    
+    // Use iterator to calculate mark position
+    rope_iter_t iter;
+    rope_iter_init(&iter, buffer->rope, 0);
+    
+    uint32_t ch;
+    size_t i = 0;
+    while (i < buffer->region.mark && rope_iter_next_char(&iter, &ch)) {
+        if (ch == '\n') {
+            lineCount++;
+            mark_x = start_x;
+        } else if (ch < ASCII) {
+            mark_x += buffer->font->characters[ch].ax;
+        }
+        i++;
+    }
+    
+    rope_iter_destroy(&iter);
+    
+    mark_y = start_y - lineCount * line_height - (buffer->font->descent * 2);
+    
+    // Determine mark width
+    float mark_width = buffer->font->characters[' '].ax;
+    
+    if (buffer->region.mark < text_len) {
+        uint32_t ch = rope_char_at(buffer->rope, buffer->region.mark);
+        if (ch == '\n') {
+            mark_width = buffer->font->characters[' '].ax;
+        } else if (ch < ASCII) {
+            mark_width = buffer->font->characters[ch].ax;
+        }
+    }
+    
+    float mark_height = buffer->font->ascent + buffer->font->descent;
+    
+    quad2D((vec2){mark_x, mark_y}, (vec2){mark_width, mark_height}, CT.function);
+}
+
+
+
 void draw_buffer(Buffer *buffer, float start_x, float start_y) {
     float x = start_x;
     float y = start_y;
@@ -300,7 +521,7 @@ void draw_buffer(Buffer *buffer, float start_x, float start_y) {
             x = start_x;
             y -= line_height;
         } else if (ch < ASCII) {
-            Color char_color = (i == buffer->pt && buffer->cursor.visible) ? CT.bg : CT.text;
+            Color char_color = (i == buffer->pt && buffer->cursor.visible || i == buffer->region.mark && visible_mark_mode) ? CT.bg : CT.text;
             float advance = character(buffer->font, (unsigned char)ch, x, y, char_color);
             x += advance;
         }
@@ -309,5 +530,7 @@ void draw_buffer(Buffer *buffer, float start_x, float start_y) {
     
     rope_iter_destroy(&iter);
     
+
+    if (visible_mark_mode) draw_mark(buffer, start_x, start_y);
     draw_cursor(buffer, start_x, start_y);
 }

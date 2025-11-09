@@ -12,10 +12,16 @@ typedef struct {
 } Cursor;
 
 typedef struct {
+    size_t mark;
+    bool active;
+} Region;
+
+typedef struct {
     rope_t *rope;           
     Cursor cursor;
     size_t pt;
     Font *font;
+    Region region;
 } Buffer;
 
 extern Buffer *buffer;
@@ -42,6 +48,17 @@ void next_line();
 void previous_line();
 void end_of_line();
 void beginning_of_line();
+
+
+void set_mark_command();
+void exchange_point_and_mark();
+void region_bounds(size_t *start, size_t *end);
+void delete_region();
+
+void kill(size_t start, size_t end);
+void kill_line();
+void kill_region();
+void yank();
 
 
 void draw_buffer(Buffer *buffer, float start_x, float start_y);
