@@ -1,4 +1,5 @@
 #include "buffer.h"
+#include <ctype.h>
 
 Buffer *buffer;
 
@@ -8,6 +9,24 @@ float blink_cursor_interval = 0.5;
 float blink_cursor_delay = 0.5;
 
 bool visible_mark_mode = false;
+
+int arg = 1;
+bool mark_word_navigation = true;
+
+bool shift;
+bool ctrl;
+bool alt;
+
+
+KeyChordAction last_command = NULL;
+bool last_command_was_kill = false;
+
+bool is_kill_command(KeyChordAction action) {
+    return action == kill_word ||
+           action == backward_kill_word ||
+           action == kill_line ||
+           action == kill_region;
+}
 
 Buffer* buffer_create(Font *font) {
     Buffer *buffer = (Buffer*)malloc(sizeof(Buffer));
@@ -99,12 +118,14 @@ size_t delete(size_t pos, size_t count) {
     return pos;
 }
 
-
 void delete_backward_char() {
+    if (buffer->region.active) {
+        delete_region();
+    } else
+
     if (buffer->pt > 0) {
         delete(buffer->pt - 1, 1);
         buffer->pt--;
-        update_goal_column();
     }
 }
 
@@ -116,27 +137,22 @@ void newline() {
     insert('\n');
 }
 
-
 void open_line() {
     insert('\n');
     buffer->pt--;
-    update_goal_column();    
 }
-
 
 void forward_char() {
     size_t text_len = rope_char_length(buffer->rope); // O(1) cached!
     if (buffer->pt < text_len) {
         buffer->pt++;
     }
-    update_goal_column();
 }
 
 void backward_char() {
     if (buffer->pt > 0) {
         buffer->pt--;
     }
-    update_goal_column();
 }
 
 size_t line_beginning_position() {
@@ -242,17 +258,15 @@ void previous_line() {
 
 void end_of_line() {
     buffer->pt = line_end_position();
-    update_goal_column();
 }
 
 void beginning_of_line() {
     buffer->pt = line_beginning_position();
-    update_goal_column();
 }
 
 /// REGION
 
-bool transient_mark_mode = false;
+bool transient_mark_mode = true;
 
 void set_mark_command() {
     buffer->region.mark = buffer->pt;
@@ -263,7 +277,6 @@ void exchange_point_and_mark() {
     size_t temp = buffer->pt;
     buffer->pt = buffer->region.mark;
     buffer->region.mark = temp;
-    update_goal_column();
 }
 
 // Get the bounds of the region (always returns min, max order)
@@ -291,42 +304,60 @@ void delete_region() {
     delete(start, length);
     buffer->pt = start;
     buffer->region.active = false;
-    update_goal_column();
 }
 
-
-void kill(size_t start, size_t end) {
+void kill(size_t start, size_t end, bool prepend) {
     if (start >= end) return;
     
     size_t length = end - start;
-    
-    // Allocate buffer (worst case: 4 bytes per UTF-8 char + null terminator)
     size_t buffer_size = length * 4 + 1;
-    char *text = (char *)malloc(buffer_size);
+    char *new_text = (char *)malloc(buffer_size);
     
-    if (text) {
-        size_t copied = rope_copy_chars(buffer->rope, start, length, text, buffer_size - 1);
-        text[copied] = '\0';  // Null terminate
-        setClipboardString(text);
-        free(text);
+    if (!new_text) return;
+    
+    size_t copied = rope_copy_chars(buffer->rope, start, length, new_text, buffer_size - 1);
+    new_text[copied] = '\0';
+    
+    if (last_command_was_kill) {
+        const char *existing = getClipboardString();
+        if (existing && *existing) {
+            size_t total_len = strlen(existing) + copied + 1;
+            char *combined = (char *)malloc(total_len);
+            if (prepend) {
+                snprintf(combined, total_len, "%s%s", new_text, existing);
+            } else {
+                snprintf(combined, total_len, "%s%s", existing, new_text);
+            }
+            setClipboardString(combined);
+            free(combined);
+        } else {
+            setClipboardString(new_text);
+        }
+    } else {
+        setClipboardString(new_text);
     }
     
+    free(new_text);
     delete(start, length);
 }
-
 
 void kill_line() {
     size_t line_end = line_end_position();
     size_t text_len = rope_char_length(buffer->rope);
     
-    // If at end of line and not at end of buffer, kill the newline
+    size_t start = buffer->pt;
+    size_t end;
+    
     if (buffer->pt == line_end && buffer->pt < text_len) {
-        kill(buffer->pt, buffer->pt + 1);
+        end = buffer->pt + 1;
     } else if (buffer->pt < line_end) {
-        kill(buffer->pt, line_end);
+        end = line_end;
+    } else {
+        return;
     }
+    
+    kill(start, end, false);
 }
-
 
 void kill_region() {
     size_t start, end;
@@ -337,10 +368,9 @@ void kill_region() {
         return;
     }
     
-    kill(start, end);
+    kill(start, end, false);
     buffer->pt = start;
     buffer->region.active = false;
-    update_goal_column();
 }
 
 void yank() {
@@ -386,9 +416,212 @@ void yank() {
             insert(codepoint);
             p++;
         }
-        
-        update_goal_column();
     }
+}
+
+/// WORD
+
+bool isWordChar(uint32_t c) {
+    if (c >= ASCII) return false;
+    return isalnum((unsigned char)c);
+}
+
+bool isPunctuationChar(uint32_t c) {
+    if (c >= ASCII) return false;
+    return strchr(",.;:!?'\"(){}[]<>-+*/=&|^%$#@~_", (char)c) != NULL;
+}
+
+/* Move to the end of the current word - EFFICIENT VERSION */
+size_t end_of_word(Buffer *buffer, size_t pos) {
+    size_t text_len = rope_char_length(buffer->rope);
+    if (pos >= text_len) return text_len;
+    
+    rope_iter_t iter;
+    rope_iter_init(&iter, buffer->rope, pos);
+    
+    uint32_t ch;
+    if (!rope_iter_next_char(&iter, &ch)) {
+        rope_iter_destroy(&iter);
+        return pos;
+    }
+    
+    bool in_word = isWordChar(ch);
+    
+    if (in_word) {
+        // Skip word characters
+        while (rope_iter_next_char(&iter, &ch) && isWordChar(ch)) {
+            // Keep going
+        }
+    } else {
+        // Skip non-word characters until we hit a word
+        while (rope_iter_next_char(&iter, &ch) && !isWordChar(ch)) {
+            // Keep going
+        }
+        // Then skip the word
+        while (rope_iter_next_char(&iter, &ch) && isWordChar(ch)) {
+            // Keep going
+        }
+    }
+    
+    // iter.char_pos is now one past the last character we read
+    // We want to return the position after the last word char we saw
+    size_t result = iter.char_pos > 0 ? iter.char_pos - 1 : 0;
+    
+    // If we stopped because of EOF, don't subtract
+    if (iter.char_pos >= text_len) {
+        result = text_len;
+    }
+    
+    rope_iter_destroy(&iter);
+    return result;
+}
+
+/* Move to beginning - uses rope_copy_chars for local buffering */
+size_t beginning_of_word(Buffer *buffer, size_t pos) {
+    if (pos == 0) return 0;
+    
+    // Copy up to 200 characters before pos for local scanning (increased buffer)
+    size_t scan_start = pos > 200 ? pos - 200 : 0;
+    size_t scan_len = pos - scan_start;
+    
+    char buf[1024];  // Increased buffer size
+    size_t copied = rope_copy_chars(buffer->rope, scan_start, scan_len, buf, sizeof(buf) - 1);
+    
+    if (copied == 0) return scan_start;
+    
+    // Build array of character positions
+    size_t byte_positions[201];
+    byte_positions[0] = 0;
+    
+    size_t char_count = 0;
+    size_t byte_pos = 0;
+    
+    while (byte_pos < copied && char_count < scan_len) {
+        size_t char_len = utf8_char_len((uint8_t)buf[byte_pos]);
+        if (byte_pos + char_len > copied) break;
+        byte_pos += char_len;
+        char_count++;
+        byte_positions[char_count] = byte_pos;
+    }
+    
+    if (char_count == 0) return scan_start;
+    
+    // Start from the character before pos
+    size_t rel_pos = char_count;
+    
+    // Decode character before position
+    size_t bytes_read;
+    uint32_t ch = utf8_decode(buf + byte_positions[rel_pos - 1],
+                              copied - byte_positions[rel_pos - 1], &bytes_read);
+    
+    if (isWordChar(ch)) {
+        // We're in a word, skip backwards to start of word
+        while (rel_pos > 0) {
+            ch = utf8_decode(buf + byte_positions[rel_pos - 1],
+                           copied - byte_positions[rel_pos - 1], &bytes_read);
+            if (!isWordChar(ch)) break;
+            rel_pos--;
+        }
+    } else {
+        // We're not in a word, skip backwards over non-word chars
+        while (rel_pos > 0) {
+            ch = utf8_decode(buf + byte_positions[rel_pos - 1],
+                           copied - byte_positions[rel_pos - 1], &bytes_read);
+            if (isWordChar(ch)) break;
+            rel_pos--;
+        }
+        
+        // Then skip backwards over the word we found
+        while (rel_pos > 0) {
+            ch = utf8_decode(buf + byte_positions[rel_pos - 1],
+                           copied - byte_positions[rel_pos - 1], &bytes_read);
+            if (!isWordChar(ch)) break;
+            rel_pos--;
+        }
+    }
+    
+    return scan_start + rel_pos;
+}
+
+void forward_word() {
+    if (arg == 0) return;
+
+    // Handle region activation like Emacs does
+    if (shift && !buffer->region.active) {
+        buffer->region.active = true;
+    } else if (!shift && buffer->region.active) {
+        buffer->region.active = false;
+    }
+
+    int direction = arg > 0 ? 1 : -1;
+    int count = abs(arg);
+
+    // Simple movement when shift is held (no special marking)
+    if (shift) {
+        while (count-- > 0) {
+            if (direction > 0) {
+                buffer->pt = end_of_word(buffer, buffer->pt);
+            } else {
+                buffer->pt = beginning_of_word(buffer, buffer->pt);
+            }
+        }
+        return;
+    }
+
+    // Precise word marking behavior
+    if (mark_word_navigation) {
+        if (direction > 0) {
+            // Forward word marking
+            size_t new_pos = buffer->pt;
+            for (int i = 0; i < count; i++) {
+                new_pos = end_of_word(buffer, new_pos);
+            }
+            
+            buffer->region.mark = beginning_of_word(buffer, new_pos);
+            buffer->pt = new_pos;
+        } else {
+            // Backward word marking
+            size_t new_pos = buffer->pt;
+            for (int i = 0; i < count; i++) {
+                new_pos = beginning_of_word(buffer, new_pos);
+            }
+            
+            buffer->region.mark = end_of_word(buffer, new_pos);
+            buffer->pt = new_pos;
+        }
+    } else {
+        // Simple movement without marking
+        while (count-- > 0) {
+            if (direction > 0) {
+                buffer->pt = end_of_word(buffer, buffer->pt);
+            } else {
+                buffer->pt = beginning_of_word(buffer, buffer->pt);
+            }
+        }
+    }
+}
+
+void backward_word() {
+    arg = -abs(arg); 
+    forward_word();
+}
+
+void kill_word() {
+    size_t start = buffer->pt;
+    size_t end = end_of_word(buffer, start);
+    if (start == end) return;
+    
+    kill(start, end, false);  // Append to end
+    buffer->pt = start;
+}
+
+void backward_kill_word() {
+    size_t end = buffer->pt;
+    size_t start = beginning_of_word(buffer, end);
+    if (start == end) return;
+    
+    kill(start, end, true);  // Prepend to beginning
+    buffer->pt = start;
 }
 
 void draw_cursor(Buffer *buffer, float start_x, float start_y) {
@@ -503,8 +736,6 @@ void draw_mark(Buffer *buffer, float start_x, float start_y) {
     
     quad2D((vec2){mark_x, mark_y}, (vec2){mark_width, mark_height}, CT.function);
 }
-
-
 
 void draw_buffer(Buffer *buffer, float start_x, float start_y) {
     float x = start_x;

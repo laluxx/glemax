@@ -23,16 +23,26 @@ void text_callback(unsigned int codepoint) {
     }
 }
 
-void keychord_callback(const char *notation, KeyChordBinding *binding) {
+
+static bool is_vertical_motion(KeyChordAction action) {
+    return action == next_line || action == previous_line;
+}
+
+void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
     reset_cursor_blink(buffer);
-    /* printf("Keychord: %s\n", notation); */
+    arg = 1;
+    
+    if (!is_vertical_motion(binding->action)) update_goal_column();
+
+    last_command_was_kill = is_kill_command(binding->action);
+    last_command = binding->action;    
 }
 
 
 void key_callback(int key, int action, int mods) {
-    bool shiftPressed = mods & MOD_SHIFT;
-    bool ctrlPressed  = mods & MOD_CONTROL;
-    bool altPressed   = mods & MOD_ALT;
+    shift = mods & MOD_SHIFT;
+    ctrl  = mods & MOD_CONTROL;
+    alt   = mods & MOD_ALT;
     
     if (action == PRESS || action == REPEAT) {
         switch (key) {
@@ -54,7 +64,8 @@ int main() {
     
     registerKeyCallback(key_callback);
     registerTextCallback(text_callback);
-    registerKeychordCallback(keychord_callback);
+    /* registerKeychordCallback(keychord_callback); */
+    register_after_keychord_hook(after_keychord_hook);
 
     sh = context.swapChainExtent.height; // TODO move into
     sw = context.swapChainExtent.width;  // Resize callback
@@ -63,20 +74,26 @@ int main() {
 
     keychord_bind(&keymap, "M--",           previousTheme,           "Previous theme",         PRESS | REPEAT);
     keychord_bind(&keymap, "M-=",           nextTheme,               "Next theme",             PRESS | REPEAT);
+
     keychord_bind(&keymap, "C-b",           backward_char,           "Backward char",          PRESS | REPEAT);
     keychord_bind(&keymap, "C-f",           forward_char,            "Forward char",           PRESS | REPEAT);
     keychord_bind(&keymap, "C-n",           next_line,               "Next line",              PRESS | REPEAT);
     keychord_bind(&keymap, "C-p",           previous_line,           "Previous line",          PRESS | REPEAT);
+
     keychord_bind(&keymap, "<left>",        backward_char,           "Backward char",          PRESS | REPEAT);
     keychord_bind(&keymap, "<right>",       forward_char,            "Forward char",           PRESS | REPEAT);
     keychord_bind(&keymap, "<down>",        next_line,               "Next line",              PRESS | REPEAT);
     keychord_bind(&keymap, "<up>",          previous_line,           "Previous line",          PRESS | REPEAT);
+    keychord_bind(&keymap, "M-f",           forward_word,            "Forward word",           PRESS | REPEAT);
+    keychord_bind(&keymap, "M-b",           backward_word,           "Backward word",          PRESS | REPEAT);
+    keychord_bind(&keymap, "M-d",           kill_word,               "Kill word",              PRESS | REPEAT);
     keychord_bind(&keymap, "C-e",           end_of_line,             "End of line",            PRESS | REPEAT);
     keychord_bind(&keymap, "C-a",           beginning_of_line,       "Beginning of line",      PRESS | REPEAT);
     keychord_bind(&keymap, "RET",           newline,                 "Newline",                PRESS | REPEAT);
     keychord_bind(&keymap, "C-j",           newline,                 "Newline",                PRESS | REPEAT);
     keychord_bind(&keymap, "C-m",           newline,                 "Newline",                PRESS | REPEAT);
     keychord_bind(&keymap, "<backspace>",   delete_backward_char,    "Delete backward char",   PRESS | REPEAT);
+    keychord_bind(&keymap, "C-<backspace>", backward_kill_word,      "Backward kill word",     PRESS | REPEAT);
     keychord_bind(&keymap, "C-d",           delete_char,             "Delete char",            PRESS | REPEAT);
     keychord_bind(&keymap, "C-o",           open_line,               "Open line",              PRESS | REPEAT);
     keychord_bind(&keymap, "C-SPC",         set_mark_command,        "Set mark command",       PRESS | REPEAT);

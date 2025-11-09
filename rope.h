@@ -107,6 +107,10 @@ size_t rope_line_to_byte(const rope_t *rope, size_t line);
 size_t rope_char_to_line(const rope_t *rope, size_t char_pos);
 size_t rope_byte_to_line(const rope_t *rope, size_t byte_pos);
 
+/* UTF-8 utility functions */
+size_t utf8_char_len(uint8_t first_byte);
+uint32_t utf8_decode(const char *str, size_t len, size_t *bytes_read);
+
 #ifdef __cplusplus
 }
 #endif
@@ -172,7 +176,7 @@ static size_t node_pool_count = 0;
  * ========================================================================= */
 
 /* Get UTF-8 character byte length from first byte */
-static inline size_t utf8_char_len(uint8_t first_byte) {
+size_t utf8_char_len(uint8_t first_byte) {
     if ((first_byte & 0x80) == 0) return 1;      /* 0xxxxxxx */
     if ((first_byte & 0xE0) == 0xC0) return 2;   /* 110xxxxx */
     if ((first_byte & 0xF0) == 0xE0) return 3;   /* 1110xxxx */
@@ -181,7 +185,7 @@ static inline size_t utf8_char_len(uint8_t first_byte) {
 }
 
 /* Decode UTF-8 character */
-static uint32_t utf8_decode(const char *str, size_t len, size_t *bytes_read) {
+uint32_t utf8_decode(const char *str, size_t len, size_t *bytes_read) {
     if (len == 0) {
         *bytes_read = 0;
         return 0;

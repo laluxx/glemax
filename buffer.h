@@ -27,6 +27,11 @@ typedef struct {
 extern Buffer *buffer;
 
 
+extern bool shift;
+extern bool ctrl;
+extern bool alt;
+extern int arg;
+
 Buffer* buffer_create(Font *font);
 void buffer_destroy(Buffer *buffer);
 
@@ -55,11 +60,26 @@ void exchange_point_and_mark();
 void region_bounds(size_t *start, size_t *end);
 void delete_region();
 
-void kill(size_t start, size_t end);
+void kill(size_t start, size_t end, bool prepend);
 void kill_line();
 void kill_region();
 void yank();
 
+
+bool isWordChar(uint32_t c);
+bool isPunctuationChar(uint32_t c);
+size_t beginning_of_word(Buffer *buffer, size_t pos);
+size_t end_of_word(Buffer *buffer, size_t pos);
+void forward_word();
+void backward_word();
+
+
+extern KeyChordAction last_command;
+extern bool last_command_was_kill;
+
+bool is_kill_command(KeyChordAction action);
+void kill_word();
+void backward_kill_word();
 
 void draw_buffer(Buffer *buffer, float start_x, float start_y);
 void draw_cursor(Buffer *buffer, float start_x, float start_y);
