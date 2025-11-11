@@ -1,5 +1,6 @@
 #include "buffer.h"
 #include <ctype.h>
+#include <stdbool.h>
 
 Buffer *buffer;
 
@@ -11,13 +12,15 @@ float blink_cursor_delay = 0.5;
 bool visible_mark_mode = false;
 
 int arg = 1;
-bool mark_word_navigation = true;
+bool mark_word_navigation = false;
 
 bool shift;
 bool ctrl;
 bool alt;
 
+size_t fringe_width = 8;
 
+ 
 KeyChordAction last_command = NULL;
 bool last_command_was_kill = false;
 
@@ -61,6 +64,65 @@ void reset_cursor_blink(Buffer *buffer) {
     }
 }
 
+static void adjust_all_window_points_after_modification(size_t pos, int delta) {
+    // Collect all leaf windows
+    Window *leaves[256];
+    int count = 0;
+    collect_leaf_windows(wm.root, leaves, &count);
+    
+    // Adjust point for each window viewing this buffer
+    for (int i = 0; i < count; i++) {
+        Window *win = leaves[i];
+        if (win->buffer != buffer) continue; // Skip windows showing other buffers
+        if (win == wm.selected) continue; // Skip selected window (already updated)
+        
+        if (delta > 0) {
+            // Insertion: shift points after insertion position
+            if (win->point > pos) {
+                win->point += delta;
+            }
+        } else if (delta < 0) {
+            // Deletion: adjust points in/after deleted region
+            size_t abs_delta = -delta;
+            size_t delete_end = pos + abs_delta;
+            
+            if (win->point >= delete_end) {
+                win->point -= abs_delta;
+            } else if (win->point > pos) {
+                win->point = pos;
+            }
+        }
+    }
+}
+
+inline void set_point(size_t new_pt) {
+    buffer->pt = new_pt;
+    wm.selected->point = new_pt;
+}
+
+inline void move_point(int delta) {
+    size_t text_len = rope_char_length(buffer->rope);
+    size_t new_pt;
+    
+    if (delta > 0) {
+        new_pt = buffer->pt + delta;
+        if (new_pt > text_len) {
+            new_pt = text_len;
+        }
+    } else if (delta < 0) {
+        int abs_delta = -delta;
+        if ((size_t)abs_delta > buffer->pt) {
+            new_pt = 0;
+        } else {
+            new_pt = buffer->pt - abs_delta;
+        }
+    } else {
+        return; // No movement
+    }
+    
+    set_point(new_pt);
+}
+
 void insert(uint32_t codepoint) {
     char utf8[5] = {0};
     size_t len = 0;
@@ -90,7 +152,8 @@ void insert(uint32_t codepoint) {
         if (buffer->pt < buffer->region.mark) buffer->region.mark++;
 
         buffer->rope = rope_insert_chars(buffer->rope, buffer->pt, utf8, len);
-        buffer->pt++;
+        adjust_all_window_points_after_modification(buffer->pt, 1);
+        set_point(buffer->pt + 1);
         update_goal_column();
     }
 }
@@ -115,6 +178,7 @@ size_t delete(size_t pos, size_t count) {
     }
 
     buffer->rope = rope_delete_chars(buffer->rope, pos, count);
+    adjust_all_window_points_after_modification(buffer->pt, -count);
     return pos;
 }
 
@@ -125,7 +189,7 @@ void delete_backward_char() {
 
     if (buffer->pt > 0) {
         delete(buffer->pt - 1, 1);
-        buffer->pt--;
+        set_point(buffer->pt - 1);
     }
 }
 
@@ -139,20 +203,38 @@ void newline() {
 
 void open_line() {
     insert('\n');
-    buffer->pt--;
+    set_point(buffer->pt - 1);
+}
+
+void split_line() {
+    size_t text_len = rope_char_length(buffer->rope);
+    
+    // Skip forward over spaces and tabs
+    while (buffer->pt < text_len) {
+        uint32_t ch = rope_char_at(buffer->rope, buffer->pt);
+        if (ch != ' ' && ch != '\t') break;
+        set_point(buffer->pt + 1);
+    }
+    
+    size_t col = current_column();
+    size_t pos = buffer->pt;
+    
+    insert('\n');
+    
+    for (size_t i = 0; i < col; i++) {
+        insert(' ');
+    }
+    
+    // Go back
+    set_point(pos);
 }
 
 void forward_char() {
-    size_t text_len = rope_char_length(buffer->rope); // O(1) cached!
-    if (buffer->pt < text_len) {
-        buffer->pt++;
-    }
+    move_point(1);
 }
 
 void backward_char() {
-    if (buffer->pt > 0) {
-        buffer->pt--;
-    }
+    move_point(-1);
 }
 
 size_t line_beginning_position() {
@@ -190,7 +272,6 @@ void update_goal_column() {
     buffer->cursor.goal_column = current_column();
 }
 
-
 void next_line() {
     size_t text_len = rope_char_length(buffer->rope); // O(1) cached
     
@@ -218,9 +299,9 @@ void next_line() {
     // Move to goal column or end of line, whichever is shorter
     size_t line_length = line_end - line_start;
     if (buffer->cursor.goal_column <= line_length) {
-        buffer->pt = line_start + buffer->cursor.goal_column;
+        set_point(line_start + buffer->cursor.goal_column);
     } else {
-        buffer->pt = line_end;
+        set_point(line_end);
     }
 }
 
@@ -250,32 +331,47 @@ void previous_line() {
     
     // Move to goal column or end of line, whichever is shorter
     if (buffer->cursor.goal_column <= line_length) {
-        buffer->pt = line_start + buffer->cursor.goal_column;
+        set_point(line_start + buffer->cursor.goal_column);
     } else {
-        buffer->pt = pos;
+        set_point(pos);
     }
 }
 
 void end_of_line() {
-    buffer->pt = line_end_position();
+    set_point(line_end_position());
 }
 
 void beginning_of_line() {
-    buffer->pt = line_beginning_position();
+    set_point(line_beginning_position());
+}
+
+void beginning_of_buffer() {
+    set_point(0);
+}
+
+void end_of_buffer() {
+    size_t text_len = rope_char_length(buffer->rope); // O(1) cached!
+    set_point(text_len);
+    
 }
 
 /// REGION
 
-bool transient_mark_mode = true;
+bool transient_mark_mode = false;
 
 void set_mark_command() {
     buffer->region.mark = buffer->pt;
-    if (transient_mark_mode) buffer->region.active = true;
+    if (transient_mark_mode) {
+        buffer->region.active = true;
+    } else {
+        if (last_command == set_mark_command)
+            buffer->region.active = true;
+    }
 }
 
 void exchange_point_and_mark() {
     size_t temp = buffer->pt;
-    buffer->pt = buffer->region.mark;
+    set_point(buffer->region.mark);
     buffer->region.mark = temp;
 }
 
@@ -302,7 +398,7 @@ void delete_region() {
     
     size_t length = end - start;
     delete(start, length);
-    buffer->pt = start;
+    set_point(start);
     buffer->region.active = false;
 }
 
@@ -369,7 +465,7 @@ void kill_region() {
     }
     
     kill(start, end, false);
-    buffer->pt = start;
+    set_point(start);
     buffer->region.active = false;
 }
 
@@ -377,57 +473,36 @@ void yank() {
     const char *clipboard_text = getClipboardString();
     
     if (clipboard_text && *clipboard_text) {
+        size_t len = strlen(clipboard_text);
+        size_t old_char_len = rope_char_length(buffer->rope);
+        
+        // Update mark if needed
         buffer->region.mark = buffer->pt;
-        // Insert each character from the clipboard
-        const char *p = clipboard_text;
-        while (*p) {
-            // Decode UTF-8
-            uint32_t codepoint = 0;
-            int bytes = 0;
-            
-            unsigned char c = (unsigned char)*p;
-            if (c < 0x80) {
-                codepoint = c;
-                bytes = 1;
-            } else if ((c & 0xE0) == 0xC0) {
-                codepoint = c & 0x1F;
-                bytes = 2;
-            } else if ((c & 0xF0) == 0xE0) {
-                codepoint = c & 0x0F;
-                bytes = 3;
-            } else if ((c & 0xF8) == 0xF0) {
-                codepoint = c & 0x07;
-                bytes = 4;
-            } else {
-                p++; // Invalid UTF-8, skip
-                continue;
-            }
-            
-            // Read continuation bytes
-            for (int i = 1; i < bytes; i++) {
-                p++;
-                if (!*p || (*p & 0xC0) != 0x80) {
-                    bytes = i; // Incomplete sequence
-                    break;
-                }
-                codepoint = (codepoint << 6) | (*p & 0x3F);
-            }
-            
-            insert(codepoint);
-            p++;
-        }
+        
+        // Insert entire string at once - ONE rope operation!
+        buffer->rope = rope_insert_chars(buffer->rope, buffer->pt, clipboard_text, len);
+        
+        // Calculate how many characters were inserted
+        size_t new_char_len = rope_char_length(buffer->rope);
+        size_t chars_inserted = new_char_len - old_char_len;
+        
+        // Update point to end of inserted text
+        set_point(buffer->pt + chars_inserted);
+        update_goal_column();
+        adjust_all_window_points_after_modification(buffer->pt, chars_inserted);
+        reset_cursor_blink(buffer);
     }
 }
 
 /// WORD
 
 bool isWordChar(uint32_t c) {
-    if (c >= ASCII) return false;
+    if (c >= 128) return false;
     return isalnum((unsigned char)c);
 }
 
 bool isPunctuationChar(uint32_t c) {
-    if (c >= ASCII) return false;
+    if (c >= 128) return false;
     return strchr(",.;:!?'\"(){}[]<>-+*/=&|^%$#@~_", (char)c) != NULL;
 }
 
@@ -560,9 +635,9 @@ void forward_word() {
     if (shift) {
         while (count-- > 0) {
             if (direction > 0) {
-                buffer->pt = end_of_word(buffer, buffer->pt);
+                set_point(end_of_word(buffer, buffer->pt));
             } else {
-                buffer->pt = beginning_of_word(buffer, buffer->pt);
+                set_point(beginning_of_word(buffer, buffer->pt));
             }
         }
         return;
@@ -578,7 +653,7 @@ void forward_word() {
             }
             
             buffer->region.mark = beginning_of_word(buffer, new_pos);
-            buffer->pt = new_pos;
+            set_point(new_pos);
         } else {
             // Backward word marking
             size_t new_pos = buffer->pt;
@@ -587,15 +662,15 @@ void forward_word() {
             }
             
             buffer->region.mark = end_of_word(buffer, new_pos);
-            buffer->pt = new_pos;
+            set_point(new_pos);
         }
     } else {
         // Simple movement without marking
         while (count-- > 0) {
             if (direction > 0) {
-                buffer->pt = end_of_word(buffer, buffer->pt);
+                set_point(end_of_word(buffer, buffer->pt));
             } else {
-                buffer->pt = beginning_of_word(buffer, buffer->pt);
+                set_point(beginning_of_word(buffer, buffer->pt));
             }
         }
     }
@@ -612,7 +687,6 @@ void kill_word() {
     if (start == end) return;
     
     kill(start, end, false);  // Append to end
-    buffer->pt = start;
 }
 
 void backward_kill_word() {
@@ -621,28 +695,35 @@ void backward_kill_word() {
     if (start == end) return;
     
     kill(start, end, true);  // Prepend to beginning
-    buffer->pt = start;
+    set_point(start);
 }
 
-void draw_cursor(Buffer *buffer, float start_x, float start_y) {
-    float x = start_x;
+void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) {
+    float x = start_x + fringe_width;
     float y = start_y;
     float line_height = buffer->font->ascent + buffer->font->descent;
     size_t text_len = rope_char_length(buffer->rope);
     int lineCount = 0;
     
-    // Use iterator to calculate cursor position - O(n) instead of O(n log n)
+    // Get point from window, not buffer
+    size_t point = win ? win->point : buffer->pt;
+    
+    // Use iterator to calculate cursor position
     rope_iter_t iter;
     rope_iter_init(&iter, buffer->rope, 0);
     
     uint32_t ch;
     size_t i = 0;
-    while (i < buffer->pt && rope_iter_next_char(&iter, &ch)) {
+    while (i < point && rope_iter_next_char(&iter, &ch)) {
         if (ch == '\n') {
             lineCount++;
-            x = start_x;
-        } else if (ch < ASCII) {
-            x += buffer->font->characters[ch].ax;
+            x = start_x + fringe_width;
+        } else {
+            // Get character width from font (handles all Unicode)
+            Character *char_info = font_get_character(buffer->font, ch);
+            if (char_info) {
+                x += char_info->ax;
+            }
         }
         i++;
     }
@@ -655,46 +736,159 @@ void draw_cursor(Buffer *buffer, float start_x, float start_y) {
     buffer->cursor.y = y;
     
     // Determine cursor width - check character at cursor position
-    float cursor_width = buffer->font->characters[' '].ax; // Default
+    float cursor_width;
+    Character *space = font_get_character(buffer->font, ' ');
+    float space_width = space ? space->ax : buffer->font->ascent;
     
-    if (buffer->pt < text_len) {
-        uint32_t ch = rope_char_at(buffer->rope, buffer->pt);
-        if (ch == '\n') {
-            cursor_width = buffer->font->characters[' '].ax;
-        } else if (ch < ASCII) {
-            cursor_width = buffer->font->characters[ch].ax;
+    if (point < text_len) {
+        uint32_t ch_at_cursor = rope_char_at(buffer->rope, point);
+        if (ch_at_cursor == '\n') {
+            cursor_width = space_width;
+        } else {
+            Character *char_info = font_get_character(buffer->font, ch_at_cursor);
+            cursor_width = char_info ? char_info->ax : space_width;
         }
+    } else {
+        // Cursor is at end of buffer - use space width
+        cursor_width = space_width;
     }
     
     float cursor_height = buffer->font->ascent + buffer->font->descent;
     
-    // Handle cursor blinking
-    if (blink_cursor_mode && buffer->cursor.blink_count < blink_cursor_blinks) {
-        double currentTime = getTime();
-        double interval = buffer->cursor.visible ? blink_cursor_interval : blink_cursor_delay;
-        
-        if (currentTime - buffer->cursor.last_blink >= interval) {
-            buffer->cursor.visible = !buffer->cursor.visible;
-            buffer->cursor.last_blink = currentTime;
-            if (buffer->cursor.visible) {
-                buffer->cursor.blink_count++;
+    // Check if this window is selected
+    bool is_selected = win && win->is_selected;
+    
+    if (is_selected) {
+        // Selected window: filled cursor with blinking
+        if (blink_cursor_mode && buffer->cursor.blink_count < blink_cursor_blinks) {
+            double currentTime = getTime();
+            double interval = buffer->cursor.visible ? blink_cursor_interval : blink_cursor_delay;
+            
+            if (currentTime - buffer->cursor.last_blink >= interval) {
+                buffer->cursor.visible = !buffer->cursor.visible;
+                buffer->cursor.last_blink = currentTime;
+                if (buffer->cursor.visible) {
+                    buffer->cursor.blink_count++;
+                }
             }
-        }
-        
-        if (buffer->cursor.visible) {
+            
+            if (buffer->cursor.visible) {
+                // Draw filled cursor
+                quad2D((vec2){buffer->cursor.x, buffer->cursor.y},
+                       (vec2){cursor_width, cursor_height}, CT.cursor);
+            }
+        } else {
+            // Always draw filled cursor when blink limit reached or mode disabled
             quad2D((vec2){buffer->cursor.x, buffer->cursor.y},
                    (vec2){cursor_width, cursor_height}, CT.cursor);
         }
     } else {
-        // Always draw when blink limit reached or mode disabled
+        // Non-selected window: hollow cursor (border only), no blinking
+        float border_width = 1.0f;
+        
+        // Top border
+        quad2D((vec2){buffer->cursor.x, buffer->cursor.y + cursor_height - border_width},
+               (vec2){cursor_width, border_width}, CT.cursor);
+        
+        // Bottom border
         quad2D((vec2){buffer->cursor.x, buffer->cursor.y},
-               (vec2){cursor_width, cursor_height}, CT.cursor);
+               (vec2){cursor_width, border_width}, CT.cursor);
+        
+        // Left border
+        quad2D((vec2){buffer->cursor.x, buffer->cursor.y},
+               (vec2){border_width, cursor_height}, CT.cursor);
+        
+        // Right border
+        quad2D((vec2){buffer->cursor.x + cursor_width - border_width, buffer->cursor.y},
+               (vec2){border_width, cursor_height}, CT.cursor);
     }
 }
 
+/* void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) { */
+/*     float x = start_x; */
+/*     float y = start_y; */
+/*     float line_height = buffer->font->ascent + buffer->font->descent; */
+/*     size_t text_len = rope_char_length(buffer->rope); */
+/*     int lineCount = 0; */
+    
+/*     // Get point from window, not buffer */
+/*     size_t point = win ? win->point : buffer->pt; */
+    
+/*     // Use iterator to calculate cursor position */
+/*     rope_iter_t iter; */
+/*     rope_iter_init(&iter, buffer->rope, 0); */
+    
+/*     uint32_t ch; */
+/*     size_t i = 0; */
+/*     while (i < point && rope_iter_next_char(&iter, &ch)) { */
+/*         if (ch == '\n') { */
+/*             lineCount++; */
+/*             x = start_x; */
+/*         } else { */
+/*             // Get character width from font (handles all Unicode) */
+/*             Character *char_info = font_get_character(buffer->font, ch); */
+/*             if (char_info) { */
+/*                 x += char_info->ax; */
+/*             } */
+/*         } */
+/*         i++; */
+/*     } */
+    
+/*     rope_iter_destroy(&iter); */
+    
+/*     y = start_y - lineCount * line_height - (buffer->font->descent * 2); */
+    
+/*     buffer->cursor.x = x; */
+/*     buffer->cursor.y = y; */
+    
+/*     // Determine cursor width - check character at cursor position */
+/*     float cursor_width; */
+/*     Character *space = font_get_character(buffer->font, ' '); */
+/*     float space_width = space ? space->ax : buffer->font->ascent; */
+    
+/*     if (point < text_len) { */
+/*         uint32_t ch_at_cursor = rope_char_at(buffer->rope, point); */
+/*         if (ch_at_cursor == '\n') { */
+/*             cursor_width = space_width; */
+/*         } else { */
+/*             Character *char_info = font_get_character(buffer->font, ch_at_cursor); */
+/*             cursor_width = char_info ? char_info->ax : space_width; */
+/*         } */
+/*     } else { */
+/*         // Cursor is at end of buffer - use space width */
+/*         cursor_width = space_width; */
+/*     } */
+    
+/*     float cursor_height = buffer->font->ascent + buffer->font->descent; */
+    
+/*     // Handle cursor blinking */
+/*     if (blink_cursor_mode && buffer->cursor.blink_count < blink_cursor_blinks) { */
+/*         double currentTime = getTime(); */
+/*         double interval = buffer->cursor.visible ? blink_cursor_interval : blink_cursor_delay; */
+        
+/*         if (currentTime - buffer->cursor.last_blink >= interval) { */
+/*             buffer->cursor.visible = !buffer->cursor.visible; */
+/*             buffer->cursor.last_blink = currentTime; */
+/*             if (buffer->cursor.visible) { */
+/*                 buffer->cursor.blink_count++; */
+/*             } */
+/*         } */
+        
+/*         if (buffer->cursor.visible) { */
+/*             quad2D((vec2){buffer->cursor.x, buffer->cursor.y}, */
+/*                    (vec2){cursor_width, cursor_height}, CT.cursor); */
+/*         } */
+/*     } else { */
+/*         // Always draw when blink limit reached or mode disabled */
+/*         quad2D((vec2){buffer->cursor.x, buffer->cursor.y}, */
+/*                (vec2){cursor_width, cursor_height}, CT.cursor); */
+/*     } */
+/* } */
+
 void draw_mark(Buffer *buffer, float start_x, float start_y) {
     if (buffer->region.mark == buffer->pt) return;
-    float mark_x = start_x;
+    
+    float mark_x = start_x + fringe_width;
     float mark_y = start_y;
     float line_height = buffer->font->ascent + buffer->font->descent;
     size_t text_len = rope_char_length(buffer->rope);
@@ -709,9 +903,12 @@ void draw_mark(Buffer *buffer, float start_x, float start_y) {
     while (i < buffer->region.mark && rope_iter_next_char(&iter, &ch)) {
         if (ch == '\n') {
             lineCount++;
-            mark_x = start_x;
-        } else if (ch < ASCII) {
-            mark_x += buffer->font->characters[ch].ax;
+            mark_x = start_x + fringe_width;
+        } else {
+            Character *char_info = font_get_character(buffer->font, ch);
+            if (char_info) {
+                mark_x += char_info->ax;
+            }
         }
         i++;
     }
@@ -721,15 +918,21 @@ void draw_mark(Buffer *buffer, float start_x, float start_y) {
     mark_y = start_y - lineCount * line_height - (buffer->font->descent * 2);
     
     // Determine mark width
-    float mark_width = buffer->font->characters[' '].ax;
+    float mark_width;
+    Character *space = font_get_character(buffer->font, ' ');
+    float space_width = space ? space->ax : buffer->font->ascent;
     
     if (buffer->region.mark < text_len) {
-        uint32_t ch = rope_char_at(buffer->rope, buffer->region.mark);
-        if (ch == '\n') {
-            mark_width = buffer->font->characters[' '].ax;
-        } else if (ch < ASCII) {
-            mark_width = buffer->font->characters[ch].ax;
+        uint32_t ch_at_mark = rope_char_at(buffer->rope, buffer->region.mark);
+        if (ch_at_mark == '\n') {
+            mark_width = space_width;
+        } else {
+            Character *char_info = font_get_character(buffer->font, ch_at_mark);
+            mark_width = char_info ? char_info->ax : space_width;
         }
+    } else {
+        // Mark is at end of buffer - use space width
+        mark_width = space_width;
     }
     
     float mark_height = buffer->font->ascent + buffer->font->descent;
@@ -737,10 +940,13 @@ void draw_mark(Buffer *buffer, float start_x, float start_y) {
     quad2D((vec2){mark_x, mark_y}, (vec2){mark_width, mark_height}, CT.function);
 }
 
-void draw_buffer(Buffer *buffer, float start_x, float start_y) {
-    float x = start_x;
+void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
+    float x = start_x + fringe_width;
     float y = start_y;
     float line_height = buffer->font->ascent + buffer->font->descent;
+    
+    // Get point from window if provided
+    size_t point = win ? win->point : buffer->pt;
     
     rope_iter_t iter;
     rope_iter_init(&iter, buffer->rope, 0);
@@ -749,11 +955,16 @@ void draw_buffer(Buffer *buffer, float start_x, float start_y) {
     size_t i = 0;
     while (rope_iter_next_char(&iter, &ch)) {
         if (ch == '\n') {
-            x = start_x;
+            x = start_x + fringe_width;
             y -= line_height;
-        } else if (ch < ASCII) {
-            Color char_color = (i == buffer->pt && buffer->cursor.visible || i == buffer->region.mark && visible_mark_mode) ? CT.bg : CT.text;
-            float advance = character(buffer->font, (unsigned char)ch, x, y, char_color);
+        } else {
+            // Determine color based on cursor/mark position
+            Color char_color = (i == point && buffer->cursor.visible || 
+                               i == buffer->region.mark && visible_mark_mode) 
+                               ? CT.bg : CT.text;
+            
+            // Render the character (now handles all Unicode codepoints)
+            float advance = character(buffer->font, ch, x, y, char_color);
             x += advance;
         }
         i++;
@@ -761,7 +972,9 @@ void draw_buffer(Buffer *buffer, float start_x, float start_y) {
     
     rope_iter_destroy(&iter);
     
-
+    // FIX: Flush any pending texture updates after drawing all text
+    font_flush_updates(buffer->font);
+    
     if (visible_mark_mode) draw_mark(buffer, start_x, start_y);
-    draw_cursor(buffer, start_x, start_y);
+    draw_cursor(buffer, win, start_x, start_y);
 }

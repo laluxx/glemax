@@ -1,11 +1,11 @@
 #include <obsidian/font.h>
 #include <obsidian/keychords.h>
 #include <obsidian/obsidian.h>
+#include <obsidian/renderer.h>
 #include <obsidian/theme.h>
 #include <obsidian/vertico.h>
 #include <obsidian/vulkan_setup.h>
 #include "buffer.h"
-
 
 #define ROPE_IMPLEMENTATION
 #include "rope.h"
@@ -52,23 +52,27 @@ void key_callback(int key, int action, int mods) {
     }
 }
 
+#include "wm.h"
 
 int main() {
     initWindow(sw, sh, "Kink");
 
-    jetbrains = load_font("./assets/fonts/JetBrainsMono-Regular.ttf", 100);
-    lilex = load_font("./assets/fonts/LilexNerdFont-Regular.ttf", 100);
-    /* jetbrains = load_font("./assets/fonts/DejaVuMathTeXGyre.ttf", 100); */
+    jetbrains = load_font("./assets/fonts/JetBrainsMonoNerdFont-Regular.ttf", 22);
+    /* jetbrains = load_font("./assets/fonts/JetBrainsMonoNerdFont-Regular.ttf", 122); */
+    /* lilex = load_font("./assets/fonts/LilexNerdFont-Regular.ttf", 22); */
+    /* lilex = load_font("./assets/fonts/DejaVuMathTeXGyre.ttf", 100); */
 
-    buffer = buffer_create(lilex);
-    
-    registerKeyCallback(key_callback);
-    registerTextCallback(text_callback);
-    /* registerKeychordCallback(keychord_callback); */
-    register_after_keychord_hook(after_keychord_hook);
+    buffer = buffer_create(jetbrains);
 
     sh = context.swapChainExtent.height; // TODO move into
     sw = context.swapChainExtent.width;  // Resize callback
+    wm_init(buffer, 0, 0, sw, sh);
+    
+
+    registerKeyCallback(key_callback);
+    registerTextCallback(text_callback);
+    register_after_keychord_hook(after_keychord_hook);
+
 
     loadThemeByName("doom-one");
 
@@ -79,7 +83,6 @@ int main() {
     keychord_bind(&keymap, "C-f",           forward_char,            "Forward char",           PRESS | REPEAT);
     keychord_bind(&keymap, "C-n",           next_line,               "Next line",              PRESS | REPEAT);
     keychord_bind(&keymap, "C-p",           previous_line,           "Previous line",          PRESS | REPEAT);
-
     keychord_bind(&keymap, "<left>",        backward_char,           "Backward char",          PRESS | REPEAT);
     keychord_bind(&keymap, "<right>",       forward_char,            "Forward char",           PRESS | REPEAT);
     keychord_bind(&keymap, "<down>",        next_line,               "Next line",              PRESS | REPEAT);
@@ -89,6 +92,10 @@ int main() {
     keychord_bind(&keymap, "M-d",           kill_word,               "Kill word",              PRESS | REPEAT);
     keychord_bind(&keymap, "C-e",           end_of_line,             "End of line",            PRESS | REPEAT);
     keychord_bind(&keymap, "C-a",           beginning_of_line,       "Beginning of line",      PRESS | REPEAT);
+    keychord_bind(&keymap, "M-<",           beginning_of_buffer,     "Beginning of buffer",    PRESS | REPEAT);
+    keychord_bind(&keymap, "C-c p",         beginning_of_buffer,     "Beginning of buffer",    PRESS | REPEAT);
+    keychord_bind(&keymap, "M->",           end_of_buffer,           "End of buffer",          PRESS | REPEAT);
+    keychord_bind(&keymap, "C-c n",         end_of_buffer,           "End of buffer",          PRESS | REPEAT);
     keychord_bind(&keymap, "RET",           newline,                 "Newline",                PRESS | REPEAT);
     keychord_bind(&keymap, "C-j",           newline,                 "Newline",                PRESS | REPEAT);
     keychord_bind(&keymap, "C-m",           newline,                 "Newline",                PRESS | REPEAT);
@@ -96,6 +103,7 @@ int main() {
     keychord_bind(&keymap, "C-<backspace>", backward_kill_word,      "Backward kill word",     PRESS | REPEAT);
     keychord_bind(&keymap, "C-d",           delete_char,             "Delete char",            PRESS | REPEAT);
     keychord_bind(&keymap, "C-o",           open_line,               "Open line",              PRESS | REPEAT);
+    keychord_bind(&keymap, "C-M-o",         split_line,              "Split line",             PRESS | REPEAT);
     keychord_bind(&keymap, "C-SPC",         set_mark_command,        "Set mark command",       PRESS | REPEAT);
     keychord_bind(&keymap, "S-<backspace>", delete_region,           "Delete region",          PRESS | REPEAT);
     keychord_bind(&keymap, "C-w",           kill_region,             "Kill region",            PRESS | REPEAT);
@@ -103,22 +111,33 @@ int main() {
     keychord_bind(&keymap, "C-k",           kill_line,               "Kill line",              PRESS | REPEAT);
     keychord_bind(&keymap, "C-x C-x",       exchange_point_and_mark, "Excange point and mark", PRESS | REPEAT);
 
+    keychord_bind(&keymap, "C-x 2",         split_window_below,      "Split window below",     PRESS | REPEAT);
+    keychord_bind(&keymap, "C-x 3",         split_window_right,      "Split window right",     PRESS | REPEAT);
+    keychord_bind(&keymap, "C-x 0",         delete_window,           "Delete window",          PRESS | REPEAT);
+    keychord_bind(&keymap, "C-x 1",         delete_other_windows,    "Delete other windows",   PRESS | REPEAT);
+    keychord_bind(&keymap, "C-x o",         other_window,            "Other window",           PRESS | REPEAT);
+    keychord_bind(&keymap, "C-x +",         balance_windows,         "Balance windows",        PRESS | REPEAT);
+    keychord_bind(&keymap, "C-x ^",         enlarge_window,          "Enlarge window",         PRESS | REPEAT);
+
     while (!windowShouldClose()) {
         beginFrame();
         
         clear_background(CT.bg);
 
-        draw_buffer(buffer, 0, sh - buffer->font->ascent + buffer->font->descent);
+        wm_draw();
 
-
+        quad2D((vec2){0,100}, (vec2){1,10}, BLUE);
+        quad2D((vec2){0,0}, (vec2){1,1}, BLUE);
+        
         endFrame();
     }
     
+    wm_cleanup();
     buffer_destroy(buffer);
     destroy_font(jetbrains);
     destroy_font(lilex);
-
+    
     cleanup(&context);
-
+    
     return 0;
 }

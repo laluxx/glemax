@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c23 -I/usr/include/freetype2
-LDFLAGS = -lobsidian
+LDFLAGS = -lobsidian -lm
 TARGET = kink
 
 SRCS = $(wildcard *.c)

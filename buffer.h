@@ -7,7 +7,7 @@ typedef struct {
     float y;
     bool visible;
     double last_blink;
-    int blink_count;
+    size_t blink_count;
     size_t goal_column;
 } Cursor;
 
@@ -35,11 +35,16 @@ extern int arg;
 Buffer* buffer_create(Font *font);
 void buffer_destroy(Buffer *buffer);
 
+void set_point(size_t new_pt);
+void move_point(int delta);
+
 void insert(uint32_t codepoint);
 void delete_backward_char();
 void delete_char();
 void newline();
 void open_line();
+void split_line();
+
 
 size_t line_beginning_position();
 size_t line_end_position();
@@ -53,6 +58,8 @@ void next_line();
 void previous_line();
 void end_of_line();
 void beginning_of_line();
+void beginning_of_buffer();
+void end_of_buffer();
 
 
 void set_mark_command();
@@ -81,6 +88,15 @@ bool is_kill_command(KeyChordAction action);
 void kill_word();
 void backward_kill_word();
 
-void draw_buffer(Buffer *buffer, float start_x, float start_y);
-void draw_cursor(Buffer *buffer, float start_x, float start_y);
+#include "wm.h"
+typedef struct Window Window;
+
+
+
+/* void draw_buffer(Buffer *buffer, float start_x, float start_y); */
+void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y);
+
+/* void draw_cursor(Buffer *buffer, float start_x, float start_y); */
+void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y);
+
 void reset_cursor_blink(Buffer *buffer);
