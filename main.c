@@ -1,4 +1,6 @@
 #include <obsidian/font.h>
+#include <obsidian/gltf_loader.h>
+#include <obsidian/input.h>
 #include <obsidian/keychords.h>
 #include <obsidian/obsidian.h>
 #include <obsidian/renderer.h>
@@ -95,6 +97,138 @@ void key_callback(int key, int action, int mods) {
     }
 }
 
+
+
+double lastX = WIDTH / 2.0f, lastY = HEIGHT / 2.0f;
+
+bool middleMousePressed = false;
+bool rightMousePressed = false;
+bool shiftMiddleMousePressed = false;
+double lastPanX = 0.0, lastPanY = 0.0;
+double lastOrbitX = 0.0, lastOrbitY = 0.0; 
+vec3 orbitPivot = {0.0f, 0.0f, 0.0f};  // The point we're orbiting around
+float orbitDistance = 10.0f;           // Distance from pivot
+
+
+
+
+
+
+void mouse_button_callback(int button, int action, int mods) {
+    // Only handle mouse buttons in editor mode (camera inactive)
+    if (!camera.active) {
+        // Middle mouse button - orbit/pan
+        if (button == MOUSE_BUTTON_MIDDLE) {
+            if (action == PRESS) {
+                middleMousePressed = true;
+                getCursorPos(context.window, &lastPanX, &lastPanY);
+                getCursorPos(context.window, &lastOrbitX, &lastOrbitY);
+                
+                shiftMiddleMousePressed = (mods & MOD_SHIFT);
+                
+                // 1If not panning, calculate the pivot point for orbiting
+                if (!shiftMiddleMousePressed) {
+                    vec3 hitPoint;
+                    bool hitGround = raycast_to_ground(&camera, hitPoint);
+                    glm_vec3_copy(hitPoint, orbitPivot);
+                    
+                    // Calculate distance from camera to pivot
+                    vec3 toPivot;
+                    glm_vec3_sub(orbitPivot, camera.position, toPivot);
+                    orbitDistance = glm_vec3_norm(toPivot);
+                    
+                    printf("Orbit pivot set to: (%.2f, %.2f, %.2f)\n", orbitPivot[0], orbitPivot[1], orbitPivot[2]);
+                    printf("Orbit distance: %.2f\n", orbitDistance);
+                }
+                
+            } else if (action == RELEASE) {
+                middleMousePressed = false;
+                shiftMiddleMousePressed = false;
+                
+                camera.use_look_at = false;
+                printf("Orbit mode disabled - returning to normal camera control\n");
+            }
+        }
+        
+        // Right mouse button - freelook with WASD
+        if (button == MOUSE_BUTTON_RIGHT) {
+            if (action == PRESS) {
+                rightMousePressed = true;
+                // Get initial position BEFORE disabling cursor
+                getCursorPos(context.window, &lastX, &lastY);
+                setInputMode(context.window, CURSOR, CURSOR_DISABLED);
+            } else if (action == RELEASE) {
+                rightMousePressed = false;
+                setInputMode(context.window, CURSOR, CURSOR_NORMAL);
+            }
+        }
+    }
+}
+
+void cursor_pos_callback(double xpos, double ypos) {
+    double xoffset = xpos - lastX;
+    double yoffset = lastY - ypos;
+
+    if (camera.active) {
+        // Normal FPS camera control - always update lastX/lastY
+        lastX = xpos;
+        lastY = ypos;
+        camera_process_mouse(&camera, xoffset, yoffset);
+    }
+    else if (rightMousePressed) {
+        // Right mouse: freelook in editor mode - always update lastX/lastY
+        lastX = xpos;
+        lastY = ypos;
+        camera_process_mouse(&camera, xoffset, yoffset);
+    }
+    else if (middleMousePressed) {
+        if (shiftMiddleMousePressed) {
+            if (camera.use_look_at) {
+                camera_disable_orbit_mode(&camera);
+                printf("Panning - orbit mode disabled\n");
+            }
+            // SHIFT + MIDDLE MOUSE: PAN
+  
+            float panSpeed = 0.005f;
+
+            vec3 right, up;
+            glm_vec3_cross(camera.front, camera.up, right);
+            glm_vec3_normalize(right);
+            glm_vec3_copy(camera.up, up);
+            glm_vec3_normalize(up);
+
+            vec3 panMovement = {0.0f, 0.0f, 0.0f};
+
+            vec3 rightMove;
+            glm_vec3_scale(right, (float)-xoffset * panSpeed, rightMove);
+            glm_vec3_add(panMovement, rightMove, panMovement);
+
+            vec3 upMove;
+            glm_vec3_scale(up, (float)-yoffset * panSpeed, upMove);
+            glm_vec3_add(panMovement, upMove, panMovement);
+
+            glm_vec3_add(camera.position, panMovement, camera.position);
+
+        } else {
+            // MIDDLE MOUSE ONLY: ORBIT
+            float orbitSpeed = 0.01f;
+            camera_orbit_around_point(&camera, orbitPivot,
+                                      (float)(xoffset * orbitSpeed),
+                                      (float)(yoffset * orbitSpeed));
+        }
+
+        lastX = xpos;
+        lastY = ypos;
+    }
+    else {
+        // Not doing anything - just update last position to avoid jumps
+        lastX = xpos;
+        lastY = ypos;
+    }
+}
+
+
+
 #include "wm.h"
 
 
@@ -115,6 +249,9 @@ int main() {
 
     registerKeyCallback(key_callback);
     registerTextCallback(text_callback);
+    registerMouseButtonCallback(mouse_button_callback);
+    registerCursorPosCallback(cursor_pos_callback);
+
     register_after_keychord_hook(after_keychord_hook);
 
 
@@ -185,6 +322,9 @@ int main() {
     keychord_bind(&keymap, "C-9",           digit_argument,          "Digit argument",         PRESS | REPEAT);
     keychord_bind(&keymap, "C-x M-x",       digit_argument,          "Digit argument",         PRESS | REPEAT);
 
+
+    load_gltf("./assets/puta.glb", &scene);
+    /* load_gltf("./assets/floppy.glb", &scene); */
 
     while (!windowShouldClose()) {
         beginFrame();
