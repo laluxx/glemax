@@ -46,6 +46,9 @@ typedef struct {
 
 extern WindowManager wm;
 
+extern size_t fringe_width;
+
+
 void wm_init(Buffer *initial_buffer, float x, float y, float width, float height);
 void wm_cleanup();
 

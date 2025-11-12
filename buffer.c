@@ -12,13 +12,11 @@ float blink_cursor_delay = 0.5;
 bool visible_mark_mode = false;
 
 int arg = 1;
-bool mark_word_navigation = false;
 
 bool shift;
 bool ctrl;
 bool alt;
 
-size_t fringe_width = 8;
 
  
 KeyChordAction last_command = NULL;
@@ -183,27 +181,68 @@ size_t delete(size_t pos, size_t count) {
 }
 
 void delete_backward_char() {
+    if (arg == 0) return;
+    
     if (buffer->region.active) {
         delete_region();
-    } else
-
-    if (buffer->pt > 0) {
-        delete(buffer->pt - 1, 1);
-        set_point(buffer->pt - 1);
+        return;
+    }
+    
+    int count = abs(arg);
+    if (arg > 0) {
+        if ((size_t)count > buffer->pt) {
+            count = buffer->pt;
+        }
+        delete(buffer->pt - count, count);
+        set_point(buffer->pt - count);
+    } else {
+        // Negative arg: delete forward
+        delete(buffer->pt, count);
     }
 }
 
 void delete_char() {
-    delete(buffer->pt, 1);
+    if (arg == 0) return;
+    
+    int count = abs(arg);
+    if (arg > 0) {
+        // Delete forward
+        delete(buffer->pt, count);
+    } else {
+        // Delete backward
+        if ((size_t)count > buffer->pt) {
+            count = buffer->pt;
+        }
+        delete(buffer->pt - count, count);
+        set_point(buffer->pt - count);
+    }
+}
+
+void message(const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    vprintf(format, args);
+    va_end(args);
+    printf("\n");
 }
 
 void newline() {
-    insert('\n');
+    if (arg == 0) return;
+    
+    if (arg < 0) {
+        message("Repetition argument has to be non-negative");
+        return;
+    }
+    
+    for (int i = 0; i < arg; i++) {
+        insert('\n');
+    }
 }
 
 void open_line() {
-    insert('\n');
-    set_point(buffer->pt - 1);
+    size_t start_pt = buffer->pt;
+    newline();
+    set_point(start_pt);
 }
 
 void split_line() {
@@ -230,11 +269,13 @@ void split_line() {
 }
 
 void forward_char() {
-    move_point(1);
+    if (arg == 0) return;
+    move_point(arg);
 }
 
 void backward_char() {
-    move_point(-1);
+    if (arg == 0) return;
+    move_point(-arg);
 }
 
 size_t line_beginning_position() {
@@ -272,69 +313,80 @@ void update_goal_column() {
     buffer->cursor.goal_column = current_column();
 }
 
+
 void next_line() {
-    size_t text_len = rope_char_length(buffer->rope); // O(1) cached
+    if (arg == 0) return;
     
-    // Find the end of current line
-    size_t pos = buffer->pt;
-    while (pos < text_len && rope_char_at(buffer->rope, pos) != '\n') {
-        pos++;
+    // Handle region activation with shift
+    if (shift && !buffer->region.active) {
+        buffer->region.active = true;
+        buffer->region.mark = buffer->pt;
+    } else if (!shift && buffer->region.active) {
+        buffer->region.active = false;
     }
     
-    // If we're at end of buffer, do nothing
-    if (pos >= text_len) {
-        return;
-    }
+    int direction = arg > 0 ? 1 : -1;
+    int count = abs(arg);
     
-    // Move past the newline
-    pos++;
+    size_t text_len = rope_char_length(buffer->rope);
     
-    // Now move to the goal column on the next line
-    size_t line_start = pos;
-    size_t line_end = pos;
-    while (line_end < text_len && rope_char_at(buffer->rope, line_end) != '\n') {
-        line_end++;
-    }
-    
-    // Move to goal column or end of line, whichever is shorter
-    size_t line_length = line_end - line_start;
-    if (buffer->cursor.goal_column <= line_length) {
-        set_point(line_start + buffer->cursor.goal_column);
-    } else {
-        set_point(line_end);
+    for (int i = 0; i < count; i++) {
+        if (direction > 0) {
+            // Move down
+            size_t pos = buffer->pt;
+            while (pos < text_len && rope_char_at(buffer->rope, pos) != '\n') {
+                pos++;
+            }
+            
+            if (pos >= text_len) {
+                break; // At end of buffer
+            }
+            
+            pos++; // Move past newline
+            
+            size_t line_start = pos;
+            size_t line_end = pos;
+            while (line_end < text_len && rope_char_at(buffer->rope, line_end) != '\n') {
+                line_end++;
+            }
+            
+            size_t line_length = line_end - line_start;
+            if (buffer->cursor.goal_column <= line_length) {
+                set_point(line_start + buffer->cursor.goal_column);
+            } else {
+                set_point(line_end);
+            }
+        } else {
+            // Move up
+            size_t pos = buffer->pt;
+            while (pos > 0 && rope_char_at(buffer->rope, pos - 1) != '\n') {
+                pos--;
+            }
+            
+            if (pos == 0) {
+                break; // At first line
+            }
+            
+            pos--; // Move before newline
+            
+            size_t line_start = pos;
+            while (line_start > 0 && rope_char_at(buffer->rope, line_start - 1) != '\n') {
+                line_start--;
+            }
+            
+            size_t line_length = pos - line_start;
+            if (buffer->cursor.goal_column <= line_length) {
+                set_point(line_start + buffer->cursor.goal_column);
+            } else {
+                set_point(pos);
+            }
+        }
     }
 }
 
 void previous_line() {
-    // Find the beginning of current line
-    size_t pos = buffer->pt;
-    while (pos > 0 && rope_char_at(buffer->rope, pos - 1) != '\n') {
-        pos--;
-    }
-    
-    // If we're at the first line, do nothing
-    if (pos == 0) {
-        return;
-    }
-    
-    // Move to before the newline of previous line
-    pos--;
-    
-    // Find the beginning of the previous line
-    size_t line_start = pos;
-    while (line_start > 0 && rope_char_at(buffer->rope, line_start - 1) != '\n') {
-        line_start--;
-    }
-    
-    // Calculate line length
-    size_t line_length = pos - line_start;
-    
-    // Move to goal column or end of line, whichever is shorter
-    if (buffer->cursor.goal_column <= line_length) {
-        set_point(line_start + buffer->cursor.goal_column);
-    } else {
-        set_point(pos);
-    }
+    arg = -arg;
+    next_line();
 }
 
 void end_of_line() {
@@ -437,22 +489,131 @@ void kill(size_t start, size_t end, bool prepend) {
     delete(start, length);
 }
 
+
+
+bool kill_whole_line = true;
+
 void kill_line() {
-    size_t line_end = line_end_position();
     size_t text_len = rope_char_length(buffer->rope);
     
-    size_t start = buffer->pt;
-    size_t end;
-    
-    if (buffer->pt == line_end && buffer->pt < text_len) {
-        end = buffer->pt + 1;
-    } else if (buffer->pt < line_end) {
-        end = line_end;
-    } else {
+    if (arg == 0) {
+        // Kill backwards from point to beginning of line
+        size_t line_start = line_beginning_position();
+        size_t start = line_start;
+        size_t end = buffer->pt;
+        
+        if (start < end) {
+            kill(start, end, true);  // Prepend to kill ring
+            set_point(start);
+        }
         return;
     }
     
-    kill(start, end, false);
+    if (arg == 1) {
+        // No prefix arg: default behavior
+        size_t line_end = line_end_position();
+        size_t start = buffer->pt;
+        size_t end;
+        
+        // Check if we're at end of buffer
+        if (buffer->pt >= text_len) {
+            return;
+        }
+        
+        // Check if rest of line is empty (only whitespace or already at end)
+        bool rest_is_empty = (buffer->pt == line_end);
+        if (!rest_is_empty) {
+            rest_is_empty = true;
+            for (size_t i = buffer->pt; i < line_end; i++) {
+                uint32_t ch = rope_char_at(buffer->rope, i);
+                if (ch != ' ' && ch != '\t') {
+                    rest_is_empty = false;
+                    break;
+                }
+            }
+        }
+        
+        // Special case: kill_whole_line and at beginning of line
+        if (kill_whole_line && buffer->pt == line_beginning_position()) {
+            end = line_end;
+            if (end < text_len && rope_char_at(buffer->rope, end) == '\n') {
+                end++;
+            }
+        }
+        // If rest of line is empty/whitespace, kill through newline
+        else if (rest_is_empty) {
+            end = line_end;
+            if (end < text_len && rope_char_at(buffer->rope, end) == '\n') {
+                end++;
+            }
+        }
+        // Otherwise just kill to end of line (not including newline)
+        else {
+            end = line_end;
+        }
+        
+        if (start < end) {
+            kill(start, end, false);
+        }
+        return;
+    }
+    
+    if (arg > 1) {
+        // Positive arg > 1: kill arg lines forward (always including newlines)
+        // This is equivalent to forward-line arg times
+        size_t start = buffer->pt;
+        size_t pos = start;
+        
+        for (int i = 0; i < arg; i++) {
+            // Move to end of current line
+            while (pos < text_len && rope_char_at(buffer->rope, pos) != '\n') {
+                pos++;
+            }
+            
+            // Include the newline
+            if (pos < text_len && rope_char_at(buffer->rope, pos) == '\n') {
+                pos++;
+            }
+            
+            // If we're at end of buffer, stop
+            if (pos >= text_len) {
+                break;
+            }
+        }
+        
+        if (start < pos) {
+            kill(start, pos, false);  // Append to kill ring
+        }
+        return;
+    }
+    
+    // arg < 0: Kill backwards arg lines
+    // Move backwards |arg| lines
+    size_t end = buffer->pt;
+    size_t pos = end;
+    
+    for (int i = 0; i < -arg; i++) {
+        // Move to beginning of current line
+        while (pos > 0 && rope_char_at(buffer->rope, pos - 1) != '\n') {
+            pos--;
+        }
+        
+        // Move to previous line (past the newline)
+        if (pos > 0) {
+            pos--;
+        }
+    }
+    
+    // Now pos is at the beginning of the line we want to start killing from
+    // We need to move back to the beginning of that line
+    while (pos > 0 && rope_char_at(buffer->rope, pos - 1) != '\n') {
+        pos--;
+    }
+    
+    if (pos < end) {
+        kill(pos, end, true);  // Prepend to kill ring
+        set_point(pos);
+    }
 }
 
 void kill_region() {
@@ -476,21 +637,19 @@ void yank() {
         size_t len = strlen(clipboard_text);
         size_t old_char_len = rope_char_length(buffer->rope);
         
-        // Update mark if needed
+
         buffer->region.mark = buffer->pt;
-        
-        // Insert entire string at once - ONE rope operation!
         buffer->rope = rope_insert_chars(buffer->rope, buffer->pt, clipboard_text, len);
         
-        // Calculate how many characters were inserted
         size_t new_char_len = rope_char_length(buffer->rope);
         size_t chars_inserted = new_char_len - old_char_len;
+        set_point(buffer->pt + chars_inserted); // End of inserted text
         
-        // Update point to end of inserted text
-        set_point(buffer->pt + chars_inserted);
-        update_goal_column();
+        // If C-u was used (raw prefix arg), exchange point and mark
+        // This leaves point at beginning and mark at end of yanked text
+        if (raw_prefix_arg) exchange_point_and_mark();
+
         adjust_all_window_points_after_modification(buffer->pt, chars_inserted);
-        reset_cursor_blink(buffer);
     }
 }
 
@@ -506,7 +665,6 @@ bool isPunctuationChar(uint32_t c) {
     return strchr(",.;:!?'\"(){}[]<>-+*/=&|^%$#@~_", (char)c) != NULL;
 }
 
-/* Move to the end of the current word - EFFICIENT VERSION */
 size_t end_of_word(Buffer *buffer, size_t pos) {
     size_t text_len = rope_char_length(buffer->rope);
     if (pos >= text_len) return text_len;
@@ -551,7 +709,6 @@ size_t end_of_word(Buffer *buffer, size_t pos) {
     return result;
 }
 
-/* Move to beginning - uses rope_copy_chars for local buffering */
 size_t beginning_of_word(Buffer *buffer, size_t pos) {
     if (pos == 0) return 0;
     
@@ -620,86 +777,155 @@ size_t beginning_of_word(Buffer *buffer, size_t pos) {
 
 void forward_word() {
     if (arg == 0) return;
-
+    
     // Handle region activation like Emacs does
     if (shift && !buffer->region.active) {
         buffer->region.active = true;
+        buffer->region.mark = buffer->pt;
     } else if (!shift && buffer->region.active) {
         buffer->region.active = false;
     }
-
+    
     int direction = arg > 0 ? 1 : -1;
     int count = abs(arg);
-
-    // Simple movement when shift is held (no special marking)
-    if (shift) {
-        while (count-- > 0) {
-            if (direction > 0) {
-                set_point(end_of_word(buffer, buffer->pt));
-            } else {
-                set_point(beginning_of_word(buffer, buffer->pt));
-            }
-        }
-        return;
-    }
-
-    // Precise word marking behavior
-    if (mark_word_navigation) {
+    
+    // Move word by word
+    while (count-- > 0) {
         if (direction > 0) {
-            // Forward word marking
-            size_t new_pos = buffer->pt;
-            for (int i = 0; i < count; i++) {
-                new_pos = end_of_word(buffer, new_pos);
-            }
-            
-            buffer->region.mark = beginning_of_word(buffer, new_pos);
-            set_point(new_pos);
+            set_point(end_of_word(buffer, buffer->pt));
         } else {
-            // Backward word marking
-            size_t new_pos = buffer->pt;
-            for (int i = 0; i < count; i++) {
-                new_pos = beginning_of_word(buffer, new_pos);
-            }
-            
-            buffer->region.mark = end_of_word(buffer, new_pos);
-            set_point(new_pos);
-        }
-    } else {
-        // Simple movement without marking
-        while (count-- > 0) {
-            if (direction > 0) {
-                set_point(end_of_word(buffer, buffer->pt));
-            } else {
-                set_point(beginning_of_word(buffer, buffer->pt));
-            }
+            set_point(beginning_of_word(buffer, buffer->pt));
         }
     }
 }
 
 void backward_word() {
-    arg = -abs(arg); 
+    arg = -arg; 
     forward_word();
 }
 
 void kill_word() {
+    if (arg == 0) return;
+    
+    int direction = arg > 0 ? 1 : -1;
+    int count = abs(arg);
+    
     size_t start = buffer->pt;
-    size_t end = end_of_word(buffer, start);
+    size_t end = start;
+    
+    for (int i = 0; i < count; i++) {
+        if (direction > 0) {
+            end = end_of_word(buffer, end);
+        } else {
+            end = beginning_of_word(buffer, end);
+        }
+    }
+    
     if (start == end) return;
     
-    kill(start, end, false);  // Append to end
+    if (start < end) {
+        kill(start, end, false);
+    } else {
+        kill(end, start, true);
+        set_point(end);
+    }
 }
 
 void backward_kill_word() {
-    size_t end = buffer->pt;
-    size_t start = beginning_of_word(buffer, end);
-    if (start == end) return;
-    
-    kill(start, end, true);  // Prepend to beginning
-    set_point(start);
+    arg = -arg;
+    kill_word();
 }
 
+/// PARAGRAPHS
+
+void forward_paragraph() {
+    if (arg == 0) return;
+    
+    size_t text_len = rope_char_length(buffer->rope);
+    int count = abs(arg);
+    
+    if (arg > 0) {
+        for (int i = 0; i < count; i++) {
+            if (buffer->pt >= text_len) break;
+            
+            size_t pos = buffer->pt;
+            bool found_text = false;
+            
+            while (pos < text_len) {
+                if (rope_char_at(buffer->rope, pos) == '\n') {
+                    size_t next_line_start = pos + 1;
+                    if (next_line_start < text_len && rope_char_at(buffer->rope, next_line_start) == '\n') {
+                        if (found_text) {
+                            set_point(next_line_start);
+                            break;
+                        }
+                    } else if (next_line_start < text_len) {
+                        found_text = true;
+                    }
+                }
+                pos++;
+            }
+            
+            if (pos >= text_len) {
+                set_point(text_len);
+                break;
+            }
+        }
+    } else {
+        for (int i = 0; i < count; i++) {
+            if (buffer->pt == 0) break;
+            
+            size_t pos = buffer->pt - 1;
+            bool found_text = false;
+            
+            while (pos > 0) {
+                if (rope_char_at(buffer->rope, pos) == '\n' && rope_char_at(buffer->rope, pos - 1) == '\n') {
+                    if (found_text) {
+                        set_point(pos);
+                        break;
+                    }
+                } else if (rope_char_at(buffer->rope, pos) != '\n') {
+                    found_text = true;
+                }
+                pos--;
+            }
+            
+            if (pos == 0) {
+                set_point(0);
+                break;
+            }
+        }
+    }
+}
+
+void backward_paragraph() {
+    arg = -arg;
+    forward_paragraph();
+}
+
+
+/// ARG
+
+bool raw_prefix_arg = false;
+
+// TODO Activate universal-argument-map and bind 0..9 to digit-argument
+void universal_argument() {
+    arg *= 4;
+    raw_prefix_arg = true;  
+}
+
+void digit_argument() {
+    // NOTE This function is called, but the actual digit handling
+    // happens in after_keychord_hook by parsing the notation
+}
+
+void negative_argument() {
+    arg = -arg;
+}
+
+
 void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) {
-    float x = start_x + fringe_width;
+    float x = start_x /* + fringe_width */;
     float y = start_y;
     float line_height = buffer->font->ascent + buffer->font->descent;
     size_t text_len = rope_char_length(buffer->rope);
@@ -717,7 +943,7 @@ void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) {
     while (i < point && rope_iter_next_char(&iter, &ch)) {
         if (ch == '\n') {
             lineCount++;
-            x = start_x + fringe_width;
+            x = start_x /* + fringe_width */;
         } else {
             // Get character width from font (handles all Unicode)
             Character *char_info = font_get_character(buffer->font, ch);
@@ -804,91 +1030,10 @@ void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) {
     }
 }
 
-/* void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) { */
-/*     float x = start_x; */
-/*     float y = start_y; */
-/*     float line_height = buffer->font->ascent + buffer->font->descent; */
-/*     size_t text_len = rope_char_length(buffer->rope); */
-/*     int lineCount = 0; */
-    
-/*     // Get point from window, not buffer */
-/*     size_t point = win ? win->point : buffer->pt; */
-    
-/*     // Use iterator to calculate cursor position */
-/*     rope_iter_t iter; */
-/*     rope_iter_init(&iter, buffer->rope, 0); */
-    
-/*     uint32_t ch; */
-/*     size_t i = 0; */
-/*     while (i < point && rope_iter_next_char(&iter, &ch)) { */
-/*         if (ch == '\n') { */
-/*             lineCount++; */
-/*             x = start_x; */
-/*         } else { */
-/*             // Get character width from font (handles all Unicode) */
-/*             Character *char_info = font_get_character(buffer->font, ch); */
-/*             if (char_info) { */
-/*                 x += char_info->ax; */
-/*             } */
-/*         } */
-/*         i++; */
-/*     } */
-    
-/*     rope_iter_destroy(&iter); */
-    
-/*     y = start_y - lineCount * line_height - (buffer->font->descent * 2); */
-    
-/*     buffer->cursor.x = x; */
-/*     buffer->cursor.y = y; */
-    
-/*     // Determine cursor width - check character at cursor position */
-/*     float cursor_width; */
-/*     Character *space = font_get_character(buffer->font, ' '); */
-/*     float space_width = space ? space->ax : buffer->font->ascent; */
-    
-/*     if (point < text_len) { */
-/*         uint32_t ch_at_cursor = rope_char_at(buffer->rope, point); */
-/*         if (ch_at_cursor == '\n') { */
-/*             cursor_width = space_width; */
-/*         } else { */
-/*             Character *char_info = font_get_character(buffer->font, ch_at_cursor); */
-/*             cursor_width = char_info ? char_info->ax : space_width; */
-/*         } */
-/*     } else { */
-/*         // Cursor is at end of buffer - use space width */
-/*         cursor_width = space_width; */
-/*     } */
-    
-/*     float cursor_height = buffer->font->ascent + buffer->font->descent; */
-    
-/*     // Handle cursor blinking */
-/*     if (blink_cursor_mode && buffer->cursor.blink_count < blink_cursor_blinks) { */
-/*         double currentTime = getTime(); */
-/*         double interval = buffer->cursor.visible ? blink_cursor_interval : blink_cursor_delay; */
-        
-/*         if (currentTime - buffer->cursor.last_blink >= interval) { */
-/*             buffer->cursor.visible = !buffer->cursor.visible; */
-/*             buffer->cursor.last_blink = currentTime; */
-/*             if (buffer->cursor.visible) { */
-/*                 buffer->cursor.blink_count++; */
-/*             } */
-/*         } */
-        
-/*         if (buffer->cursor.visible) { */
-/*             quad2D((vec2){buffer->cursor.x, buffer->cursor.y}, */
-/*                    (vec2){cursor_width, cursor_height}, CT.cursor); */
-/*         } */
-/*     } else { */
-/*         // Always draw when blink limit reached or mode disabled */
-/*         quad2D((vec2){buffer->cursor.x, buffer->cursor.y}, */
-/*                (vec2){cursor_width, cursor_height}, CT.cursor); */
-/*     } */
-/* } */
-
 void draw_mark(Buffer *buffer, float start_x, float start_y) {
     if (buffer->region.mark == buffer->pt) return;
     
-    float mark_x = start_x + fringe_width;
+    float mark_x = start_x /* + fringe_width */;
     float mark_y = start_y;
     float line_height = buffer->font->ascent + buffer->font->descent;
     size_t text_len = rope_char_length(buffer->rope);
@@ -903,7 +1048,7 @@ void draw_mark(Buffer *buffer, float start_x, float start_y) {
     while (i < buffer->region.mark && rope_iter_next_char(&iter, &ch)) {
         if (ch == '\n') {
             lineCount++;
-            mark_x = start_x + fringe_width;
+            mark_x = start_x /* + fringe_width */;
         } else {
             Character *char_info = font_get_character(buffer->font, ch);
             if (char_info) {
@@ -941,12 +1086,15 @@ void draw_mark(Buffer *buffer, float start_x, float start_y) {
 }
 
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
-    float x = start_x + fringe_width;
+    float x = start_x /* + fringe_width */;
     float y = start_y;
     float line_height = buffer->font->ascent + buffer->font->descent;
     
     // Get point from window if provided
     size_t point = win ? win->point : buffer->pt;
+    
+    // Check if this window is selected
+    bool is_selected = win && win->is_selected;
     
     rope_iter_t iter;
     rope_iter_init(&iter, buffer->rope, 0);
@@ -955,12 +1103,13 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     size_t i = 0;
     while (rope_iter_next_char(&iter, &ch)) {
         if (ch == '\n') {
-            x = start_x + fringe_width;
+            x = start_x /* + fringe_width */;
             y -= line_height;
         } else {
             // Determine color based on cursor/mark position
-            Color char_color = (i == point && buffer->cursor.visible || 
-                               i == buffer->region.mark && visible_mark_mode) 
+            // Only invert color at point if this is the selected window AND cursor is visible
+            Color char_color = ((i == point && is_selected && buffer->cursor.visible) || 
+                               (i == buffer->region.mark && visible_mark_mode)) 
                                ? CT.bg : CT.text;
             
             // Render the character (now handles all Unicode codepoints)

@@ -32,6 +32,9 @@ extern bool ctrl;
 extern bool alt;
 extern int arg;
 
+extern bool kill_whole_line;
+
+
 Buffer* buffer_create(Font *font);
 void buffer_destroy(Buffer *buffer);
 
@@ -73,12 +76,28 @@ void kill_region();
 void yank();
 
 
+/// WORDS
+
 bool isWordChar(uint32_t c);
 bool isPunctuationChar(uint32_t c);
 size_t beginning_of_word(Buffer *buffer, size_t pos);
 size_t end_of_word(Buffer *buffer, size_t pos);
 void forward_word();
 void backward_word();
+
+
+/// PARAGRAPHS
+
+void forward_paragraph();
+void backward_paragraph();
+
+/// ARG
+
+extern bool raw_prefix_arg;
+void universal_argument();
+void digit_argument();
+void negative_argument();
+
 
 
 extern KeyChordAction last_command;
@@ -93,10 +112,8 @@ typedef struct Window Window;
 
 
 
-/* void draw_buffer(Buffer *buffer, float start_x, float start_y); */
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y);
-
-/* void draw_cursor(Buffer *buffer, float start_x, float start_y); */
 void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y);
-
 void reset_cursor_blink(Buffer *buffer);
+
+void message(const char *format, ...);

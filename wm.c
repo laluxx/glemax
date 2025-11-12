@@ -8,6 +8,8 @@ WindowManager wm = {0};
 #define MIN_WINDOW_SIZE 100.0f
 
 static bool debug_them_windows = false;
+size_t fringe_width = 8;
+
 
 Window* window_create(Window *parent, Buffer *buffer) {
     Window *win = (Window*)calloc(1, sizeof(Window));
@@ -131,21 +133,42 @@ Window* previous_window(Window *current) {
 }
 
 void other_window() {
-    // Save current window's point and goal column
     wm.selected->point = buffer->pt;
     wm.selected->goal_column = buffer->cursor.goal_column;
     
-    Window *next = next_window(wm.selected);
-    if (next && next != wm.selected) {
+    Window *original = wm.selected;
+    Window *target = wm.selected;
+    
+    int count = abs(arg);
+    
+    if (arg > 0) {
+        // Move forward through windows
+        for (int i = 0; i < count; i++) {
+            target = next_window(target);
+        }
+    } else {
+        // Move backward through windows
+        for (int i = 0; i < count; i++) {
+            target = previous_window(target);
+        }
+    }
+    
+    if (target == original) {
+        message("No other window to select");
+        return;
+    }
+    
+    if (target && target != wm.selected) {
         wm.selected->is_selected = false;
-        next->is_selected = true;
-        wm.selected = next;
+        target->is_selected = true;
+        wm.selected = target;
         
         // Update global buffer pointer and restore point
-        buffer = next->buffer;
-        buffer->pt = next->point;
-        buffer->cursor.goal_column = next->goal_column;
+        buffer = target->buffer;
+        buffer->pt = target->point;
+        buffer->cursor.goal_column = target->goal_column;
     }
+    
     if (debug_them_windows) debug_print_windows();
 }
 
@@ -425,7 +448,6 @@ void shrink_window() {
     wm_recalculate_layout();
 }
 
-
 static void draw_modeline(Window *win) {
     if (!win) return;
     
@@ -433,7 +455,7 @@ static void draw_modeline(Window *win) {
     float modeline_height = line_height;
     float modeline_y = win->y;  // Bottom edge of the window
     
-    Color color = win->is_selected ? CT.variable : CT.comment;
+    Color color = win->is_selected ? CT.mode_line_active_bg : CT.mode_line_inactive_bg;
     
     quad2D((vec2){win->x, modeline_y},
            (vec2){win->width, modeline_height},
@@ -444,10 +466,17 @@ static void draw_window(Window *win) {
     if (!win) return;
     
     if (is_leaf_window(win)) {
-        // Draw the buffer content with window's point
+        // Left fringe
+        quad2D((vec2){win->x, win->y},
+               (vec2){fringe_width, win->height}, CT.fringe_bg);
+        
+        // Right fringe
+        quad2D((vec2){win->x + win->width - fringe_width, win->y},
+               (vec2){fringe_width, win->height}, CT.fringe_bg);
+        
         if (win->buffer) {
-            draw_buffer(win->buffer, win, win->x, 
-                                   win->y + win->height - win->buffer->font->ascent + win->buffer->font->descent);
+            draw_buffer(win->buffer, win, win->x + fringe_width, 
+                       win->y + win->height - win->buffer->font->ascent + win->buffer->font->descent);
         }
         draw_modeline(win);        
     } else {
@@ -466,7 +495,7 @@ static void draw_dividers_recursive(Window *win) {
         float divider_width = 1.0f;
         
         quad2D((vec2){divider_x - divider_width / 2, win->y},
-               (vec2){divider_width, win->height}, CT.clock);
+               (vec2){divider_width, win->height}, CT.window_divider);
     }
     
     // Recursively draw dividers in children
