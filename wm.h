@@ -12,35 +12,30 @@ typedef enum {
 // Forward declaration
 typedef struct Window Window;
 
-// Binary tree
 struct Window {
-    // Tree structure
+    // Binary tree structure
     Window *parent;
     Window *left;   // Left child for vertical split, top for horizontal
     Window *right;  // Right child for vertical split, bottom for horizontal
     
-    // Window properties
     SplitType split_type;
     Buffer *buffer;
-    
-    // Per-window point (like Emacs)
     size_t point;
-    size_t goal_column;
-    
-    // Geometry (in pixels)
+
     float x, y;
     float width, height;
-    
-    // Split ratio (0.0 to 1.0) - size of left/top child relative to total
+
     float split_ratio;
-    
-    // Visual state
     bool is_selected;
+    bool is_minibuffer;
 };
 
 typedef struct {
     Window *root;    
     Window *selected;
+    Window *minibuffer_window; // Special bottom window
+    Window *previous_window;   // Window active before minibuffer    
+    bool minibuffer_active;
     int window_count;
 } WindowManager;
 
@@ -60,6 +55,11 @@ void delete_other_windows();
 void other_window();
 Window* next_window(Window *current);
 Window* previous_window(Window *current);
+
+// Minibuffer functions
+void activate_minibuffer();
+void deactivate_minibuffer();
+bool is_minibuffer_window(Window *win);
 
 // Window queries
 bool is_leaf_window(Window *win);

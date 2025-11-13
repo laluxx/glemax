@@ -1,4 +1,5 @@
 #include "buffer.h"
+#include "wm.h"
 #include <ctype.h>
 #include <stdbool.h>
 
@@ -98,28 +99,59 @@ inline void set_point(size_t new_pt) {
     wm.selected->point = new_pt;
 }
 
+
 inline void move_point(int delta) {
     size_t text_len = rope_char_length(buffer->rope);
-    size_t new_pt;
     
+    if (delta == 0) return;
+    
+    // Calculate new position (using signed arithmetic to detect overflow)
+    ptrdiff_t new_pt;
     if (delta > 0) {
         new_pt = buffer->pt + delta;
-        if (new_pt > text_len) {
-            new_pt = text_len;
-        }
-    } else if (delta < 0) {
-        int abs_delta = -delta;
-        if ((size_t)abs_delta > buffer->pt) {
-            new_pt = 0;
-        } else {
-            new_pt = buffer->pt - abs_delta;
-        }
     } else {
-        return; // No movement
+        new_pt = (ptrdiff_t)buffer->pt + delta; // delta is negative
+    }
+    
+    // Check boundaries and show messages like Emacs does
+    if (new_pt < 0) {
+        set_point(0);
+        message("Beginning of buffer");
+        return;
+    }
+    
+    if ((size_t)new_pt > text_len) {
+        set_point(text_len);
+        message("End of buffer");
+        return;
     }
     
     set_point(new_pt);
 }
+
+
+/* inline void move_point(int delta) { */
+/*     size_t text_len = rope_char_length(buffer->rope); */
+/*     size_t new_pt; */
+    
+/*     if (delta > 0) { */
+/*         new_pt = buffer->pt + delta; */
+/*         if (new_pt > text_len) { */
+/*             new_pt = text_len; */
+/*         } */
+/*     } else if (delta < 0) { */
+/*         int abs_delta = -delta; */
+/*         if ((size_t)abs_delta > buffer->pt) { */
+/*             new_pt = 0; */
+/*         } else { */
+/*             new_pt = buffer->pt - abs_delta; */
+/*         } */
+/*     } else { */
+/*         return; // No movement */
+/*     } */
+    
+/*     set_point(new_pt); */
+/* } */
 
 void insert(uint32_t codepoint) {
     char utf8[5] = {0};
@@ -157,14 +189,34 @@ void insert(uint32_t codepoint) {
 }
 
 size_t delete(size_t pos, size_t count) {
-    if (count == 0) return pos;
+    if (count == 0) {
+        // Deleting nothing - check if we're at a boundary
+        size_t text_len = rope_char_length(buffer->rope);
+        if (pos == 0) {
+            message("Beginning of buffer");
+        } else if (pos >= text_len) {
+            message("End of buffer");
+        }
+        return pos;
+    }
     
     size_t text_len = rope_char_length(buffer->rope);
-    if (pos >= text_len) return pos;
+    
+    // Check for end of buffer
+    if (pos >= text_len) {
+        message("End of buffer");
+        return pos;
+    }
     
     // Clamp count to available characters
     if (pos + count > text_len) {
         count = text_len - pos;
+    }
+    
+    // If clamping reduced count to 0, we hit end of buffer
+    if (count == 0) {
+        message("End of buffer");
+        return pos;
     }
     
     // Update mark if region is active
@@ -174,7 +226,7 @@ size_t delete(size_t pos, size_t count) {
     } else if (buffer->region.mark > pos) {
         buffer->region.mark = pos;
     }
-
+    
     buffer->rope = rope_delete_chars(buffer->rope, pos, count);
     adjust_all_window_points_after_modification(buffer->pt, -count);
     return pos;
@@ -219,11 +271,26 @@ void delete_char() {
 }
 
 void message(const char *format, ...) {
+    // Format the message
+    char buffer[1024];
     va_list args;
     va_start(args, format);
-    vprintf(format, args);
+    vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
-    printf("\n");
+    
+    // Clear minibuffer
+    Buffer *minibuf = wm.minibuffer_window->buffer;
+    size_t len = rope_char_length(minibuf->rope);
+    if (len > 0) {
+        minibuf->rope = rope_delete_chars(minibuf->rope, 0, len);
+    }
+    
+    // Insert message into minibuffer
+    size_t msg_len = strlen(buffer);
+    minibuf->rope = rope_insert_chars(minibuf->rope, 0, buffer, msg_len);
+    
+    // Reset point to beginning
+    wm.minibuffer_window->point = 0;
 }
 
 void newline() {
@@ -313,22 +380,14 @@ void update_goal_column() {
     buffer->cursor.goal_column = current_column();
 }
 
-
 void next_line() {
     if (arg == 0) return;
-    
-    // Handle region activation with shift
-    if (shift && !buffer->region.active) {
-        buffer->region.active = true;
-        buffer->region.mark = buffer->pt;
-    } else if (!shift && buffer->region.active) {
-        buffer->region.active = false;
-    }
     
     int direction = arg > 0 ? 1 : -1;
     int count = abs(arg);
     
     size_t text_len = rope_char_length(buffer->rope);
+    size_t starting_pt = buffer->pt;  // Remember where we started
     
     for (int i = 0; i < count; i++) {
         if (direction > 0) {
@@ -339,6 +398,11 @@ void next_line() {
             }
             
             if (pos >= text_len) {
+                // Can't move any further - we're at the last line
+                if (buffer->pt == starting_pt) {
+                    // We didn't move at all
+                    message("End of buffer");
+                }
                 break; // At end of buffer
             }
             
@@ -364,6 +428,11 @@ void next_line() {
             }
             
             if (pos == 0) {
+                // Can't move any further - we're at the first line
+                if (buffer->pt == starting_pt) {
+                    // We didn't move at all
+                    message("Beginning of buffer");
+                }
                 break; // At first line
             }
             
@@ -923,6 +992,16 @@ void negative_argument() {
     arg = -arg;
 }
 
+void execute_extended_command() {
+    activate_minibuffer();
+}
+
+void keyboard_quit() {
+    if (wm.selected == wm.minibuffer_window) {
+        deactivate_minibuffer();
+    }
+}
+
 
 void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) {
     float x = start_x /* + fringe_width */;
@@ -984,6 +1063,11 @@ void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) {
     // Check if this window is selected
     bool is_selected = win && win->is_selected;
     
+    // Don't draw cursor in inactive minibuffer
+    if (win && win->is_minibuffer && !wm.minibuffer_active) {
+        return;
+    }
+    
     if (is_selected) {
         // Selected window: filled cursor with blinking
         if (blink_cursor_mode && buffer->cursor.blink_count < blink_cursor_blinks) {
@@ -1033,7 +1117,7 @@ void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) {
 void draw_mark(Buffer *buffer, float start_x, float start_y) {
     if (buffer->region.mark == buffer->pt) return;
     
-    float mark_x = start_x /* + fringe_width */;
+    float mark_x = start_x;
     float mark_y = start_y;
     float line_height = buffer->font->ascent + buffer->font->descent;
     size_t text_len = rope_char_length(buffer->rope);
@@ -1048,7 +1132,7 @@ void draw_mark(Buffer *buffer, float start_x, float start_y) {
     while (i < buffer->region.mark && rope_iter_next_char(&iter, &ch)) {
         if (ch == '\n') {
             lineCount++;
-            mark_x = start_x /* + fringe_width */;
+            mark_x = start_x;
         } else {
             Character *char_info = font_get_character(buffer->font, ch);
             if (char_info) {
@@ -1086,7 +1170,7 @@ void draw_mark(Buffer *buffer, float start_x, float start_y) {
 }
 
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
-    float x = start_x /* + fringe_width */;
+    float x = start_x;
     float y = start_y;
     float line_height = buffer->font->ascent + buffer->font->descent;
     
@@ -1103,7 +1187,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     size_t i = 0;
     while (rope_iter_next_char(&iter, &ch)) {
         if (ch == '\n') {
-            x = start_x /* + fringe_width */;
+            x = start_x;
             y -= line_height;
         } else {
             // Determine color based on cursor/mark position

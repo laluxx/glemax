@@ -1,12 +1,4 @@
-#include <obsidian/font.h>
-#include <obsidian/gltf_loader.h>
-#include <obsidian/input.h>
-#include <obsidian/keychords.h>
 #include <obsidian/obsidian.h>
-#include <obsidian/renderer.h>
-#include <obsidian/theme.h>
-#include <obsidian/vertico.h>
-#include <obsidian/vulkan_setup.h>
 #include "buffer.h"
 
 #define ROPE_IMPLEMENTATION
@@ -36,10 +28,23 @@ static bool is_argument_function(KeyChordAction action) {
            action == digit_argument;
 }
 
+void before_keychord_hook(const char *notation, KeyChordBinding *binding) {
+    // Clear minibuffer on any key press
+    if (!wm.minibuffer_active) {
+        Buffer *minibuf = wm.minibuffer_window->buffer;
+        if (minibuf) {
+            size_t len = rope_char_length(minibuf->rope);
+            if (len > 0) {
+                minibuf->rope = rope_delete_chars(minibuf->rope, 0, len);
+                wm.minibuffer_window->point = 0;
+            }
+        }
+    }
+}  
 
 void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
     reset_cursor_blink(buffer);
-
+    
     // Handle digit argument
     if (binding->action == digit_argument) {
         // Remember if arg was negative
@@ -69,7 +74,7 @@ void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
         
         // Restore the sign
         if (was_negative) arg = -arg;
-
+        
         raw_prefix_arg = false;    
         
     } else if (!is_argument_function(binding->action)) {
@@ -80,6 +85,9 @@ void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
     if (!is_vertical_motion(binding->action)) update_goal_column();
     last_command_was_kill = is_kill_command(binding->action);
     last_command = binding->action;    
+    
+    
+    
 }
 
 void key_callback(int key, int action, int mods) {
@@ -87,11 +95,11 @@ void key_callback(int key, int action, int mods) {
     ctrl  = mods & MOD_CONTROL;
     alt   = mods & MOD_ALT;
     
-
+    
     if (action == PRESS || action == REPEAT) {
         switch (key) {
         }
-
+        
         /* printf("ARG: %i\n", arg); */
         reset_cursor_blink(buffer);
     }
@@ -168,7 +176,7 @@ void mouse_button_callback(int button, int action, int mods) {
 void cursor_pos_callback(double xpos, double ypos) {
     double xoffset = xpos - lastX;
     double yoffset = lastY - ypos;
-
+    
     if (camera.active) {
         // Normal FPS camera control - always update lastX/lastY
         lastX = xpos;
@@ -188,27 +196,27 @@ void cursor_pos_callback(double xpos, double ypos) {
                 printf("Panning - orbit mode disabled\n");
             }
             // SHIFT + MIDDLE MOUSE: PAN
-  
+            
             float panSpeed = 0.005f;
-
+            
             vec3 right, up;
             glm_vec3_cross(camera.front, camera.up, right);
             glm_vec3_normalize(right);
             glm_vec3_copy(camera.up, up);
             glm_vec3_normalize(up);
-
+            
             vec3 panMovement = {0.0f, 0.0f, 0.0f};
-
+            
             vec3 rightMove;
             glm_vec3_scale(right, (float)-xoffset * panSpeed, rightMove);
             glm_vec3_add(panMovement, rightMove, panMovement);
-
+            
             vec3 upMove;
             glm_vec3_scale(up, (float)-yoffset * panSpeed, upMove);
             glm_vec3_add(panMovement, upMove, panMovement);
-
+            
             glm_vec3_add(camera.position, panMovement, camera.position);
-
+            
         } else {
             // MIDDLE MOUSE ONLY: ORBIT
             float orbitSpeed = 0.01f;
@@ -216,7 +224,7 @@ void cursor_pos_callback(double xpos, double ypos) {
                                       (float)(xoffset * orbitSpeed),
                                       (float)(yoffset * orbitSpeed));
         }
-
+        
         lastX = xpos;
         lastY = ypos;
     }
@@ -234,107 +242,108 @@ void cursor_pos_callback(double xpos, double ypos) {
 
 int main() {
     initWindow(sw, sh, "Kink");
-
+    
     jetbrains = load_font("./assets/fonts/JetBrainsMonoNerdFont-Regular.ttf", 22);
     /* jetbrains = load_font("./assets/fonts/JetBrainsMonoNerdFont-Regular.ttf", 122); */
     /* lilex = load_font("./assets/fonts/LilexNerdFont-Regular.ttf", 22); */
     /* lilex = load_font("./assets/fonts/DejaVuMathTeXGyre.ttf", 100); */
-
+    
     buffer = buffer_create(jetbrains);
-
+    
     sh = context.swapChainExtent.height; // TODO move into
     sw = context.swapChainExtent.width;  // Resize callback
     wm_init(buffer, 0, 0, sw, sh);
     
-
+    
     registerKeyCallback(key_callback);
     registerTextCallback(text_callback);
     registerMouseButtonCallback(mouse_button_callback);
     registerCursorPosCallback(cursor_pos_callback);
-
+    
     register_after_keychord_hook(after_keychord_hook);
-
-
+    register_before_keychord_hook(before_keychord_hook);
+    
+    
     loadThemeByName("modus-vivendi");
-
-    keychord_bind(&keymap, "M--",           previousTheme,           "Previous theme",         PRESS | REPEAT);
-    keychord_bind(&keymap, "M-=",           nextTheme,               "Next theme",             PRESS | REPEAT);
-
-    keychord_bind(&keymap, "C-b",           backward_char,           "Backward char",          PRESS | REPEAT);
-    keychord_bind(&keymap, "C-f",           forward_char,            "Forward char",           PRESS | REPEAT);
-    keychord_bind(&keymap, "C-n",           next_line,               "Next line",              PRESS | REPEAT);
-    keychord_bind(&keymap, "C-p",           previous_line,           "Previous line",          PRESS | REPEAT);
-    keychord_bind(&keymap, "<left>",        backward_char,           "Backward char",          PRESS | REPEAT);
-    keychord_bind(&keymap, "<right>",       forward_char,            "Forward char",           PRESS | REPEAT);
-    keychord_bind(&keymap, "<down>",        next_line,               "Next line",              PRESS | REPEAT);
-    keychord_bind(&keymap, "<up>",          previous_line,           "Previous line",          PRESS | REPEAT);
-    keychord_bind(&keymap, "M-f",           forward_word,            "Forward word",           PRESS | REPEAT);
-    keychord_bind(&keymap, "M-b",           backward_word,           "Backward word",          PRESS | REPEAT);
-    keychord_bind(&keymap, "C-<right>",     forward_word,            "Forward word",           PRESS | REPEAT);
-    keychord_bind(&keymap, "C-<left>",      backward_word,           "Backward word",          PRESS | REPEAT);
-    keychord_bind(&keymap, "M-d",           kill_word,               "Kill word",              PRESS | REPEAT);
-    keychord_bind(&keymap, "C-e",           end_of_line,             "End of line",            PRESS | REPEAT);
-    keychord_bind(&keymap, "C-a",           beginning_of_line,       "Beginning of line",      PRESS | REPEAT);
-    keychord_bind(&keymap, "M-<",           beginning_of_buffer,     "Beginning of buffer",    PRESS | REPEAT);
-    keychord_bind(&keymap, "C-c p",         beginning_of_buffer,     "Beginning of buffer",    PRESS | REPEAT);
-    keychord_bind(&keymap, "M->",           end_of_buffer,           "End of buffer",          PRESS | REPEAT);
-    keychord_bind(&keymap, "C-c n",         end_of_buffer,           "End of buffer",          PRESS | REPEAT);
-    keychord_bind(&keymap, "RET",           newline,                 "Newline",                PRESS | REPEAT);
-    keychord_bind(&keymap, "C-j",           newline,                 "Newline",                PRESS | REPEAT);
-    keychord_bind(&keymap, "C-m",           newline,                 "Newline",                PRESS | REPEAT);
-    keychord_bind(&keymap, "<backspace>",   delete_backward_char,    "Delete backward char",   PRESS | REPEAT);
-    keychord_bind(&keymap, "C-<backspace>", backward_kill_word,      "Backward kill word",     PRESS | REPEAT);
-    keychord_bind(&keymap, "C-d",           delete_char,             "Delete char",            PRESS | REPEAT);
-    keychord_bind(&keymap, "C-o",           open_line,               "Open line",              PRESS | REPEAT);
-    keychord_bind(&keymap, "C-M-o",         split_line,              "Split line",             PRESS | REPEAT);
-    keychord_bind(&keymap, "C-SPC",         set_mark_command,        "Set mark command",       PRESS | REPEAT);
-    keychord_bind(&keymap, "S-<backspace>", delete_region,           "Delete region",          PRESS | REPEAT);
-    keychord_bind(&keymap, "C-w",           kill_region,             "Kill region",            PRESS | REPEAT);
-    keychord_bind(&keymap, "C-y",           yank,                    "Yank",                   PRESS | REPEAT);
-    keychord_bind(&keymap, "C-k",           kill_line,               "Kill line",              PRESS | REPEAT);
-    keychord_bind(&keymap, "C-x C-x",       exchange_point_and_mark, "Excange point and mark", PRESS | REPEAT);
-
-    keychord_bind(&keymap, "M-}",           forward_paragraph,       "Forward paragraph",      PRESS | REPEAT);
-    keychord_bind(&keymap, "M-{",           backward_paragraph,      "Backward paragraph",     PRESS | REPEAT);
-    keychord_bind(&keymap, "C-<down>",      forward_paragraph,       "Forward paragraph",      PRESS | REPEAT);
-    keychord_bind(&keymap, "C-<up>",        backward_paragraph,      "Backward paragraph",     PRESS | REPEAT);
-
-
-    keychord_bind(&keymap, "C-x 2",         split_window_below,      "Split window below",     PRESS | REPEAT);
-    keychord_bind(&keymap, "C-x 3",         split_window_right,      "Split window right",     PRESS | REPEAT);
-    keychord_bind(&keymap, "C-x 0",         delete_window,           "Delete window",          PRESS | REPEAT);
-    keychord_bind(&keymap, "C-x 1",         delete_other_windows,    "Delete other windows",   PRESS | REPEAT);
-    keychord_bind(&keymap, "C-x o",         other_window,            "Other window",           PRESS | REPEAT);
-    keychord_bind(&keymap, "C-x +",         balance_windows,         "Balance windows",        PRESS | REPEAT);
-    keychord_bind(&keymap, "C-x ^",         enlarge_window,          "Enlarge window",         PRESS | REPEAT);
-
-    keychord_bind(&keymap, "C-u",           universal_argument,      "Universal argument",     PRESS | REPEAT);
-    keychord_bind(&keymap, "C--",           negative_argument,       "Negative argument",      PRESS | REPEAT);
-    keychord_bind(&keymap, "C-0",           digit_argument,          "Digit argument",         PRESS | REPEAT);
-    keychord_bind(&keymap, "C-1",           digit_argument,          "Digit argument",         PRESS | REPEAT);
-    keychord_bind(&keymap, "C-2",           digit_argument,          "Digit argument",         PRESS | REPEAT);
-    keychord_bind(&keymap, "C-3",           digit_argument,          "Digit argument",         PRESS | REPEAT);
-    keychord_bind(&keymap, "C-4",           digit_argument,          "Digit argument",         PRESS | REPEAT);
-    keychord_bind(&keymap, "C-5",           digit_argument,          "Digit argument",         PRESS | REPEAT);
-    keychord_bind(&keymap, "C-6",           digit_argument,          "Digit argument",         PRESS | REPEAT);
-    keychord_bind(&keymap, "C-7",           digit_argument,          "Digit argument",         PRESS | REPEAT);
-    keychord_bind(&keymap, "C-8",           digit_argument,          "Digit argument",         PRESS | REPEAT);
-    keychord_bind(&keymap, "C-9",           digit_argument,          "Digit argument",         PRESS | REPEAT);
-    keychord_bind(&keymap, "C-x M-x",       digit_argument,          "Digit argument",         PRESS | REPEAT);
-
-
-    load_gltf("./assets/puta.glb", &scene);
+    
+    keychord_bind(&keymap, "M--",           previousTheme,            "Previous theme",           PRESS | REPEAT);
+    keychord_bind(&keymap, "M-=",           nextTheme,                "Next theme",               PRESS | REPEAT);
+    
+    keychord_bind(&keymap, "C-b",           backward_char,            "Backward char",            PRESS | REPEAT);
+    keychord_bind(&keymap, "C-f",           forward_char,             "Forward char",             PRESS | REPEAT);
+    keychord_bind(&keymap, "C-n",           next_line,                "Next line",                PRESS | REPEAT);
+    keychord_bind(&keymap, "C-p",           previous_line,            "Previous line",            PRESS | REPEAT);
+    keychord_bind(&keymap, "<left>",        backward_char,            "Backward char",            PRESS | REPEAT);
+    keychord_bind(&keymap, "<right>",       forward_char,             "Forward char",             PRESS | REPEAT);
+    keychord_bind(&keymap, "<down>",        next_line,                "Next line",                PRESS | REPEAT);
+    keychord_bind(&keymap, "<up>",          previous_line,            "Previous line",            PRESS | REPEAT);
+    keychord_bind(&keymap, "M-f",           forward_word,             "Forward word",             PRESS | REPEAT);
+    keychord_bind(&keymap, "M-b",           backward_word,            "Backward word",            PRESS | REPEAT);
+    keychord_bind(&keymap, "C-<right>",     forward_word,             "Forward word",             PRESS | REPEAT);
+    keychord_bind(&keymap, "C-<left>",      backward_word,            "Backward word",            PRESS | REPEAT);
+    keychord_bind(&keymap, "M-d",           kill_word,                "Kill word",                PRESS | REPEAT);
+    keychord_bind(&keymap, "C-e",           end_of_line,              "End of line",              PRESS | REPEAT);
+    keychord_bind(&keymap, "C-a",           beginning_of_line,        "Beginning of line",        PRESS | REPEAT);
+    keychord_bind(&keymap, "M-<",           beginning_of_buffer,      "Beginning of buffer",      PRESS | REPEAT);
+    keychord_bind(&keymap, "C-c p",         beginning_of_buffer,      "Beginning of buffer",      PRESS | REPEAT);
+    keychord_bind(&keymap, "M->",           end_of_buffer,            "End of buffer",            PRESS | REPEAT);
+    keychord_bind(&keymap, "C-c n",         end_of_buffer,            "End of buffer",            PRESS | REPEAT);
+    keychord_bind(&keymap, "RET",           newline,                  "Newline",                  PRESS | REPEAT);
+    keychord_bind(&keymap, "C-j",           newline,                  "Newline",                  PRESS | REPEAT);
+    keychord_bind(&keymap, "C-m",           newline,                  "Newline",                  PRESS | REPEAT);
+    keychord_bind(&keymap, "<backspace>",   delete_backward_char,     "Delete backward char",     PRESS | REPEAT);
+    keychord_bind(&keymap, "C-<backspace>", backward_kill_word,       "Backward kill word",       PRESS | REPEAT);
+    keychord_bind(&keymap, "C-d",           delete_char,              "Delete char",              PRESS | REPEAT);
+    keychord_bind(&keymap, "C-o",           open_line,                "Open line",                PRESS | REPEAT);
+    keychord_bind(&keymap, "C-M-o",         split_line,               "Split line",               PRESS | REPEAT);
+    keychord_bind(&keymap, "C-SPC",         set_mark_command,         "Set mark command",         PRESS | REPEAT);
+    keychord_bind(&keymap, "S-<backspace>", delete_region,            "Delete region",            PRESS | REPEAT);
+    keychord_bind(&keymap, "C-w",           kill_region,              "Kill region",              PRESS | REPEAT);
+    keychord_bind(&keymap, "C-y",           yank,                     "Yank",                     PRESS | REPEAT);
+    keychord_bind(&keymap, "C-k",           kill_line,                "Kill line",                PRESS | REPEAT);
+    keychord_bind(&keymap, "C-x C-x",       exchange_point_and_mark,  "Excange point and mark",   PRESS | REPEAT);
+    
+    keychord_bind(&keymap, "M-}",           forward_paragraph,        "Forward paragraph",        PRESS | REPEAT);
+    keychord_bind(&keymap, "M-{",           backward_paragraph,       "Backward paragraph",       PRESS | REPEAT);
+    keychord_bind(&keymap, "C-<down>",      forward_paragraph,        "Forward paragraph",        PRESS | REPEAT);
+    keychord_bind(&keymap, "C-<up>",        backward_paragraph,       "Backward paragraph",       PRESS | REPEAT);
+    
+    
+    keychord_bind(&keymap, "C-x 2",         split_window_below,       "Split window below",       PRESS | REPEAT);
+    keychord_bind(&keymap, "C-x 3",         split_window_right,       "Split window right",       PRESS | REPEAT);
+    keychord_bind(&keymap, "C-x 0",         delete_window,            "Delete window",            PRESS | REPEAT);
+    keychord_bind(&keymap, "C-x 1",         delete_other_windows,     "Delete other windows",     PRESS | REPEAT);
+    keychord_bind(&keymap, "C-x o",         other_window,             "Other window",             PRESS | REPEAT);
+    keychord_bind(&keymap, "C-x +",         balance_windows,          "Balance windows",          PRESS | REPEAT);
+    keychord_bind(&keymap, "C-x ^",         enlarge_window,           "Enlarge window",           PRESS | REPEAT);
+    
+    keychord_bind(&keymap, "C-u",           universal_argument,       "Universal argument",       PRESS | REPEAT);
+    keychord_bind(&keymap, "C--",           negative_argument,        "Negative argument",        PRESS | REPEAT);
+    keychord_bind(&keymap, "C-0",           digit_argument,           "Digit argument",           PRESS | REPEAT);
+    keychord_bind(&keymap, "C-1",           digit_argument,           "Digit argument",           PRESS | REPEAT);
+    keychord_bind(&keymap, "C-2",           digit_argument,           "Digit argument",           PRESS | REPEAT);
+    keychord_bind(&keymap, "C-3",           digit_argument,           "Digit argument",           PRESS | REPEAT);
+    keychord_bind(&keymap, "C-4",           digit_argument,           "Digit argument",           PRESS | REPEAT);
+    keychord_bind(&keymap, "C-5",           digit_argument,           "Digit argument",           PRESS | REPEAT);
+    keychord_bind(&keymap, "C-6",           digit_argument,           "Digit argument",           PRESS | REPEAT);
+    keychord_bind(&keymap, "C-7",           digit_argument,           "Digit argument",           PRESS | REPEAT);
+    keychord_bind(&keymap, "C-8",           digit_argument,           "Digit argument",           PRESS | REPEAT);
+    keychord_bind(&keymap, "C-9",           digit_argument,           "Digit argument",           PRESS | REPEAT);
+    keychord_bind(&keymap, "C-x M-x",       digit_argument,           "Digit argument",           PRESS | REPEAT);
+    keychord_bind(&keymap, "M-x",           execute_extended_command, "Execute extended command", PRESS | REPEAT);
+    keychord_bind(&keymap, "C-g",           keyboard_quit,            "Keyboard quit",            PRESS | REPEAT);
+    
+    
+    /* load_gltf("./assets/puta.glb", &scene); */
     /* load_gltf("./assets/floppy.glb", &scene); */
-
+    
     while (!windowShouldClose()) {
         beginFrame();
         
         clear_background(CT.bg);
-
+        
         wm_draw();
-
-        quad2D((vec2){0,100}, (vec2){1,10}, BLUE);
-        quad2D((vec2){0,0}, (vec2){1,1}, BLUE);
+        
         
         endFrame();
     }

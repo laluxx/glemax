@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c23 -I/usr/include/freetype2
+CFLAGS = -Wall -Wextra -std=c23 -g3 -I/usr/include/freetype2
 LDFLAGS = -lobsidian -lm
 TARGET = kink
 

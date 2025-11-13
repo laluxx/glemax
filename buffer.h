@@ -110,6 +110,8 @@ void backward_kill_word();
 #include "wm.h"
 typedef struct Window Window;
 
+void execute_extended_command();
+void keyboard_quit();
 
 
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y);
