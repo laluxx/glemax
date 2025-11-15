@@ -1,3 +1,4 @@
 CompileFlags:
   Add: 
     - "-I/usr/include/freetype2"
+    - "-I/usr/include/guile/3.0"

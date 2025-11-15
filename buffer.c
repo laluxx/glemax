@@ -13,12 +13,11 @@ float blink_cursor_delay = 0.5;
 bool visible_mark_mode = false;
 
 int arg = 1;
+bool argument_manually_set = false;
 
 bool shift;
 bool ctrl;
 bool alt;
-
-
  
 KeyChordAction last_command = NULL;
 bool last_command_was_kill = false;
@@ -128,30 +127,6 @@ inline void move_point(int delta) {
     
     set_point(new_pt);
 }
-
-
-/* inline void move_point(int delta) { */
-/*     size_t text_len = rope_char_length(buffer->rope); */
-/*     size_t new_pt; */
-    
-/*     if (delta > 0) { */
-/*         new_pt = buffer->pt + delta; */
-/*         if (new_pt > text_len) { */
-/*             new_pt = text_len; */
-/*         } */
-/*     } else if (delta < 0) { */
-/*         int abs_delta = -delta; */
-/*         if ((size_t)abs_delta > buffer->pt) { */
-/*             new_pt = 0; */
-/*         } else { */
-/*             new_pt = buffer->pt - abs_delta; */
-/*         } */
-/*     } else { */
-/*         return; // No movement */
-/*     } */
-    
-/*     set_point(new_pt); */
-/* } */
 
 void insert(uint32_t codepoint) {
     char utf8[5] = {0};
@@ -778,6 +753,7 @@ size_t end_of_word(Buffer *buffer, size_t pos) {
     return result;
 }
 
+// TODO Use Rope iterator here too
 size_t beginning_of_word(Buffer *buffer, size_t pos) {
     if (pos == 0) return 0;
     
@@ -847,18 +823,9 @@ size_t beginning_of_word(Buffer *buffer, size_t pos) {
 void forward_word() {
     if (arg == 0) return;
     
-    // Handle region activation like Emacs does
-    if (shift && !buffer->region.active) {
-        buffer->region.active = true;
-        buffer->region.mark = buffer->pt;
-    } else if (!shift && buffer->region.active) {
-        buffer->region.active = false;
-    }
-    
     int direction = arg > 0 ? 1 : -1;
     int count = abs(arg);
     
-    // Move word by word
     while (count-- > 0) {
         if (direction > 0) {
             set_point(end_of_word(buffer, buffer->pt));
@@ -990,6 +957,9 @@ void digit_argument() {
 
 void negative_argument() {
     arg = -arg;
+    char msg[32];
+    snprintf(msg, sizeof(msg), "C-u %d", arg);
+    message(msg);
 }
 
 void execute_extended_command() {
@@ -1002,11 +972,14 @@ void keyboard_quit() {
     }
 }
 
-
 void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) {
-    float x = start_x /* + fringe_width */;
+    float x = start_x;
     float y = start_y;
     float line_height = buffer->font->ascent + buffer->font->descent;
+    
+    // Calculate usable width (accounting for right fringe)
+    float max_x = start_x + (win->width - 2 * fringe_width);
+    
     size_t text_len = rope_char_length(buffer->rope);
     int lineCount = 0;
     
@@ -1022,8 +995,16 @@ void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) {
     while (i < point && rope_iter_next_char(&iter, &ch)) {
         if (ch == '\n') {
             lineCount++;
-            x = start_x /* + fringe_width */;
+            x = start_x;
         } else {
+            // Check if we need to wrap before advancing
+            float char_width = character_width(buffer->font, ch);
+            if (x + char_width > max_x) {
+                // Wrap to next line
+                x = start_x;
+                lineCount++;
+            }
+            
             // Get character width from font (handles all Unicode)
             Character *char_info = font_get_character(buffer->font, ch);
             if (char_info) {
@@ -1169,10 +1150,72 @@ void draw_mark(Buffer *buffer, float start_x, float start_y) {
     quad2D((vec2){mark_x, mark_y}, (vec2){mark_width, mark_height}, CT.function);
 }
 
-void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
-    float x = start_x;
-    float y = start_y;
+
+// Helper function to find the character position at a given scroll offset
+static size_t find_start_position(Buffer *buffer, Window *win, float *out_start_y) {
+    if (!win || win->is_minibuffer) {
+        *out_start_y = 0;
+        return 0;
+    }
+    
     float line_height = buffer->font->ascent + buffer->font->descent;
+    float max_x = win->width - 2 * fringe_width;
+    
+    // Calculate how many lines are scrolled off the top
+    // Add a buffer of a few lines to avoid visual glitches
+    float lines_scrolled = (win->scrolly / line_height);
+    int skip_lines = (int)lines_scrolled - 2;  // Start 2 lines earlier for safety
+    if (skip_lines < 0) skip_lines = 0;
+    
+    // Find the character position at skip_lines
+    size_t pos = 0;
+    int current_line = 0;
+    float x = 0;
+    
+    rope_iter_t iter;
+    rope_iter_init(&iter, buffer->rope, 0);
+    
+    uint32_t ch;
+    while (rope_iter_next_char(&iter, &ch) && current_line < skip_lines) {
+        if (ch == '\n') {
+            current_line++;
+            x = 0;
+        } else {
+            float char_width = character_width(buffer->font, ch);
+            if (x + char_width > max_x) {
+                current_line++;
+                x = 0;
+            }
+            
+            Character *char_info = font_get_character(buffer->font, ch);
+            if (char_info) {
+                x += char_info->ax;
+            }
+        }
+        pos++;
+    }
+    
+    rope_iter_destroy(&iter);
+    
+    *out_start_y = current_line * line_height;
+    return pos;
+}
+
+// OPTIMIZED
+void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
+    float line_height = buffer->font->ascent + buffer->font->descent;
+    
+    // Calculate usable width (accounting for right fringe)
+    float max_x = start_x + (win->width - 2 * fringe_width);
+    
+    // Calculate clipping region (don't draw outside window)
+    float window_bottom = win->y;
+    float window_top = win->y + win->height;
+    
+    // Account for modeline (but minibuffer doesn't have one)
+    if (!win->is_minibuffer) {
+        window_bottom += line_height;
+    }
     
     // Get point from window if provided
     size_t point = win ? win->point : buffer->pt;
@@ -1180,34 +1223,75 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     // Check if this window is selected
     bool is_selected = win && win->is_selected;
     
+    // Find where to start drawing based on scroll position
+    float scroll_offset_y = 0;
+    size_t start_pos = 0;
+    
+    if (win && !win->is_minibuffer) {
+        start_pos = find_start_position(buffer, win, &scroll_offset_y);
+    }
+    
+    // Initialize rendering position
+    float x = start_x;
+    float y = start_y + (win && !win->is_minibuffer ? win->scrolly : 0) - scroll_offset_y;
+    
     rope_iter_t iter;
-    rope_iter_init(&iter, buffer->rope, 0);
+    rope_iter_init(&iter, buffer->rope, start_pos);
     
     uint32_t ch;
-    size_t i = 0;
+    size_t i = start_pos;
+    
     while (rope_iter_next_char(&iter, &ch)) {
+        // Early exit if we've scrolled past the bottom of the window
+        if (y < window_bottom - line_height) {
+            break;
+        }
+        
         if (ch == '\n') {
             x = start_x;
             y -= line_height;
         } else {
-            // Determine color based on cursor/mark position
-            // Only invert color at point if this is the selected window AND cursor is visible
-            Color char_color = ((i == point && is_selected && buffer->cursor.visible) || 
-                               (i == buffer->region.mark && visible_mark_mode)) 
-                               ? CT.bg : CT.text;
+            // Check if we need to wrap before drawing this character
+            float char_width = character_width(buffer->font, ch);
+            if (x + char_width > max_x) {
+                // Wrap to next line
+                x = start_x;
+                y -= line_height;
+                
+                // Early exit if wrapped past bottom
+                if (y < window_bottom - line_height) {
+                    break;
+                }
+            }
             
-            // Render the character (now handles all Unicode codepoints)
-            float advance = character(buffer->font, ch, x, y, char_color);
-            x += advance;
+            // Only draw if within visible region
+            if (y >= window_bottom && y <= window_top) {
+                // Determine color based on cursor/mark position
+                Color char_color = ((i == point && is_selected && buffer->cursor.visible) ||
+                                   (i == buffer->region.mark && visible_mark_mode))
+                                   ? CT.bg : CT.text;
+                
+                // Render the character
+                float advance = character(buffer->font, ch, x, y, char_color);
+                x += advance;
+            } else if (y > window_top) {
+                // NOTE Removing this changes nothing and gives a HUGE FPS boost
+                /* // Still need to advance x even if not drawing (we're above viewport) */
+                /* Character *char_info = font_get_character(buffer->font, ch); */
+                /* if (char_info) { */
+                /*     x += char_info->ax; */
+                /* } */
+            }
         }
         i++;
     }
     
     rope_iter_destroy(&iter);
     
-    // FIX: Flush any pending texture updates after drawing all text
-    font_flush_updates(buffer->font);
+    // Calculate the scroll offset to pass to draw_mark and draw_cursor
+    float scroll_offset = (win && !win->is_minibuffer) ? win->scrolly : 0;
     
-    if (visible_mark_mode) draw_mark(buffer, start_x, start_y);
-    draw_cursor(buffer, win, start_x, start_y);
+    if (visible_mark_mode) draw_mark(buffer, start_x, start_y + scroll_offset);
+    draw_cursor(buffer, win, start_x, start_y + scroll_offset);
 }
+

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "buffer.h"
+#include <cglm/types.h>
 #include <stdbool.h>
 
 typedef enum {
@@ -23,6 +24,7 @@ struct Window {
     size_t point;
 
     float x, y;
+    float scrollx, scrolly;
     float width, height;
 
     float split_ratio;
@@ -31,12 +33,37 @@ struct Window {
 };
 
 typedef struct {
+    SplitType split_type;
+    float split_ratio;
+    Buffer *buffer;
+    size_t point;
+    bool is_selected;
+    float scrollx, scrolly;
+    int left_index;   // Index of left child in array (-1 if leaf)
+    int right_index;  // Index of right child in array (-1 if leaf)
+} WindowSnapshot;
+
+/* typedef struct { */
+/*     WindowSnapshot *windows; // Array of window snapshots */
+/*     int count;               // Number of windows */
+/*     int root_index;          // Index of root window */
+/* } WindowConfiguration; */
+typedef struct {
+    WindowSnapshot *windows; // Array of window snapshots
+    int count;               // Number of windows
+    int root_index;          // Index of root window
+    float root_x, root_y, root_width, root_height;  // Add these
+} WindowConfiguration;
+
+
+typedef struct {
     Window *root;    
     Window *selected;
-    Window *minibuffer_window; // Special bottom window
-    Window *previous_window;   // Window active before minibuffer    
+    Window *minibuffer_window;
+    Window *previous_window;   // NOTE Only tracked for the modeline
     bool minibuffer_active;
     int window_count;
+    WindowConfiguration saved_config;
 } WindowManager;
 
 extern WindowManager wm;
@@ -80,3 +107,10 @@ void window_destroy(Window *win);
 void collect_leaf_windows(Window *win, Window **leaves, int *count);
 
 void debug_print_windows();
+
+
+void update_window_scroll(Window *win);
+void recenter();
+
+extern int recenter_positions;
+void recenter_top_bottom();

@@ -1,8 +1,8 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c23 -g3 -I/usr/include/freetype2
-LDFLAGS = -lobsidian -lm
-TARGET = kink
+CFLAGS = -Wall -Wextra -std=c23 -g3 $(shell pkg-config --cflags freetype2 guile-3.0)
+LDFLAGS = -lobsidian -lm $(shell pkg-config --libs freetype2 guile-3.0)
 
+TARGET = kink
 SRCS = $(wildcard *.c)
 OBJS = $(SRCS:.c=.o)
 

@@ -1,4 +1,8 @@
+#include <libguile.h>
+#include <cglm/types.h>
+#include <obsidian/font.h>
 #include <obsidian/obsidian.h>
+#include <obsidian/renderer.h>
 #include "buffer.h"
 
 #define ROPE_IMPLEMENTATION
@@ -17,7 +21,6 @@ void text_callback(unsigned int codepoint) {
     }
 }
 
-
 static bool is_vertical_motion(KeyChordAction action) {
     return action == next_line || action == previous_line;
 }
@@ -27,6 +30,7 @@ static bool is_argument_function(KeyChordAction action) {
            action == negative_argument || 
            action == digit_argument;
 }
+
 
 void before_keychord_hook(const char *notation, KeyChordBinding *binding) {
     // Clear minibuffer on any key press
@@ -40,22 +44,30 @@ void before_keychord_hook(const char *notation, KeyChordBinding *binding) {
             }
         }
     }
-}  
+}
+
 
 void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
     reset_cursor_blink(buffer);
-    
+    update_window_scroll(wm.selected);
+    if (binding->action != recenter_top_bottom) recenter_positions = 0;
     // Handle digit argument
     if (binding->action == digit_argument) {
-        // Remember if arg was negative
-        bool was_negative = (arg < 0);
+        argument_manually_set = true;
+        bool was_negative = false;
         
-        // If the last command wasn't a digit argument, reset to 0
-        if (last_command != digit_argument && last_command != negative_argument) {
+        // Remember current sign
+        was_negative = (arg < 0);
+        
+        // If the last command was negative_argument and arg is still -1 or 1,
+        // reset to 0 but preserve the sign (we're starting fresh)
+        if (last_command == negative_argument && (arg == -1 || arg == 1)) {
             arg = 0;
-        } else if (last_command == negative_argument) {
-            // If we just did C--, reset to 0 but keep the sign
+        }
+        // If the last command wasn't a digit or negative argument, reset completely
+        else if (last_command != digit_argument && last_command != negative_argument) {
             arg = 0;
+            was_negative = false;
         }
         
         if (was_negative) arg = -arg;  // Make it positive temporarily
@@ -65,8 +77,17 @@ void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
         while (*p) {
             if (*p >= '0' && *p <= '9') {
                 int digit = *p - '0';
-                // Multiply existing arg by 10 and add the digit
-                arg = arg * 10 + digit;
+                
+                // Check if multiplying by 10 would overflow
+                if (arg <= INT_MAX / 10) {
+                    int new_arg = arg * 10;
+                    // Check if adding the digit would overflow
+                    if (new_arg <= INT_MAX - digit) {
+                        arg = new_arg + digit;
+                    }
+                    // else: silently ignore the digit (overflow would occur)
+                }
+                // else: silently ignore the digit (overflow would occur)
                 break;
             }
             p++;
@@ -75,19 +96,22 @@ void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
         // Restore the sign
         if (was_negative) arg = -arg;
         
+        // Display the current arg value
+        char msg[32];
+        snprintf(msg, sizeof(msg), "C-u %d", arg);
+        message(msg);
+        
         raw_prefix_arg = false;    
         
     } else if (!is_argument_function(binding->action)) {
         arg = 1;
+        argument_manually_set = false;
         raw_prefix_arg = false;
     }
     
     if (!is_vertical_motion(binding->action)) update_goal_column();
     last_command_was_kill = is_kill_command(binding->action);
-    last_command = binding->action;    
-    
-    
-    
+    last_command = binding->action;
 }
 
 void key_callback(int key, int action, int mods) {
@@ -100,7 +124,6 @@ void key_callback(int key, int action, int mods) {
         switch (key) {
         }
         
-        /* printf("ARG: %i\n", arg); */
         reset_cursor_blink(buffer);
     }
 }
@@ -116,10 +139,6 @@ double lastPanX = 0.0, lastPanY = 0.0;
 double lastOrbitX = 0.0, lastOrbitY = 0.0; 
 vec3 orbitPivot = {0.0f, 0.0f, 0.0f};  // The point we're orbiting around
 float orbitDistance = 10.0f;           // Distance from pivot
-
-
-
-
 
 
 void mouse_button_callback(int button, int action, int mods) {
@@ -240,7 +259,8 @@ void cursor_pos_callback(double xpos, double ypos) {
 #include "wm.h"
 
 
-int main() {
+
+static void inner_main (void *data, int argc, char **argv) {
     initWindow(sw, sh, "Kink");
     
     jetbrains = load_font("./assets/fonts/JetBrainsMonoNerdFont-Regular.ttf", 22);
@@ -264,7 +284,7 @@ int main() {
     register_before_keychord_hook(before_keychord_hook);
     
     
-    loadThemeByName("modus-vivendi");
+    loadThemeByName("molokai");
     
     keychord_bind(&keymap, "M--",           previousTheme,            "Previous theme",           PRESS | REPEAT);
     keychord_bind(&keymap, "M-=",           nextTheme,                "Next theme",               PRESS | REPEAT);
@@ -294,6 +314,7 @@ int main() {
     keychord_bind(&keymap, "<backspace>",   delete_backward_char,     "Delete backward char",     PRESS | REPEAT);
     keychord_bind(&keymap, "C-<backspace>", backward_kill_word,       "Backward kill word",       PRESS | REPEAT);
     keychord_bind(&keymap, "C-d",           delete_char,              "Delete char",              PRESS | REPEAT);
+    keychord_bind(&keymap, "<delete>",           delete_char,              "Delete char",              PRESS | REPEAT);
     keychord_bind(&keymap, "C-o",           open_line,                "Open line",                PRESS | REPEAT);
     keychord_bind(&keymap, "C-M-o",         split_line,               "Split line",               PRESS | REPEAT);
     keychord_bind(&keymap, "C-SPC",         set_mark_command,         "Set mark command",         PRESS | REPEAT);
@@ -316,6 +337,8 @@ int main() {
     keychord_bind(&keymap, "C-x o",         other_window,             "Other window",             PRESS | REPEAT);
     keychord_bind(&keymap, "C-x +",         balance_windows,          "Balance windows",          PRESS | REPEAT);
     keychord_bind(&keymap, "C-x ^",         enlarge_window,           "Enlarge window",           PRESS | REPEAT);
+    keychord_bind(&keymap, "C-l",           recenter_top_bottom,      "Recenter top bottom",      PRESS | REPEAT);
+    keychord_bind(&keymap, "C-v",           recenter,                 "Recenter",                 PRESS | REPEAT);
     
     keychord_bind(&keymap, "C-u",           universal_argument,       "Universal argument",       PRESS | REPEAT);
     keychord_bind(&keymap, "C--",           negative_argument,        "Negative argument",        PRESS | REPEAT);
@@ -333,17 +356,18 @@ int main() {
     keychord_bind(&keymap, "M-x",           execute_extended_command, "Execute extended command", PRESS | REPEAT);
     keychord_bind(&keymap, "C-g",           keyboard_quit,            "Keyboard quit",            PRESS | REPEAT);
     
-    
     /* load_gltf("./assets/puta.glb", &scene); */
     /* load_gltf("./assets/floppy.glb", &scene); */
+    
     
     while (!windowShouldClose()) {
         beginFrame();
         
         clear_background(CT.bg);
         
-        wm_draw();
+        fps(jetbrains, 500, 500, RED);
         
+        wm_draw();
         
         endFrame();
     }
@@ -353,7 +377,12 @@ int main() {
     destroy_font(jetbrains);
     destroy_font(lilex);
     
-    cleanup(&context);
     
-    return 0;
+    cleanup(&context);
+}
+
+
+int main(int argc, char **argv) {
+    scm_boot_guile (argc, argv, inner_main, 0);
+    return 0; // never reached
 }

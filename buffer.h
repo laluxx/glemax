@@ -31,6 +31,8 @@ extern bool shift;
 extern bool ctrl;
 extern bool alt;
 extern int arg;
+extern bool argument_manually_set;
+
 
 extern bool kill_whole_line;
 
