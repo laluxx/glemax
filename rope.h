@@ -665,7 +665,7 @@ size_t rope_copy_bytes(const rope_t *rope, size_t byte_start, size_t byte_len,
     
     size_t copied = 0;
     rope_node_t *node = rope->root;
-    rope_node_t *stack[64];
+    rope_node_t *stack[128];
     int sp = 0;
     size_t current_offset = 0;
     
@@ -1048,7 +1048,7 @@ char *rope_to_string(const rope_t *rope, size_t *len_out) {
     size_t pos = 0;
     
     /* Stack-based traversal */
-    rope_node_t *stack[64];
+    rope_node_t *stack[128];
     int sp = 0;
     rope_node_t *current = rope->root;
     
@@ -1095,7 +1095,7 @@ bool rope_validate_utf8(const rope_t *rope) {
  * ========================================================================= */
 
 typedef struct {
-    rope_node_t *stack[64];
+    rope_node_t *stack[128];
     int sp;
     rope_node_t *current_leaf;
     size_t leaf_byte_pos;

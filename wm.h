@@ -43,18 +43,12 @@ typedef struct {
     int right_index;  // Index of right child in array (-1 if leaf)
 } WindowSnapshot;
 
-/* typedef struct { */
-/*     WindowSnapshot *windows; // Array of window snapshots */
-/*     int count;               // Number of windows */
-/*     int root_index;          // Index of root window */
-/* } WindowConfiguration; */
 typedef struct {
     WindowSnapshot *windows; // Array of window snapshots
     int count;               // Number of windows
     int root_index;          // Index of root window
     float root_x, root_y, root_width, root_height;  // Add these
 } WindowConfiguration;
-
 
 typedef struct {
     Window *root;    
@@ -70,8 +64,9 @@ extern WindowManager wm;
 
 extern size_t fringe_width;
 
+void wm_init(Buffer *initial_buffer, Buffer *minibuffer, float x, float y,
+             float width, float height);
 
-void wm_init(Buffer *initial_buffer, float x, float y, float width, float height);
 void wm_cleanup();
 
 void split_window_below();
@@ -85,6 +80,7 @@ Window* previous_window(Window *current);
 
 // Minibuffer functions
 void activate_minibuffer();
+void go_inside_minibuffer();
 void deactivate_minibuffer();
 bool is_minibuffer_window(Window *win);
 

@@ -46,9 +46,8 @@ bool is_minibuffer_window(Window *win) {
     return win && win->is_minibuffer;
 }
 
-void wm_init(Buffer *initial_buffer, float x, float y, float width, float height) {
-    Buffer *minibuf = buffer_create(initial_buffer->font);
-    wm.minibuffer_window = window_create(NULL, minibuf);
+void wm_init(Buffer *initial_buffer, Buffer *minibuffer,float x, float y, float width, float height) {
+    wm.minibuffer_window = window_create(NULL, minibuffer);
     wm.minibuffer_window->is_minibuffer = true;
     wm.minibuffer_window->x = x;
     wm.minibuffer_window->y = y;
@@ -109,13 +108,6 @@ int count_windows() {
     return count;
 }
 
-Window* get_selected_window() {
-    return wm.selected;
-}
-
-Buffer* get_selected_buffer() {
-    return wm.selected ? wm.selected->buffer : NULL;
-}
 
 Window* next_window(Window *current) {
     if (!current || !wm.root) return NULL;
@@ -166,7 +158,7 @@ Window* previous_window(Window *current) {
 }
 
 void other_window() {
-    wm.selected->point = buffer->pt;
+    wm.selected->point = current_buffer->pt;
     
     Window *original = wm.selected;
     Window *target = wm.selected;
@@ -194,8 +186,8 @@ void other_window() {
         wm.selected = target;
         
         // Update global buffer pointer and restore point
-        buffer = target->buffer;
-        buffer->pt = target->point;
+        current_buffer = target->buffer;
+        current_buffer->pt = target->point;
     }
     
     if (debug_them_windows) debug_print_windows();
@@ -308,8 +300,8 @@ static void restore_window_configuration(WindowConfiguration *config) {
     }
     
     wm.window_count = count;
-    buffer = wm.selected->buffer;
-    buffer->pt = wm.selected->point;
+    current_buffer = wm.selected->buffer;
+    current_buffer->pt = wm.selected->point;
     
     wm_recalculate_layout();
 }
@@ -338,9 +330,31 @@ void activate_minibuffer() {
     wm.selected->is_selected = false;
     wm.minibuffer_window->is_selected = true;
     wm.selected = wm.minibuffer_window;
-    buffer = wm.minibuffer_window->buffer;
-    buffer->pt = wm.minibuffer_window->point;
+    current_buffer = wm.minibuffer_window->buffer;
+    current_buffer->pt = wm.minibuffer_window->point;
 }
+
+
+void go_inside_minibuffer() {
+    if (wm.minibuffer_active) return;
+    
+    wm.minibuffer_active = true;
+    
+    // Save window configuration before switching
+    if (wm.saved_config.windows) free_window_configuration(&wm.saved_config);
+    wm.saved_config = save_window_configuration();
+    
+    // Store the current window (for minibuffer highlight)
+    wm.previous_window = wm.selected;
+    
+    // Switch to minibuffer
+    wm.selected->is_selected = false;
+    wm.minibuffer_window->is_selected = true;
+    wm.selected = wm.minibuffer_window;
+    current_buffer = wm.minibuffer_window->buffer;
+    current_buffer->pt = wm.minibuffer_window->point;
+}
+
 
 void deactivate_minibuffer() {
     if (!wm.minibuffer_active) return;
@@ -468,8 +482,8 @@ void split_window_below() {
     
     top->is_selected = true;
     wm.selected = top;
-    buffer = top->buffer;
-    buffer->pt = top->point;
+    current_buffer = top->buffer;
+    current_buffer->pt = top->point;
     
     wm.window_count++;
     wm_recalculate_layout();
@@ -563,8 +577,8 @@ void delete_window() {
     if (new_selected) {
         new_selected->is_selected = true;
         wm.selected = new_selected;
-        buffer = new_selected->buffer;
-        buffer->pt = new_selected->point;
+        current_buffer = new_selected->buffer;
+        current_buffer->pt = new_selected->point;
     }
     
     wm.window_count--;
@@ -598,7 +612,7 @@ void delete_other_windows() {
     
     wm.selected = wm.root;
     wm.window_count = 1;
-    buffer = current_buffer;
+    current_buffer = current_buffer;
 }
 
 static void balance_recursive(Window *win) {

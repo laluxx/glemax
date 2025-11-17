@@ -16,7 +16,10 @@ typedef struct {
     bool active;
 } Region;
 
-typedef struct {
+typedef struct Buffer {
+    struct Buffer *next;    // Next buffer in circular list
+    struct Buffer *prev;    // Previous buffer in circular list
+    char *name;
     rope_t *rope;           
     Cursor cursor;
     size_t pt;
@@ -24,7 +27,8 @@ typedef struct {
     Region region;
 } Buffer;
 
-extern Buffer *buffer;
+extern Buffer *all_buffers;
+extern Buffer *current_buffer;
 
 
 extern bool shift;
@@ -34,16 +38,21 @@ extern int arg;
 extern bool argument_manually_set;
 
 
-extern bool kill_whole_line;
-
-
-Buffer* buffer_create(Font *font);
+Buffer* buffer_create(Font *font, const char *name);
 void buffer_destroy(Buffer *buffer);
+Buffer *get_buffer(const char *name);
+Buffer *get_buffer_create(Font *font, const char *name);
+void switch_to_buffer(Buffer *buf);
+Buffer *other_buffer();
+void kill_buffer(Buffer *buf);
+
+void next_buffer();
+void previous_buffer();
 
 void set_point(size_t new_pt);
 void move_point(int delta);
 
-void insert(uint32_t codepoint);
+void insert(uint32_t codepoint); // TODO it should take a string
 void delete_backward_char();
 void delete_char();
 void newline();
@@ -72,14 +81,13 @@ void exchange_point_and_mark();
 void region_bounds(size_t *start, size_t *end);
 void delete_region();
 
-void kill(size_t start, size_t end, bool prepend);
+void rkill(size_t start, size_t end, bool prepend);
 void kill_line();
 void kill_region();
 void yank();
 
 
 /// WORDS
-
 bool isWordChar(uint32_t c);
 bool isPunctuationChar(uint32_t c);
 size_t beginning_of_word(Buffer *buffer, size_t pos);
@@ -89,23 +97,21 @@ void backward_word();
 
 
 /// PARAGRAPHS
-
 void forward_paragraph();
 void backward_paragraph();
 
-/// ARG
 
+/// ARG
 extern bool raw_prefix_arg;
 void universal_argument();
 void digit_argument();
 void negative_argument();
 
 
-
-extern KeyChordAction last_command;
+extern SCM last_command;
 extern bool last_command_was_kill;
 
-bool is_kill_command(KeyChordAction action);
+bool is_kill_command(SCM proc);
 void kill_word();
 void backward_kill_word();
 
@@ -115,9 +121,11 @@ typedef struct Window Window;
 void execute_extended_command();
 void keyboard_quit();
 
+bool is_pair(uint32_t left, uint32_t right);
 
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y);
 void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y);
 void reset_cursor_blink(Buffer *buffer);
+void adjust_all_window_points_after_modification(size_t pos, int delta);
 
 void message(const char *format, ...);
