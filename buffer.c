@@ -1,30 +1,28 @@
 #include "buffer.h"
 #include "wm.h"
-#include <ctype.h>
+#include "lisp.h"
 #include <stdbool.h>
 
 Buffer *all_buffers = NULL;
 Buffer *current_buffer = NULL;
 
-int arg = 1;
 bool argument_manually_set = false;
 
 bool shift;
 bool ctrl;
 bool alt;
  
-/* KeyChordAction last_command = NULL; */
 
 SCM last_command = SCM_BOOL_F; // Shouldn’t it be NULL ? 
 bool last_command_was_kill = false;
 
 
-#include "lisp.h"
 
 bool is_kill_command(SCM proc) {
     return is_scm_proc(proc, "kill-word") ||
            is_scm_proc(proc, "backward-kill-word") ||
            is_scm_proc(proc, "kill-line") ||
+           is_scm_proc(proc, "kill-sexp") ||
            is_scm_proc(proc, "kill-region");
 }
 
@@ -178,6 +176,7 @@ void kill_buffer(Buffer *buf) {
 
 
 void next_buffer() {
+    int arg = get_prefix_arg();
     if (arg == 0) return;
     
     // Don't switch in minibuffer
@@ -212,7 +211,9 @@ void next_buffer() {
 }
 
 void previous_buffer() {
+    int arg = get_prefix_arg();
     arg = -arg;
+    set_prefix_arg(arg);
     next_buffer();
 }
 
@@ -295,162 +296,20 @@ inline void move_point(int delta) {
     set_point(new_pt);
 }
 
-
-
-void insert(uint32_t codepoint) {
-    char utf8[5] = {0};
-    size_t len = 0;
+void append_to_buffer(Buffer *buf, const char *text, bool prepend_newline) {
+    if (!buf || !text) return;
     
-    if (codepoint < 0x80) {
-        utf8[0] = (char)codepoint;
-        len = 1;
-    } else if (codepoint < 0x800) {
-        utf8[0] = 0xC0 | (codepoint >> 6);
-        utf8[1] = 0x80 | (codepoint & 0x3F);
-        len = 2;
-    } else if (codepoint < 0x10000) {
-        utf8[0] = 0xE0 | (codepoint >> 12);
-        utf8[1] = 0x80 | ((codepoint >> 6) & 0x3F);
-        utf8[2] = 0x80 | (codepoint & 0x3F);
-        len = 3;
-    } else if (codepoint < 0x110000) {
-        utf8[0] = 0xF0 | (codepoint >> 18);
-        utf8[1] = 0x80 | ((codepoint >> 12) & 0x3F);
-        utf8[2] = 0x80 | ((codepoint >> 6) & 0x3F);
-        utf8[3] = 0x80 | (codepoint & 0x3F);
-        len = 4;
+    size_t text_len = strlen(text);
+    if (text_len == 0) return;
+    
+    size_t end_pos = rope_char_length(buf->rope);
+    
+    if (prepend_newline) {
+        buf->rope = rope_insert_chars(buf->rope, end_pos, "\n", 1);
+        end_pos++;
     }
     
-    if (len > 0) {
-
-        if (current_buffer->pt < current_buffer->region.mark) current_buffer->region.mark++;
-
-        current_buffer->rope = rope_insert_chars(current_buffer->rope, current_buffer->pt, utf8, len);
-        adjust_all_window_points_after_modification(current_buffer->pt, 1);
-        set_point(current_buffer->pt + 1);
-        update_goal_column();
-    }
-}
-
-size_t delete(size_t pos, size_t count) {
-    if (count == 0) {
-        // Deleting nothing - check if we're at a boundary
-        size_t text_len = rope_char_length(current_buffer->rope);
-        if (pos == 0) {
-            message("Beginning of buffer");
-        } else if (pos >= text_len) {
-            message("End of buffer");
-        }
-        return pos;
-    }
-    
-    size_t text_len = rope_char_length(current_buffer->rope);
-    
-    // Check for end of buffer
-    if (pos >= text_len) {
-        message("End of buffer");
-        return pos;
-    }
-    
-    // Clamp count to available characters
-    if (pos + count > text_len) {
-        count = text_len - pos;
-    }
-    
-    // If clamping reduced count to 0, we hit end of buffer
-    if (count == 0) {
-        message("End of buffer");
-        return pos;
-    }
-    
-    // Update mark if region is active
-    size_t delete_end = pos + count;
-    if (current_buffer->region.mark >= delete_end) {
-        current_buffer->region.mark -= count;
-    } else if (current_buffer->region.mark > pos) {
-        current_buffer->region.mark = pos;
-    }
-    
-    current_buffer->rope = rope_delete_chars(current_buffer->rope, pos, count);
-    adjust_all_window_points_after_modification(current_buffer->pt, -count);
-    return pos;
-}
-
-bool is_pair(uint32_t left, uint32_t right) {
-    return (left == '(' && right == ')') ||
-           (left == '[' && right == ']') ||
-           (left == '{' && right == '}') ||
-           (left == '<' && right == '>') ||
-           (left == '"' && right == '"') ||
-           (left == '\'' && right == '\'') ||
-           (left == '`' && right == '`');
-}
-
-
-void delete_backward_char() {
-    if (arg == 0) return;
-    
-    if (current_buffer->region.active) {
-        delete_region();
-        return;
-    }
-    
-    bool electric_pair_mode = scm_get_bool("electric-pair-mode", false);
-    int count = abs(arg);
-    
-    if (arg > 0) {
-        // Delete backward
-        if ((size_t)count > current_buffer->pt) {
-            count = current_buffer->pt;
-        }
-        
-        // Check for pairs to delete
-        if (electric_pair_mode) {
-            size_t buffer_len = rope_char_length(current_buffer->rope);
-            int pairs_deleted = 0;
-            
-            for (int i = 0; i < count; i++) {
-                size_t pos = current_buffer->pt - i - 1 - pairs_deleted;
-                
-                // Check if we can look at both chars
-                if (pos < buffer_len && pos + 1 < buffer_len) {
-                    uint32_t char_before = rope_char_at(current_buffer->rope, pos);
-                    uint32_t char_after = rope_char_at(current_buffer->rope, pos + 1);
-                    
-                    if (is_pair(char_before, char_after)) {
-                        pairs_deleted++;
-                    }
-                }
-            }
-            
-            // Delete the characters plus the paired closing ones
-            delete(current_buffer->pt - count, count + pairs_deleted);
-            set_point(current_buffer->pt - count);
-        } else {
-            delete(current_buffer->pt - count, count);
-            set_point(current_buffer->pt - count);
-        }
-    } else {
-        // Negative arg: delete forward
-        delete(current_buffer->pt, count);
-    }
-}
-
-void delete_char() {
-    if (arg == 0) return;
-    
-    int count = abs(arg);
-    if (arg > 0) {
-        // Delete forward
-        delete(current_buffer->pt, count);
-    } else {
-        // Delete backward
-        if ((size_t)count > current_buffer->pt) {
-            count = current_buffer->pt;
-        }
-        delete(current_buffer->pt - count, count);
-        set_point(current_buffer->pt - count);
-    }
+    buf->rope = rope_insert_chars(buf->rope, end_pos, text, text_len);
 }
 
 void message(const char *format, ...) {
@@ -489,693 +348,28 @@ void message(const char *format, ...) {
     minibuf->rope = rope_insert_chars(minibuf->rope, 0, formatted, msg_len);
     wm.minibuffer_window->point = 0;
     
-    // TODO Log to a *Messages* buffer
+    // Log to *Messages* buffer
+    Buffer *messages_buf = get_buffer("*Messages*");
+    if (messages_buf) {
+        bool needs_newline = rope_char_length(messages_buf->rope) > 0;
+        append_to_buffer(messages_buf, formatted, needs_newline);
+    }
     
     free(formatted);
 }
 
-void newline() {
-    if (arg == 0) return;
-    
-    if (arg < 0) {
-        message("Repetition argument has to be non-negative");
-        return;
-    }
-    
-    for (int i = 0; i < arg; i++) {
-        insert('\n');
-    }
-}
-
-void open_line() {
-    size_t start_pt = current_buffer->pt;
-    newline();
-    set_point(start_pt);
-}
-
-void split_line() {
-    size_t text_len = rope_char_length(current_buffer->rope);
-    
-    // Skip forward over spaces and tabs
-    while (current_buffer->pt < text_len) {
-        uint32_t ch = rope_char_at(current_buffer->rope, current_buffer->pt);
-        if (ch != ' ' && ch != '\t') break;
-        set_point(current_buffer->pt + 1);
-    }
-    
-    size_t col = current_column();
-    size_t pos = current_buffer->pt;
-    
-    insert('\n');
-    
-    for (size_t i = 0; i < col; i++) {
-        insert(' ');
-    }
-    
-    // Go back
-    set_point(pos);
-}
-
-void forward_char() {
-    if (arg == 0) return;
-    move_point(arg);
-}
-
-void backward_char() {
-    if (arg == 0) return;
-    move_point(-arg);
-}
-
-size_t line_beginning_position() {
-    size_t pos = current_buffer->pt;
-    
-    // Scan backwards to find newline or start of buffer
-    while (pos > 0) {
-        uint32_t ch = rope_char_at(current_buffer->rope, pos - 1);
-        if (ch == '\n') break;
-        pos--;
-    }
-    
-    return pos;
-}
-
-size_t line_end_position() {
-    size_t text_len = rope_char_length(current_buffer->rope); // O(1) - uses cached value!
-    size_t pos = current_buffer->pt;
-    
-    while (pos < text_len) {
-        uint32_t ch = rope_char_at(current_buffer->rope, pos);
-        if (ch == '\n') break;
-        pos++;
-    }
-    
-    return pos;
-}
-
-size_t current_column() {
-    size_t line_start = line_beginning_position();
-    return current_buffer->pt - line_start;
-}
-
-void update_goal_column() {
-    current_buffer->cursor.goal_column = current_column();
-}
-
-void next_line() {
-    if (arg == 0) return;
-    
-    int direction = arg > 0 ? 1 : -1;
-    int count = abs(arg);
-    
-    size_t text_len = rope_char_length(current_buffer->rope);
-    size_t starting_pt = current_buffer->pt;  // Remember where we started
-    
-    for (int i = 0; i < count; i++) {
-        if (direction > 0) {
-            // Move down
-            size_t pos = current_buffer->pt;
-            while (pos < text_len && rope_char_at(current_buffer->rope, pos) != '\n') {
-                pos++;
-            }
-            
-            if (pos >= text_len) {
-                // Can't move any further - we're at the last line
-                if (current_buffer->pt == starting_pt) {
-                    // We didn't move at all
-                    message("End of buffer");
-                }
-                break; // At end of buffer
-            }
-            
-            pos++; // Move past newline
-            
-            size_t line_start = pos;
-            size_t line_end = pos;
-            while (line_end < text_len && rope_char_at(current_buffer->rope, line_end) != '\n') {
-                line_end++;
-            }
-            
-            size_t line_length = line_end - line_start;
-            if (current_buffer->cursor.goal_column <= line_length) {
-                set_point(line_start + current_buffer->cursor.goal_column);
-            } else {
-                set_point(line_end);
-            }
-        } else {
-            // Move up
-            size_t pos = current_buffer->pt;
-            while (pos > 0 && rope_char_at(current_buffer->rope, pos - 1) != '\n') {
-                pos--;
-            }
-            
-            if (pos == 0) {
-                // Can't move any further - we're at the first line
-                if (current_buffer->pt == starting_pt) {
-                    // We didn't move at all
-                    message("Beginning of buffer");
-                }
-                break; // At first line
-            }
-            
-            pos--; // Move before newline
-            
-            size_t line_start = pos;
-            while (line_start > 0 && rope_char_at(current_buffer->rope, line_start - 1) != '\n') {
-                line_start--;
-            }
-            
-            size_t line_length = pos - line_start;
-            if (current_buffer->cursor.goal_column <= line_length) {
-                set_point(line_start + current_buffer->cursor.goal_column);
-            } else {
-                set_point(pos);
-            }
-        }
-    }
-}
-
-void previous_line() {
-    arg = -arg;
-    next_line();
-}
-
-void end_of_line() {
-    set_point(line_end_position());
-}
-
-void beginning_of_line() {
-    set_point(line_beginning_position());
-}
-
-void beginning_of_buffer() {
-    set_point(0);
-}
-
-void end_of_buffer() {
-    size_t text_len = rope_char_length(current_buffer->rope); // O(1) cached!
-    set_point(text_len);
-    
-}
-
-/// REGION
-
-bool transient_mark_mode = false;
-
-void set_mark_command() {
-    current_buffer->region.mark = current_buffer->pt;
-    if (transient_mark_mode) {
-        current_buffer->region.active = true;
-    } else {
-        if (is_scm_proc(last_command, "set-mark-command")) {
-            current_buffer->region.active = true;
-        }
-        /* if (last_command == set_mark_command) */
-        /*     current_buffer->region.active = true; */
-    }
-}
-
-void exchange_point_and_mark() {
-    size_t temp = current_buffer->pt;
-    set_point(current_buffer->region.mark);
-    current_buffer->region.mark = temp;
-}
-
-// Get the bounds of the region (always returns min, max order)
-void region_bounds(size_t *start, size_t *end) {
-    if (current_buffer->region.mark < current_buffer->pt) {
-        *start = current_buffer->region.mark;
-        *end = current_buffer->pt;
-    } else {
-        *start = current_buffer->pt;
-        *end = current_buffer->region.mark;
-    }
-}
-
-void delete_region() {
-    size_t start, end;
-    region_bounds(&start, &end);
-    
-    // Nothing to delete if start == end
-    if (start == end) {
-        current_buffer->region.active = false;
-        return;
-    }
-    
-    size_t length = end - start;
-    delete(start, length);
-    set_point(start);
-    current_buffer->region.active = false;
-}
-
-void rkill(size_t start, size_t end, bool prepend) {
-    if (start >= end) return;
-    
-    size_t length = end - start;
-    size_t buffer_size = length * 4 + 1;
-    char *new_text = (char *)malloc(buffer_size);
-    
-    if (!new_text) return;
-    
-    size_t copied = rope_copy_chars(current_buffer->rope, start, length, new_text, buffer_size - 1);
-    new_text[copied] = '\0';
-    
-    if (last_command_was_kill) {
-        const char *existing = getClipboardString();
-        if (existing && *existing) {
-            size_t total_len = strlen(existing) + copied + 1;
-            char *combined = (char *)malloc(total_len);
-            if (prepend) {
-                snprintf(combined, total_len, "%s%s", new_text, existing);
-            } else {
-                snprintf(combined, total_len, "%s%s", existing, new_text);
-            }
-            setClipboardString(combined);
-            free(combined);
-        } else {
-            setClipboardString(new_text);
-        }
-    } else {
-        setClipboardString(new_text);
-    }
-    
-    free(new_text);
-    delete(start, length);
-}
-
-
-void kill_line() {
-    size_t text_len = rope_char_length(current_buffer->rope);
-    
-    if (arg == 0) {
-        // Kill backwards from point to beginning of line
-        size_t line_start = line_beginning_position();
-        size_t start = line_start;
-        size_t end = current_buffer->pt;
-        
-        if (start < end) {
-            rkill(start, end, true);  // Prepend to kill ring
-            set_point(start);
-        }
-        return;
-    }
-    
-    if (arg == 1) {
-        // No prefix arg: default behavior
-        size_t line_end = line_end_position();
-        size_t start = current_buffer->pt;
-        size_t end;
-        
-        // Check if we're at end of buffer
-        if (current_buffer->pt >= text_len) {
-            return;
-        }
-        
-        // Check if rest of line is empty (only whitespace or already at end)
-        bool rest_is_empty = (current_buffer->pt == line_end);
-        if (!rest_is_empty) {
-            rest_is_empty = true;
-            for (size_t i = current_buffer->pt; i < line_end; i++) {
-                uint32_t ch = rope_char_at(current_buffer->rope, i);
-                if (ch != ' ' && ch != '\t') {
-                    rest_is_empty = false;
-                    break;
-                }
-            }
-        }
-        
-        bool kill_whole_line = scm_get_bool("kill-whole-line", false);
-
-        // Special case: kill_whole_line and at beginning of line
-        if (kill_whole_line && current_buffer->pt == line_beginning_position()) {
-            end = line_end;
-            if (end < text_len && rope_char_at(current_buffer->rope, end) == '\n') {
-                end++;
-            }
-        }
-        // If rest of line is empty/whitespace, kill through newline
-        else if (rest_is_empty) {
-            end = line_end;
-            if (end < text_len && rope_char_at(current_buffer->rope, end) == '\n') {
-                end++;
-            }
-        }
-        // Otherwise just kill to end of line (not including newline)
-        else {
-            end = line_end;
-        }
-        
-        if (start < end) {
-            rkill(start, end, false);
-        }
-        return;
-    }
-    
-    if (arg > 1) {
-        // Positive arg > 1: kill arg lines forward (always including newlines)
-        // This is equivalent to forward-line arg times
-        size_t start = current_buffer->pt;
-        size_t pos = start;
-        
-        for (int i = 0; i < arg; i++) {
-            // Move to end of current line
-            while (pos < text_len && rope_char_at(current_buffer->rope, pos) != '\n') {
-                pos++;
-            }
-            
-            // Include the newline
-            if (pos < text_len && rope_char_at(current_buffer->rope, pos) == '\n') {
-                pos++;
-            }
-            
-            // If we're at end of buffer, stop
-            if (pos >= text_len) {
-                break;
-            }
-        }
-        
-        if (start < pos) {
-            rkill(start, pos, false);  // Append to kill ring
-        }
-        return;
-    }
-    
-    // arg < 0: Kill backwards arg lines
-    // Move backwards |arg| lines
-    size_t end = current_buffer->pt;
-    size_t pos = end;
-    
-    for (int i = 0; i < -arg; i++) {
-        // Move to beginning of current line
-        while (pos > 0 && rope_char_at(current_buffer->rope, pos - 1) != '\n') {
-            pos--;
-        }
-        
-        // Move to previous line (past the newline)
-        if (pos > 0) {
-            pos--;
-        }
-    }
-    
-    // Now pos is at the beginning of the line we want to start killing from
-    // We need to move back to the beginning of that line
-    while (pos > 0 && rope_char_at(current_buffer->rope, pos - 1) != '\n') {
-        pos--;
-    }
-    
-    if (pos < end) {
-        rkill(pos, end, true);  // Prepend to kill ring
-        set_point(pos);
-    }
-}
-
-void kill_region() {
-    size_t start, end;
-    region_bounds(&start, &end);
-    
-    if (start == end) {
-        current_buffer->region.active = false;
-        return;
-    }
-    
-    rkill(start, end, false);
-    set_point(start);
-    current_buffer->region.active = false;
-}
-
-void yank() {
-    const char *clipboard_text = getClipboardString();
-    
-    if (clipboard_text && *clipboard_text) {
-        size_t len = strlen(clipboard_text);
-        size_t old_char_len = rope_char_length(current_buffer->rope);
-        
-
-        current_buffer->region.mark = current_buffer->pt;
-        current_buffer->rope = rope_insert_chars(current_buffer->rope, current_buffer->pt, clipboard_text, len);
-        
-        size_t new_char_len = rope_char_length(current_buffer->rope);
-        size_t chars_inserted = new_char_len - old_char_len;
-        set_point(current_buffer->pt + chars_inserted); // End of inserted text
-        
-        // If C-u was used (raw prefix arg), exchange point and mark
-        // This leaves point at beginning and mark at end of yanked text
-        if (raw_prefix_arg) exchange_point_and_mark();
-
-        adjust_all_window_points_after_modification(current_buffer->pt, chars_inserted);
-    }
-}
-
-/// WORD
-
-bool isWordChar(uint32_t c) {
-    if (c >= 128) return false;
-    return isalnum((unsigned char)c);
-}
-
-bool isPunctuationChar(uint32_t c) {
-    if (c >= 128) return false;
-    return strchr(",.;:!?'\"(){}[]<>-+*/=&|^%$#@~_", (char)c) != NULL;
-}
-
-size_t end_of_word(Buffer *buffer, size_t pos) {
-    size_t text_len = rope_char_length(buffer->rope);
-    if (pos >= text_len) return text_len;
-    
-    rope_iter_t iter;
-    rope_iter_init(&iter, buffer->rope, pos);
-    
-    uint32_t ch;
-    if (!rope_iter_next_char(&iter, &ch)) {
-        rope_iter_destroy(&iter);
-        return pos;
-    }
-    
-    bool in_word = isWordChar(ch);
-    
-    if (in_word) {
-        // Skip word characters
-        while (rope_iter_next_char(&iter, &ch) && isWordChar(ch)) {
-            // Keep going
-        }
-    } else {
-        // Skip non-word characters until we hit a word
-        while (rope_iter_next_char(&iter, &ch) && !isWordChar(ch)) {
-            // Keep going
-        }
-        // Then skip the word
-        while (rope_iter_next_char(&iter, &ch) && isWordChar(ch)) {
-            // Keep going
-        }
-    }
-    
-    // iter.char_pos is now one past the last character we read
-    // We want to return the position after the last word char we saw
-    size_t result = iter.char_pos > 0 ? iter.char_pos - 1 : 0;
-    
-    // If we stopped because of EOF, don't subtract
-    if (iter.char_pos >= text_len) {
-        result = text_len;
-    }
-    
-    rope_iter_destroy(&iter);
-    return result;
-}
-
-// TODO Use Rope iterator here too
-size_t beginning_of_word(Buffer *buffer, size_t pos) {
-    if (pos == 0) return 0;
-    
-    // Copy up to 200 characters before pos for local scanning (increased buffer)
-    size_t scan_start = pos > 200 ? pos - 200 : 0;
-    size_t scan_len = pos - scan_start;
-    
-    char buf[1024];  // Increased buffer size
-    size_t copied = rope_copy_chars(buffer->rope, scan_start, scan_len, buf, sizeof(buf) - 1);
-    
-    if (copied == 0) return scan_start;
-    
-    // Build array of character positions
-    size_t byte_positions[201];
-    byte_positions[0] = 0;
-    
-    size_t char_count = 0;
-    size_t byte_pos = 0;
-    
-    while (byte_pos < copied && char_count < scan_len) {
-        size_t char_len = utf8_char_len((uint8_t)buf[byte_pos]);
-        if (byte_pos + char_len > copied) break;
-        byte_pos += char_len;
-        char_count++;
-        byte_positions[char_count] = byte_pos;
-    }
-    
-    if (char_count == 0) return scan_start;
-    
-    // Start from the character before pos
-    size_t rel_pos = char_count;
-    
-    // Decode character before position
-    size_t bytes_read;
-    uint32_t ch = utf8_decode(buf + byte_positions[rel_pos - 1],
-                              copied - byte_positions[rel_pos - 1], &bytes_read);
-    
-    if (isWordChar(ch)) {
-        // We're in a word, skip backwards to start of word
-        while (rel_pos > 0) {
-            ch = utf8_decode(buf + byte_positions[rel_pos - 1],
-                           copied - byte_positions[rel_pos - 1], &bytes_read);
-            if (!isWordChar(ch)) break;
-            rel_pos--;
-        }
-    } else {
-        // We're not in a word, skip backwards over non-word chars
-        while (rel_pos > 0) {
-            ch = utf8_decode(buf + byte_positions[rel_pos - 1],
-                           copied - byte_positions[rel_pos - 1], &bytes_read);
-            if (isWordChar(ch)) break;
-            rel_pos--;
-        }
-        
-        // Then skip backwards over the word we found
-        while (rel_pos > 0) {
-            ch = utf8_decode(buf + byte_positions[rel_pos - 1],
-                           copied - byte_positions[rel_pos - 1], &bytes_read);
-            if (!isWordChar(ch)) break;
-            rel_pos--;
-        }
-    }
-    
-    return scan_start + rel_pos;
-}
-
-void forward_word() {
-    if (arg == 0) return;
-    
-    int direction = arg > 0 ? 1 : -1;
-    int count = abs(arg);
-    
-    while (count-- > 0) {
-        if (direction > 0) {
-            set_point(end_of_word(current_buffer, current_buffer->pt));
-        } else {
-            set_point(beginning_of_word(current_buffer, current_buffer->pt));
-        }
-    }
-}
-
-void backward_word() {
-    arg = -arg; 
-    forward_word();
-}
-
-void kill_word() {
-    if (arg == 0) return;
-    
-    int direction = arg > 0 ? 1 : -1;
-    int count = abs(arg);
-    
-    size_t start = current_buffer->pt;
-    size_t end = start;
-    
-    for (int i = 0; i < count; i++) {
-        if (direction > 0) {
-            end = end_of_word(current_buffer, end);
-        } else {
-            end = beginning_of_word(current_buffer, end);
-        }
-    }
-    
-    if (start == end) return;
-    
-    if (start < end) {
-        rkill(start, end, false);
-    } else {
-        rkill(end, start, true);
-        set_point(end);
-    }
-}
-
-void backward_kill_word() {
-    arg = -arg;
-    kill_word();
-}
-
-/// PARAGRAPHS
-
-void forward_paragraph() {
-    if (arg == 0) return;
-    
-    size_t text_len = rope_char_length(current_buffer->rope);
-    int count = abs(arg);
-    
-    if (arg > 0) {
-        for (int i = 0; i < count; i++) {
-            if (current_buffer->pt >= text_len) break;
-            
-            size_t pos = current_buffer->pt;
-            bool found_text = false;
-            
-            while (pos < text_len) {
-                if (rope_char_at(current_buffer->rope, pos) == '\n') {
-                    size_t next_line_start = pos + 1;
-                    if (next_line_start < text_len && rope_char_at(current_buffer->rope, next_line_start) == '\n') {
-                        if (found_text) {
-                            set_point(next_line_start);
-                            break;
-                        }
-                    } else if (next_line_start < text_len) {
-                        found_text = true;
-                    }
-                }
-                pos++;
-            }
-            
-            if (pos >= text_len) {
-                set_point(text_len);
-                break;
-            }
-        }
-    } else {
-        for (int i = 0; i < count; i++) {
-            if (current_buffer->pt == 0) break;
-            
-            size_t pos = current_buffer->pt - 1;
-            bool found_text = false;
-            
-            while (pos > 0) {
-                if (rope_char_at(current_buffer->rope, pos) == '\n' && rope_char_at(current_buffer->rope, pos - 1) == '\n') {
-                    if (found_text) {
-                        set_point(pos);
-                        break;
-                    }
-                } else if (rope_char_at(current_buffer->rope, pos) != '\n') {
-                    found_text = true;
-                }
-                pos--;
-            }
-            
-            if (pos == 0) {
-                set_point(0);
-                break;
-            }
-        }
-    }
-}
-
-void backward_paragraph() {
-    arg = -arg;
-    forward_paragraph();
-}
 
 
 /// ARG
 
-bool raw_prefix_arg = false;
 
 // TODO Activate universal-argument-map and bind 0..9 to digit-argument
 void universal_argument() {
+    int arg = get_prefix_arg();
     arg *= 4;
-    raw_prefix_arg = true;  
+    set_prefix_arg(arg);
+    bool raw_prefix_arg = scm_get_bool("raw-prefix-arg", false);
+    set_raw_prefix_arg(true);
 }
 
 void digit_argument() {
@@ -1184,11 +378,37 @@ void digit_argument() {
 }
 
 void negative_argument() {
+    int arg = get_prefix_arg();
     arg = -arg;
+    set_prefix_arg(arg);
     char msg[32];
     snprintf(msg, sizeof(msg), "C-u %d", arg);
     message(msg);
 }
+
+int get_prefix_arg() {
+    SCM var = scm_c_lookup("prefix-arg");
+    if (scm_is_false(var)) return 1;
+    SCM val = scm_variable_ref(var);
+    return scm_is_integer(val) ? scm_to_int(val) : 1;
+}
+
+void set_prefix_arg(int value) {
+    scm_c_define("prefix-arg", scm_from_int(value));
+}
+
+bool get_raw_prefix_arg() {
+    SCM var = scm_c_lookup("raw-prefix-arg");
+    if (scm_is_false(var)) return false;
+    SCM val = scm_variable_ref(var);
+    return scm_to_bool(val);
+}
+
+void set_raw_prefix_arg(bool value) {
+    scm_c_define("raw-prefix-arg", scm_from_bool(value));
+}
+
+
 
 void execute_extended_command() {
     activate_minibuffer();
@@ -1438,6 +658,7 @@ static size_t find_start_position(Buffer *buffer, Window *win, float *out_start_
     return pos;
 }
 
+// TODO It’s wrapping one character before where it should actually start wrapping
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     float line_height = buffer->font->ascent + buffer->font->descent;
     

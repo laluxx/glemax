@@ -1,4 +1,5 @@
 #include "wm.h"
+#include "buffer.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -163,6 +164,7 @@ void other_window() {
     Window *original = wm.selected;
     Window *target = wm.selected;
     
+    int arg = get_prefix_arg();
     int count = abs(arg);
     
     if (arg > 0) {
@@ -450,6 +452,7 @@ void debug_print_windows() {
            wm.selected->x, wm.selected->y);
 }
 
+// TODO Handle ARG
 void split_window_below() {
     if (!is_leaf_window(wm.selected)) return;
     if (is_minibuffer_window(wm.selected)) {
@@ -497,6 +500,7 @@ void split_window_below() {
 
 // NOTE Emacs seem to check if any new wraped lines occur
 // and adds a scroll offset to compesate so the current window doesn’t move down when splitting
+// TODO Handle ARG
 void split_window_right() {
     if (!is_leaf_window(wm.selected)) return;
     if (is_minibuffer_window(wm.selected)) {
@@ -675,133 +679,6 @@ static void draw_modeline(Window *win) {
     quad2D((vec2){win->x, modeline_y},
            (vec2){win->width, modeline_height},
            color);
-}
-
-int recenter_positions = 0;  // 0=middle, 1=top, 2=bottom
-
-void recenter() {
-    if (is_minibuffer_window(wm.selected)) return;
-    
-    Buffer *buf = wm.selected->buffer;
-    float line_height = buf->font->ascent + buf->font->descent;
-    float modeline_height = line_height;
-    float usable_height = wm.selected->height - modeline_height;
-    float visible_lines = usable_height / line_height;
-    
-    // Calculate cursor's line number
-    size_t cursor_line = 0;
-    rope_iter_t iter;
-    rope_iter_init(&iter, buf->rope, 0);
-    
-    uint32_t ch;
-    size_t i = 0;
-    float x = 0;
-    float max_x = wm.selected->width - 2 * fringe_width;
-    
-    while (i < wm.selected->point && rope_iter_next_char(&iter, &ch)) {
-        if (ch == '\n') {
-            cursor_line++;
-            x = 0;
-        } else {
-            float char_width = character_width(buf->font, ch);
-            if (x + char_width > max_x) {
-                cursor_line++;
-                x = 0;
-            }
-            
-            Character *char_info = font_get_character(buf->font, ch);
-            if (char_info) {
-                x += char_info->ax;
-            }
-        }
-        i++;
-    }
-    
-    rope_iter_destroy(&iter);
-    
-    float cursor_y = cursor_line * line_height;
-    float target_line;
-    
-    // Handle different argument cases
-    if (!raw_prefix_arg && !argument_manually_set) {
-        // No argument: center vertically
-        target_line = visible_lines / 2.0f;
-    } else if (raw_prefix_arg) {
-        // C-u prefix: center vertically (same as no argument)
-        target_line = visible_lines / 2.0f;
-    } else if (arg >= 0) {
-        // Positive ARG: put point on line ARG from top (0-indexed)
-        target_line = (float)arg;
-    } else {
-        // Negative ARG: count from bottom
-        // -1 means last visible line, -2 means second-to-last, etc.
-        target_line = visible_lines + arg;
-        // Don't let it go negative
-        if (target_line < 0) target_line = 0;
-    }
-    
-    // Set scroll so cursor appears on target_line
-    // target_line is relative to the TOP of the visible window
-    // So if we want cursor on target_line, we need:
-    // scrolly = cursor_y - (target_line * line_height)
-    wm.selected->scrolly = cursor_y - (target_line * line_height);
-    
-    // Ensure we don't scroll past the top of the buffer
-    if (wm.selected->scrolly < 0) wm.selected->scrolly = 0;
-}
-
-void recenter_top_bottom() {
-    if (is_minibuffer_window(wm.selected)) return;
-    
-    // If argument was manually set, just call recenter with that argument
-    if (argument_manually_set) {
-        recenter();
-        return;
-    }
-    
-    static Window *last_window = NULL;
-    
-    // Reset cycle if we're in a different window
-    if (last_window != wm.selected) {
-        recenter_positions = 0;
-        last_window = wm.selected;
-    }
-    
-    // Save current arg state
-    int saved_arg = arg;
-    bool saved_raw_prefix = raw_prefix_arg;
-    bool saved_manually_set = argument_manually_set;
-    
-    // Set appropriate arg for recenter based on cycle state
-    argument_manually_set = true;
-    
-    switch (recenter_positions) {
-        case 0:  // Middle
-            raw_prefix_arg = true;  // Use C-u behavior (center)
-            argument_manually_set = false;
-            recenter();
-            recenter_positions = 1;
-            break;
-            
-        case 1:  // Top (line 0)
-            raw_prefix_arg = false;
-            arg = 0;
-            recenter();
-            recenter_positions = 2;
-            break;
-            
-        case 2:  // Bottom (last visible line)
-            raw_prefix_arg = false;
-            arg = -1;
-            recenter();
-            recenter_positions = 0;  // Cycle back to middle
-            break;
-    }
-    
-    // Restore arg state
-    arg = saved_arg;
-    raw_prefix_arg = saved_raw_prefix;
-    argument_manually_set = saved_manually_set;
 }
 
 void update_window_scroll(Window *win) {
@@ -986,5 +863,655 @@ void wm_draw() {
     
     // Draw minibuffer
     draw_window(wm.minibuffer_window);
+}
+
+
+/// Window related editing functions
+
+int recenter_positions = 0;  // 0=middle, 1=top, 2=bottom
+
+void recenter() {
+    if (is_minibuffer_window(wm.selected)) return;
+    
+    Buffer *buf = wm.selected->buffer;
+    float line_height = buf->font->ascent + buf->font->descent;
+    float modeline_height = line_height;
+    float usable_height = wm.selected->height - modeline_height;
+    float visible_lines = usable_height / line_height;
+    
+    // Calculate cursor's line number
+    size_t cursor_line = 0;
+    rope_iter_t iter;
+    rope_iter_init(&iter, buf->rope, 0);
+    
+    uint32_t ch;
+    size_t i = 0;
+    float x = 0;
+    float max_x = wm.selected->width - 2 * fringe_width;
+    
+    while (i < wm.selected->point && rope_iter_next_char(&iter, &ch)) {
+        if (ch == '\n') {
+            cursor_line++;
+            x = 0;
+        } else {
+            float char_width = character_width(buf->font, ch);
+            if (x + char_width > max_x) {
+                cursor_line++;
+                x = 0;
+            }
+            
+            Character *char_info = font_get_character(buf->font, ch);
+            if (char_info) {
+                x += char_info->ax;
+            }
+        }
+        i++;
+    }
+    
+    rope_iter_destroy(&iter);
+    
+    float cursor_y = cursor_line * line_height;
+    float target_line;
+    
+    int arg = get_prefix_arg();
+    bool raw_prefix_arg = get_raw_prefix_arg();
+
+    // Handle different argument cases
+    if (!raw_prefix_arg && !argument_manually_set) {
+        // No argument: center vertically
+        target_line = visible_lines / 2.0f;
+    } else if (raw_prefix_arg) {
+        // C-u prefix: center vertically (same as no argument)
+        target_line = visible_lines / 2.0f;
+    } else if (arg >= 0) {
+        // Positive ARG: put point on line ARG from top (0-indexed)
+        target_line = (float)arg;
+    } else {
+        // Negative ARG: count from bottom
+        // -1 means last visible line, -2 means second-to-last, etc.
+        target_line = visible_lines + arg;
+        // Don't let it go negative
+        if (target_line < 0) target_line = 0;
+    }
+    
+    // Set scroll so cursor appears on target_line
+    // target_line is relative to the TOP of the visible window
+    // So if we want cursor on target_line, we need:
+    // scrolly = cursor_y - (target_line * line_height)
+    wm.selected->scrolly = cursor_y - (target_line * line_height);
+    
+    // Ensure we don't scroll past the top of the buffer
+    if (wm.selected->scrolly < 0) wm.selected->scrolly = 0;
+}
+
+void recenter_top_bottom() {
+    if (is_minibuffer_window(wm.selected)) return;
+    
+    // If argument was manually set, just call recenter with that argument
+    if (argument_manually_set) {
+        recenter();
+        return;
+    }
+    
+    static Window *last_window = NULL;
+    
+    // Reset cycle if we're in a different window
+    if (last_window != wm.selected) {
+        recenter_positions = 0;
+        last_window = wm.selected;
+    }
+    
+    // Save current arg state
+    int arg = get_prefix_arg();
+    bool raw_prefix_arg = get_raw_prefix_arg();
+    int saved_arg = arg;
+    bool saved_raw_prefix = raw_prefix_arg;
+    bool saved_manually_set = argument_manually_set;
+    
+    // Set appropriate arg for recenter based on cycle state
+    argument_manually_set = true;
+    
+    switch (recenter_positions) {
+        case 0:  // Middle
+            raw_prefix_arg = true;  // Use C-u behavior (center)
+            set_raw_prefix_arg(true);
+            argument_manually_set = false;
+            recenter();
+            recenter_positions = 1;
+            break;
+            
+        case 1:  // Top (line 0)
+            raw_prefix_arg = false;
+            set_raw_prefix_arg(false);
+            arg = 0;
+            set_prefix_arg(0);
+            recenter();
+            recenter_positions = 2;
+            break;
+            
+        case 2:  // Bottom (last visible line)
+            raw_prefix_arg = false;
+            set_raw_prefix_arg(false);
+            arg = -1;
+            set_prefix_arg(-1);
+            recenter();
+            recenter_positions = 0;  // Cycle back to middle
+            break;
+    }
+    
+    // Restore arg state
+    arg = saved_arg;
+    set_prefix_arg(arg);
+    raw_prefix_arg = saved_raw_prefix;
+    set_raw_prefix_arg(raw_prefix_arg);
+    argument_manually_set = saved_manually_set;
+}
+
+
+int next_screen_context_lines = 2;  // Lines of overlap when scrolling full screen
+
+
+void scroll_up_command() {
+    if (is_minibuffer_window(wm.selected)) return;
+    
+    Buffer *buf = wm.selected->buffer;
+    float line_height = buf->font->ascent + buf->font->descent;
+    float modeline_height = line_height;
+    float usable_height = wm.selected->height - modeline_height;
+    float visible_lines = usable_height / line_height;
+    
+    int arg = get_prefix_arg();
+    bool raw_prefix_arg = get_raw_prefix_arg();
+    bool manually_set = argument_manually_set;
+    
+    int lines_to_scroll;
+    
+    if (!manually_set && !raw_prefix_arg) {
+        // No argument: scroll nearly full screen (leave context lines)
+        lines_to_scroll = (int)(visible_lines - next_screen_context_lines);
+        if (lines_to_scroll < 1) lines_to_scroll = 1;
+    } else if (raw_prefix_arg && arg < 0) {
+        // C-u - prefix: scroll down by nearly full screen
+        scroll_down_command();
+        return;
+    } else if (arg < 0) {
+        // Negative ARG: scroll down
+        set_prefix_arg(-arg);
+        scroll_down_command();
+        set_prefix_arg(arg);  // Restore
+        return;
+    } else {
+        // Explicit positive ARG: scroll that many lines
+        lines_to_scroll = arg;
+    }
+    
+    // Calculate current cursor line
+    size_t cursor_line = 0;
+    rope_iter_t iter;
+    rope_iter_init(&iter, buf->rope, 0);
+    
+    uint32_t ch;
+    size_t i = 0;
+    float x = 0;
+    float max_x = wm.selected->width - 2 * fringe_width;
+    
+    while (i < wm.selected->point && rope_iter_next_char(&iter, &ch)) {
+        if (ch == '\n') {
+            cursor_line++;
+            x = 0;
+        } else {
+            float char_width = character_width(buf->font, ch);
+            if (x + char_width > max_x) {
+                cursor_line++;
+                x = 0;
+            }
+            
+            Character *char_info = font_get_character(buf->font, ch);
+            if (char_info) {
+                x += char_info->ax;
+            }
+        }
+        i++;
+    }
+    rope_iter_destroy(&iter);
+    
+    // Calculate total lines in buffer
+    size_t total_lines = 0;
+    rope_iter_init(&iter, buf->rope, 0);
+    x = 0;
+    while (rope_iter_next_char(&iter, &ch)) {
+        if (ch == '\n') {
+            total_lines++;
+            x = 0;
+        } else {
+            float char_width = character_width(buf->font, ch);
+            if (x + char_width > max_x) {
+                total_lines++;
+                x = 0;
+            }
+            
+            Character *char_info = font_get_character(buf->font, ch);
+            if (char_info) {
+                x += char_info->ax;
+            }
+        }
+    }
+    rope_iter_destroy(&iter);
+    
+    float cursor_y = cursor_line * line_height;
+    float max_scroll = total_lines * line_height - usable_height;
+    if (max_scroll < 0) max_scroll = 0;
+    
+    // Try to scroll
+    float new_scroll = wm.selected->scrolly + (lines_to_scroll * line_height);
+    
+    // Check if we can scroll
+    if (new_scroll > max_scroll) {
+        // Can't scroll further
+        // Check if we're already at end of buffer
+        if (wm.selected->point >= rope_char_length(buf->rope)) {
+            message("End of buffer");
+            return;
+        }
+        
+        // Move point instead
+        if (manually_set) {
+            // Move by ARG lines
+            size_t new_point = wm.selected->point;
+            rope_iter_t move_iter;
+            rope_iter_init(&move_iter, buf->rope, new_point);
+            
+            int lines_moved = 0;
+            while (lines_moved < lines_to_scroll && rope_iter_next_char(&move_iter, &ch)) {
+                if (ch == '\n') {
+                    lines_moved++;
+                    if (lines_moved == lines_to_scroll) {
+                        new_point = move_iter.char_pos;
+                        break;
+                    }
+                }
+                new_point = move_iter.char_pos;
+            }
+            rope_iter_destroy(&move_iter);
+            
+            set_point(new_point);
+        } else {
+            // Move to end of buffer
+            set_point(rope_char_length(buf->rope));
+        }
+        
+        // Clamp scroll to max
+        wm.selected->scrolly = max_scroll;
+    } else {
+        // Can scroll normally
+        wm.selected->scrolly = new_scroll;
+        
+        // Check if cursor is now off-screen (above the visible area)
+        float cursor_relative_y = cursor_y - wm.selected->scrolly;
+        
+        if (cursor_relative_y < 0) {
+            // Cursor scrolled off top, move it to top of window
+            size_t top_line = (size_t)(wm.selected->scrolly / line_height);
+            
+            // Find character position for that line
+            rope_iter_init(&iter, buf->rope, 0);
+            size_t current_line = 0;
+            size_t pos = 0;
+            x = 0;
+            
+            while (rope_iter_next_char(&iter, &ch)) {
+                if (current_line == top_line) {
+                    break;
+                }
+                
+                if (ch == '\n') {
+                    current_line++;
+                    x = 0;
+                } else {
+                    float char_width = character_width(buf->font, ch);
+                    if (x + char_width > max_x) {
+                        current_line++;
+                        x = 0;
+                    }
+                    
+                    Character *char_info = font_get_character(buf->font, ch);
+                    if (char_info) {
+                        x += char_info->ax;
+                    }
+                }
+                pos = iter.char_pos;
+            }
+            rope_iter_destroy(&iter);
+            
+            set_point(pos);
+        }
+    }
+}
+
+void scroll_down_command() {
+    if (is_minibuffer_window(wm.selected)) return;
+    
+    Buffer *buf = wm.selected->buffer;
+    float line_height = buf->font->ascent + buf->font->descent;
+    float modeline_height = line_height;
+    float usable_height = wm.selected->height - modeline_height;
+    float visible_lines = usable_height / line_height;
+    
+    int arg = get_prefix_arg();
+    bool raw_prefix_arg = get_raw_prefix_arg();
+    bool manually_set = argument_manually_set;
+    
+    int lines_to_scroll;
+    
+    if (!manually_set && !raw_prefix_arg) {
+        // No argument: scroll nearly full screen (leave context lines)
+        lines_to_scroll = (int)(visible_lines - next_screen_context_lines);
+        if (lines_to_scroll < 1) lines_to_scroll = 1;
+    } else if (raw_prefix_arg && arg < 0) {
+        // C-u - prefix: scroll up by nearly full screen
+        scroll_up_command();
+        return;
+    } else if (arg < 0) {
+        // Negative ARG: scroll up
+        set_prefix_arg(-arg);
+        scroll_up_command();
+        set_prefix_arg(arg);  // Restore
+        return;
+    } else {
+        // Explicit positive ARG: scroll that many lines
+        lines_to_scroll = arg;
+    }
+    
+    // Calculate current cursor line
+    size_t cursor_line = 0;
+    rope_iter_t iter;
+    rope_iter_init(&iter, buf->rope, 0);
+    
+    uint32_t ch;
+    size_t i = 0;
+    float x = 0;
+    float max_x = wm.selected->width - 2 * fringe_width;
+    
+    while (i < wm.selected->point && rope_iter_next_char(&iter, &ch)) {
+        if (ch == '\n') {
+            cursor_line++;
+            x = 0;
+        } else {
+            float char_width = character_width(buf->font, ch);
+            if (x + char_width > max_x) {
+                cursor_line++;
+                x = 0;
+            }
+            
+            Character *char_info = font_get_character(buf->font, ch);
+            if (char_info) {
+                x += char_info->ax;
+            }
+        }
+        i++;
+    }
+    rope_iter_destroy(&iter);
+    
+    float cursor_y = cursor_line * line_height;
+    
+    // Try to scroll
+    float new_scroll = wm.selected->scrolly - (lines_to_scroll * line_height);
+    
+    // Check if we can scroll
+    if (new_scroll < 0) {
+        // Can't scroll further
+        // Check if we're already at beginning of buffer
+        if (wm.selected->point == 0) {
+            message("Beginning of buffer");
+            return;
+        }
+        
+        // Move point instead
+        if (manually_set) {
+            // Move by ARG lines backward
+            size_t new_point = wm.selected->point;
+            rope_iter_t move_iter;
+            rope_iter_init(&move_iter, buf->rope, new_point);
+            
+            int lines_moved = 0;
+            while (lines_moved < lines_to_scroll && rope_iter_prev_char(&move_iter, &ch)) {
+                if (ch == '\n') {
+                    lines_moved++;
+                    if (lines_moved == lines_to_scroll) {
+                        new_point = move_iter.char_pos;
+                        break;
+                    }
+                }
+                new_point = move_iter.char_pos;
+            }
+            rope_iter_destroy(&move_iter);
+            
+            set_point(new_point);
+        } else {
+            // Move to beginning of buffer
+            set_point(0);
+        }
+        
+        // Clamp scroll to 0
+        wm.selected->scrolly = 0;
+    } else {
+        // Can scroll normally
+        wm.selected->scrolly = new_scroll;
+        
+        // Check if cursor is now off-screen (below the visible area)
+        float cursor_relative_y = cursor_y - wm.selected->scrolly;
+        
+        if (cursor_relative_y >= usable_height) {
+            // Cursor scrolled off bottom, move it to bottom of window
+            size_t bottom_line = (size_t)((wm.selected->scrolly + usable_height - line_height) / line_height);
+            
+            // Find character position for that line
+            rope_iter_init(&iter, buf->rope, 0);
+            size_t current_line = 0;
+            size_t pos = 0;
+            x = 0;
+            
+            while (rope_iter_next_char(&iter, &ch)) {
+                if (current_line == bottom_line) {
+                    break;
+                }
+                
+                if (ch == '\n') {
+                    current_line++;
+                    x = 0;
+                } else {
+                    float char_width = character_width(buf->font, ch);
+                    if (x + char_width > max_x) {
+                        current_line++;
+                        x = 0;
+                    }
+                    
+                    Character *char_info = font_get_character(buf->font, ch);
+                    if (char_info) {
+                        x += char_info->ax;
+                    }
+                }
+                pos = iter.char_pos;
+            }
+            rope_iter_destroy(&iter);
+            
+            set_point(pos);
+        }
+    }
+}
+
+void scroll_other_window() {
+    Window *original = wm.selected;
+    Window *other = next_window(wm.selected);
+    
+    if (other == original || !other) {
+        message("There is no other window");
+        return;
+    }
+    
+    // Temporarily switch to other window
+    wm.selected = other;
+    current_buffer = other->buffer;
+    current_buffer->pt = other->point;
+    scroll_up_command();
+
+    // Switch back to original window
+    wm.selected = original;
+    current_buffer = original->buffer;
+    current_buffer->pt = original->point;
+}
+
+void scroll_other_window_down() {
+    Window *original = wm.selected;
+    Window *other = next_window(wm.selected);
+    
+    if (other == original || !other) {
+        message("There is no other window");
+        return;
+    }
+    
+    // Temporarily switch to other window
+    wm.selected = other;
+    current_buffer = other->buffer;
+    current_buffer->pt = other->point;
+    scroll_down_command();
+    
+    // Switch back to original window
+    wm.selected = original;
+    current_buffer = original->buffer;
+    current_buffer->pt = original->point;
+}
+
+
+void move_to_window_line() {
+    if (is_minibuffer_window(wm.selected)) return;
+    
+    Buffer *buf = wm.selected->buffer;
+    float line_height = buf->font->ascent + buf->font->descent;
+    float modeline_height = line_height;
+    float usable_height = wm.selected->height - modeline_height;
+    float visible_lines = usable_height / line_height;
+    
+    int arg = get_prefix_arg();
+    bool raw_prefix_arg = get_raw_prefix_arg();
+    
+    float target_line_float;
+    
+    if (!argument_manually_set && !raw_prefix_arg) {
+        // No argument: center of window
+        target_line_float = visible_lines / 2.0f;
+    } else {
+        if (arg < 0) {
+            // Negative: count from bottom
+            // -1 means last fully visible line
+            target_line_float = visible_lines + arg;
+            if (target_line_float < 0) target_line_float = 0;
+        } else {
+            // Positive or zero: count from top
+            target_line_float = (float)arg;
+        }
+    }
+    
+    // Calculate the target Y position in buffer coordinates
+    // This matches how recenter calculates: target_y = scrolly + (target_line * line_height)
+    float target_y = wm.selected->scrolly + (target_line_float * line_height) + 1;
+    size_t target_visual_line = (size_t)(target_y / line_height);
+    
+    // Now find the character at the START of that visual line
+    rope_iter_t iter;
+    rope_iter_init(&iter, buf->rope, 0);
+    
+    uint32_t ch;
+    size_t current_visual_line = 0;
+    size_t line_start_pos = 0;
+    float x = 0;
+    float max_x = wm.selected->width - 2 * fringe_width;
+    
+    // Iterate through buffer, tracking visual line starts
+    while (rope_iter_next_char(&iter, &ch)) {
+        // Check if we've reached the target visual line
+        if (current_visual_line == target_visual_line) {
+            set_point(line_start_pos);
+            rope_iter_destroy(&iter);
+            return;
+        }
+        
+        if (ch == '\n') {
+            current_visual_line++;
+            x = 0;
+            line_start_pos = iter.char_pos;  // Next line starts after newline
+        } else {
+            float char_width = character_width(buf->font, ch);
+            if (x + char_width > max_x) {
+                // Line wrap
+                current_visual_line++;
+                x = 0;
+                // The current character starts the new wrapped line
+                line_start_pos = iter.char_pos - 1;
+            }
+            
+            Character *char_info = font_get_character(buf->font, ch);
+            if (char_info) {
+                x += char_info->ax;
+            }
+        }
+    }
+    
+    rope_iter_destroy(&iter);
+    
+    // If we didn't find the target line (beyond end of buffer),
+    // go to end of buffer
+    size_t buffer_len = rope_char_length(buf->rope);
+    set_point(buffer_len);
+}
+
+void move_to_window_line_top_bottom() {
+    if (is_minibuffer_window(wm.selected)) return;
+    
+    // If argument was manually set, just call move_to_window_line with that argument
+    if (argument_manually_set) {
+        move_to_window_line();
+        return;
+    }
+    
+    static Window *last_window = NULL;
+    
+    // Reset cycle if we're in a different window
+    if (last_window != wm.selected) {
+        recenter_positions = 0;
+        last_window = wm.selected;
+    }
+    
+    // Save current arg state
+    int saved_arg = get_prefix_arg();
+    bool saved_raw_prefix = get_raw_prefix_arg();
+    bool saved_manually_set = argument_manually_set;
+    
+    // Set appropriate arg for move_to_window_line based on cycle state
+    switch (recenter_positions) {
+        case 0:  // Middle
+            argument_manually_set = false;
+            move_to_window_line();
+            recenter_positions = 1;
+            break;
+            
+        case 1:  // Top
+            set_prefix_arg(0);
+            argument_manually_set = true;
+            move_to_window_line();
+            recenter_positions = 2;
+            break;
+            
+        case 2:  // Bottom (last visible line)
+            set_prefix_arg(-1);
+            argument_manually_set = true;
+            move_to_window_line();
+            recenter_positions = 0;  // Cycle back to middle
+            break;
+    }
+    
+    // Restore arg state
+    set_prefix_arg(saved_arg);
+    argument_manually_set = saved_manually_set;
 }
 

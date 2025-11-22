@@ -6,6 +6,7 @@
 #include "buffer.h"
 #include "wm.h"
 #include "lisp.h"
+#include "edit.h"
 
 #define ROPE_IMPLEMENTATION
 #include "rope.h"
@@ -88,11 +89,15 @@ void before_keychord_hook(const char *notation, KeyChordBinding *binding) {
 void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
     reset_cursor_blink(current_buffer);
     update_window_scroll(wm.selected);
+    int arg = get_prefix_arg();
 
-    if (!is_scm_proc(binding->action.scheme_proc, "recenter-top-bottom")) recenter_positions = 0;
+
+
+    if (!is_scm_proc(binding->action.scheme_proc, "recenter-top-bottom") &&
+        !is_scm_proc(binding->action.scheme_proc, "move-to-window-line-top-bottom"))
+        recenter_positions = 0;
 
     // Handle digit argument
-    /* if (binding->action.c_action == digit_argument) { */
     if (is_scm_proc(binding->action.scheme_proc, "digit-argument")) {
         argument_manually_set = true;
         bool was_negative = false;
@@ -104,17 +109,20 @@ void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
         // reset to 0 but preserve the sign (we're starting fresh)
         if (is_scm_proc(last_command, "negative-argument") && (arg == -1 || arg == 1)) {
             arg = 0;
+            set_prefix_arg(arg);
         }
 
         // If the last command wasn't a digit or negative argument, reset completely
         else if (!is_scm_proc(last_command, "digit-argument") && 
                  !is_scm_proc(last_command, "negative-argument")) {
             arg = 0;
+            set_prefix_arg(arg);
             was_negative = false;
         }
 
 
         if (was_negative) arg = -arg;  // Make it positive temporarily
+        set_prefix_arg(arg);
         
         // Extract the digit from notation (e.g., "C-5" -> 5)
         const char *p = notation;
@@ -128,6 +136,7 @@ void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
                     // Check if adding the digit would overflow
                     if (new_arg <= INT_MAX - digit) {
                         arg = new_arg + digit;
+                        set_prefix_arg(arg);
                     }
                     // else: silently ignore the digit (overflow would occur)
                 }
@@ -139,18 +148,19 @@ void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
         
         // Restore the sign
         if (was_negative) arg = -arg;
+        set_prefix_arg(arg);
 
         // Display the current arg value
         char msg[32];
         snprintf(msg, sizeof(msg), "C-u %d", arg);
         message(msg);
         
-        raw_prefix_arg = false;    
-        
+        set_raw_prefix_arg(false);
     } else if (!is_argument_function(binding->action.scheme_proc)) {
         arg = 1;
+        set_prefix_arg(arg);
         argument_manually_set = false;
-        raw_prefix_arg = false;
+        set_raw_prefix_arg(false);
     }
     
     if (!is_vertical_motion(binding->action.scheme_proc)) update_goal_column();
@@ -173,136 +183,20 @@ void key_callback(int key, int action, int mods) {
 }
 
 
+void mouse_button_callback(int button, int action, int mods) {
+}
 
 double lastX = WIDTH / 2.0f, lastY = HEIGHT / 2.0f;
-
-bool middleMousePressed = false;
-bool rightMousePressed = false;
-bool shiftMiddleMousePressed = false;
-double lastPanX = 0.0, lastPanY = 0.0;
-double lastOrbitX = 0.0, lastOrbitY = 0.0; 
-vec3 orbitPivot = {0.0f, 0.0f, 0.0f};  // The point we're orbiting around
-float orbitDistance = 10.0f;           // Distance from pivot
-
-
-void mouse_button_callback(int button, int action, int mods) {
-    // Only handle mouse buttons in editor mode (camera inactive)
-    if (!camera.active) {
-        // Middle mouse button - orbit/pan
-        if (button == MOUSE_BUTTON_MIDDLE) {
-            if (action == PRESS) {
-                middleMousePressed = true;
-                getCursorPos(context.window, &lastPanX, &lastPanY);
-                getCursorPos(context.window, &lastOrbitX, &lastOrbitY);
-                
-                shiftMiddleMousePressed = (mods & MOD_SHIFT);
-                
-                // 1If not panning, calculate the pivot point for orbiting
-                if (!shiftMiddleMousePressed) {
-                    vec3 hitPoint;
-                    bool hitGround = raycast_to_ground(&camera, hitPoint);
-                    glm_vec3_copy(hitPoint, orbitPivot);
-                    
-                    // Calculate distance from camera to pivot
-                    vec3 toPivot;
-                    glm_vec3_sub(orbitPivot, camera.position, toPivot);
-                    orbitDistance = glm_vec3_norm(toPivot);
-                    
-                    printf("Orbit pivot set to: (%.2f, %.2f, %.2f)\n", orbitPivot[0], orbitPivot[1], orbitPivot[2]);
-                    printf("Orbit distance: %.2f\n", orbitDistance);
-                }
-                
-            } else if (action == RELEASE) {
-                middleMousePressed = false;
-                shiftMiddleMousePressed = false;
-                
-                camera.use_look_at = false;
-                printf("Orbit mode disabled - returning to normal camera control\n");
-            }
-        }
-        
-        // Right mouse button - freelook with WASD
-        if (button == MOUSE_BUTTON_RIGHT) {
-            if (action == PRESS) {
-                rightMousePressed = true;
-                // Get initial position BEFORE disabling cursor
-                getCursorPos(context.window, &lastX, &lastY);
-                setInputMode(context.window, CURSOR, CURSOR_DISABLED);
-            } else if (action == RELEASE) {
-                rightMousePressed = false;
-                setInputMode(context.window, CURSOR, CURSOR_NORMAL);
-            }
-        }
-    }
-}
 
 void cursor_pos_callback(double xpos, double ypos) {
     double xoffset = xpos - lastX;
     double yoffset = lastY - ypos;
-    
-    if (camera.active) {
-        // Normal FPS camera control - always update lastX/lastY
-        lastX = xpos;
-        lastY = ypos;
-        camera_process_mouse(&camera, xoffset, yoffset);
-    }
-    else if (rightMousePressed) {
-        // Right mouse: freelook in editor mode - always update lastX/lastY
-        lastX = xpos;
-        lastY = ypos;
-        camera_process_mouse(&camera, xoffset, yoffset);
-    }
-    else if (middleMousePressed) {
-        if (shiftMiddleMousePressed) {
-            if (camera.use_look_at) {
-                camera_disable_orbit_mode(&camera);
-                printf("Panning - orbit mode disabled\n");
-            }
-            // SHIFT + MIDDLE MOUSE: PAN
-            
-            float panSpeed = 0.005f;
-            
-            vec3 right, up;
-            glm_vec3_cross(camera.front, camera.up, right);
-            glm_vec3_normalize(right);
-            glm_vec3_copy(camera.up, up);
-            glm_vec3_normalize(up);
-            
-            vec3 panMovement = {0.0f, 0.0f, 0.0f};
-            
-            vec3 rightMove;
-            glm_vec3_scale(right, (float)-xoffset * panSpeed, rightMove);
-            glm_vec3_add(panMovement, rightMove, panMovement);
-            
-            vec3 upMove;
-            glm_vec3_scale(up, (float)-yoffset * panSpeed, upMove);
-            glm_vec3_add(panMovement, upMove, panMovement);
-            
-            glm_vec3_add(camera.position, panMovement, camera.position);
-            
-        } else {
-            // MIDDLE MOUSE ONLY: ORBIT
-            float orbitSpeed = 0.01f;
-            camera_orbit_around_point(&camera, orbitPivot,
-                                      (float)(xoffset * orbitSpeed),
-                                      (float)(yoffset * orbitSpeed));
-        }
-        
-        lastX = xpos;
-        lastY = ypos;
-    }
-    else {
-        // Not doing anything - just update last position to avoid jumps
-        lastX = xpos;
-        lastY = ypos;
-    }
 }
 
 static void inner_main (void *data, int argc, char **argv) {
     initWindow(sw, sh, "Kink");
-    lisp_init(); // IMPORTANT After initializing the window
     
-    jetbrains = load_font("./assets/fonts/JetBrainsMonoNerdFont-Regular.ttf", 42);
+    jetbrains = load_font("./assets/fonts/JetBrainsMonoNerdFont-Regular.ttf", 22);
     /* jetbrains = load_font("./assets/fonts/JetBrainsMonoNerdFont-Regular.ttf", 122); */
     /* lilex = load_font("./assets/fonts/LilexNerdFont-Regular.ttf", 22); */
     /* lilex = load_font("./assets/fonts/DejaVuMathTeXGyre.ttf", 100); */
@@ -314,6 +208,9 @@ static void inner_main (void *data, int argc, char **argv) {
     sh = context.swapChainExtent.height; // TODO move into
     sw = context.swapChainExtent.width;  // Resize callback
     wm_init(scratch_buffer, minibuf, 0, 0, sw, sh);
+
+    lisp_init(); // IMPORTANT After initializing the windowManager
+
     
     
     registerKeyCallback(key_callback);
@@ -324,8 +221,6 @@ static void inner_main (void *data, int argc, char **argv) {
     register_after_keychord_hook(after_keychord_hook);
     register_before_keychord_hook(before_keychord_hook);
     
-    
-    loadThemeByName("molokai");
     
     keychord_bind(&keymap, "M--",           previousTheme,            "Previous theme",           PRESS | REPEAT);
     keychord_bind(&keymap, "M-=",           nextTheme,                "Next theme",               PRESS | REPEAT);

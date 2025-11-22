@@ -7,6 +7,8 @@
 #include "libguile/strings.h"
 #include "rope.h"
 #include "buffer.h"
+#include "edit.h"
+#include "wm.h"
 
 
 // Error handler that captures error message with full details
@@ -340,135 +342,33 @@ bool is_scm_proc(SCM proc, const char *name) {
 
 
 
-// =============================================================================
-// SCHEME BINDINGS - Wrapper functions to expose C functions to Guile
-// =============================================================================
+/// SCHEME BINDINGS
 
-// Movement commands
-static SCM scm_forward_char(void) {
-    forward_char();
-    return SCM_UNSPECIFIED;
-}
 
-static SCM scm_backward_char(void) {
-    backward_char();
-    return SCM_UNSPECIFIED;
-}
 
-static SCM scm_next_line(void) {
-    next_line();
-    return SCM_UNSPECIFIED;
-}
-
-static SCM scm_previous_line(void) {
-    previous_line();
-    return SCM_UNSPECIFIED;
-}
-
-static SCM scm_forward_word(void) {
-    forward_word();
-    return SCM_UNSPECIFIED;
-}
-
-static SCM scm_backward_word(void) {
-    backward_word();
-    return SCM_UNSPECIFIED;
-}
-
-static SCM scm_forward_paragraph(void) {
-    forward_paragraph();
-    return SCM_UNSPECIFIED;
-}
-
-static SCM scm_backward_paragraph(void) {
-    backward_paragraph();
-    return SCM_UNSPECIFIED;
-}
-
-static SCM scm_beginning_of_line(void) {
-    beginning_of_line();
-    return SCM_UNSPECIFIED;
-}
-
-static SCM scm_end_of_line(void) {
-    end_of_line();
-    return SCM_UNSPECIFIED;
-}
-
-static SCM scm_beginning_of_buffer(void) {
-    beginning_of_buffer();
-    return SCM_UNSPECIFIED;
-}
-
-static SCM scm_end_of_buffer(void) {
-    end_of_buffer();
-    return SCM_UNSPECIFIED;
-}
-
-// Editing commands
-
+// NOT NEEDED
 static SCM scm_insert(SCM codepoint) {
     insert(scm_to_uint32(codepoint));
     return SCM_UNSPECIFIED;
 }
 
-static SCM scm_delete_backward_char(void) {
-    delete_backward_char();
+static SCM scm_delete_blank_lines(void) {
+    delete_blank_lines();
     return SCM_UNSPECIFIED;
 }
 
-static SCM scm_delete_char(void) {
-    delete_char();
+static SCM scm_back_to_indentation(void) {
+    back_to_indentation();
     return SCM_UNSPECIFIED;
 }
 
-static SCM my_scm_newline(void) {
-    newline();
+static SCM scm_set_mark(SCM pos) {
+    size_t position = scm_to_size_t(pos);
+    set_mark(position);
     return SCM_UNSPECIFIED;
 }
 
-static SCM scm_open_line(void) {
-    open_line();
-    return SCM_UNSPECIFIED;
-}
-
-static SCM scm_split_line(void) {
-    split_line();
-    return SCM_UNSPECIFIED;
-}
-
-// Kill/yank commands
-static SCM scm_kill_line(void) {
-    kill_line();
-    return SCM_UNSPECIFIED;
-}
-
-static SCM scm_kill_word(void) {
-    kill_word();
-    return SCM_UNSPECIFIED;
-}
-
-static SCM scm_backward_kill_word(void) {
-    backward_kill_word();
-    return SCM_UNSPECIFIED;
-}
-
-static SCM scm_kill_region(void) {
-    kill_region();
-    return SCM_UNSPECIFIED;
-}
-
-static SCM scm_yank(void) {
-    yank();
-    return SCM_UNSPECIFIED;
-}
-
-// Region commands
-static SCM scm_set_mark_command(void) {
-    set_mark_command();
-    return SCM_UNSPECIFIED;
-}
-
+// TODO Whit positive ARG activate transient-mark-mode
 static SCM scm_exchange_point_and_mark(void) {
     exchange_point_and_mark();
     return SCM_UNSPECIFIED;
@@ -479,51 +379,91 @@ static SCM scm_delete_region(void) {
     return SCM_UNSPECIFIED;
 }
 
-// Window management
-static SCM scm_split_window_below(void) {
-    split_window_below();
+static SCM scm_activate_mark(void) {
+    activate_mark();
     return SCM_UNSPECIFIED;
 }
 
-static SCM scm_split_window_right(void) {
-    split_window_right();
+static SCM scm_deactivate_mark(void) {
+    deactivate_mark();
     return SCM_UNSPECIFIED;
 }
 
-static SCM scm_delete_window(void) {
-    delete_window();
-    return SCM_UNSPECIFIED;
-}
 
-static SCM scm_delete_other_windows(void) {
-    delete_other_windows();
-    return SCM_UNSPECIFIED;
-}
+#define DEFINE_SCM_COMMAND(scm_name, c_func, doc_string)      \
+    static SCM scm_name(SCM arg) {                            \
+        if (!SCM_UNBNDP(arg)) {                               \
+            if (!scm_is_integer(arg)) {                       \
+                scm_wrong_type_arg(#scm_name, 1, arg);        \
+            }                                                 \
+            set_prefix_arg(scm_to_int(arg));                  \
+        }                                                     \
+        c_func();                                             \
+        return SCM_UNSPECIFIED;                               \
+    }                                                         \
+    static const char* scm_name##_doc = doc_string;
 
-static SCM scm_other_window(void) {
-    other_window();
-    return SCM_UNSPECIFIED;
-}
 
-static SCM scm_balance_windows(void) {
-    balance_windows();
-    return SCM_UNSPECIFIED;
-}
+DEFINE_SCM_COMMAND(my_scm_newline, newline,
+"Insert a newline, and move to left margin of the new line.\n"
+"With prefix argument ARG, insert that many newlines.\n"
+"\n"
+"TODO If `electric-indent-mode' is enabled, this indents the final new line\n"
+"that it adds, and reindents the preceding line.  To just insert\n"
+"a newline, use \\[electric-indent-just-newline].\n");
 
-static SCM scm_enlarge_window(void) {
-    enlarge_window();
-    return SCM_UNSPECIFIED;
-}
+DEFINE_SCM_COMMAND(scm_open_line,                      open_line,                      NULL);
+DEFINE_SCM_COMMAND(scm_split_line,                     split_line,                     NULL);
+DEFINE_SCM_COMMAND(scm_kill_line,                      kill_line,                      NULL);
+DEFINE_SCM_COMMAND(scm_kill_word,                      kill_word,                      NULL);
+DEFINE_SCM_COMMAND(scm_backward_kill_word,             backward_kill_word,             NULL);
+DEFINE_SCM_COMMAND(scm_kill_region,                    kill_region,                    NULL);
+DEFINE_SCM_COMMAND(scm_yank,                           yank,                           NULL);
+DEFINE_SCM_COMMAND(scm_set_mark_command,               set_mark_command,               NULL);// REMOVEME
+DEFINE_SCM_COMMAND(scm_delete_indentation,             delete_indentation,             NULL);
+DEFINE_SCM_COMMAND(scm_delete_char,                    delete_char,                    NULL);
+DEFINE_SCM_COMMAND(scm_delete_backward_char,           delete_backward_char,           NULL);
+DEFINE_SCM_COMMAND(scm_capitalize_word,                capitalize_word,                NULL);
+DEFINE_SCM_COMMAND(scm_downcase_word,                  downcase_word,                  NULL);
+DEFINE_SCM_COMMAND(scm_upcase_word,                    upcase_word,                    NULL);
+DEFINE_SCM_COMMAND(scm_transpose_chars,                transpose_chars,                NULL);
+DEFINE_SCM_COMMAND(scm_transpose_words,                transpose_words,                NULL);
+DEFINE_SCM_COMMAND(scm_forward_list,                   forward_list,                   NULL);
+DEFINE_SCM_COMMAND(scm_backward_list,                  backward_list,                  NULL);
+DEFINE_SCM_COMMAND(scm_forward_sexp,                   forward_sexp,                   NULL);
+DEFINE_SCM_COMMAND(scm_backward_sexp,                  backward_sexp,                  NULL);
+DEFINE_SCM_COMMAND(scm_kill_sexp,                      kill_sexp,                      NULL);
+DEFINE_SCM_COMMAND(scm_forward_char,                   forward_char,                   NULL);
+DEFINE_SCM_COMMAND(scm_backward_char,                  backward_char,                  NULL);
+DEFINE_SCM_COMMAND(scm_next_line,                      next_line,                      NULL);
+DEFINE_SCM_COMMAND(scm_previous_line,                  previous_line,                  NULL);
+DEFINE_SCM_COMMAND(scm_forward_word,                   forward_word,                   NULL);
+DEFINE_SCM_COMMAND(scm_backward_word,                  backward_word,                  NULL);
+DEFINE_SCM_COMMAND(scm_forward_paragraph,              forward_paragraph,              NULL);
+DEFINE_SCM_COMMAND(scm_backward_paragraph,             backward_paragraph,             NULL);
+DEFINE_SCM_COMMAND(scm_beginning_of_line,              beginning_of_line,              NULL);
+DEFINE_SCM_COMMAND(scm_end_of_line,                    end_of_line,                    NULL);
+DEFINE_SCM_COMMAND(scm_beginning_of_buffer,            beginning_of_buffer,            NULL);
+DEFINE_SCM_COMMAND(scm_end_of_buffer,                  end_of_buffer,                  NULL);
+DEFINE_SCM_COMMAND(scm_split_window_below,             split_window_below,             NULL);
+DEFINE_SCM_COMMAND(scm_split_window_right,             split_window_right,             NULL);
+DEFINE_SCM_COMMAND(scm_delete_window,                  delete_window,                  NULL);
+DEFINE_SCM_COMMAND(scm_delete_other_windows,           delete_other_windows,           NULL);
+DEFINE_SCM_COMMAND(scm_other_window,                   other_window,                   NULL);
+DEFINE_SCM_COMMAND(scm_balance_windows,                balance_windows,                NULL);
+DEFINE_SCM_COMMAND(scm_enlarge_window,                 enlarge_window,                 NULL);
+DEFINE_SCM_COMMAND(scm_recenter,                       recenter,                       NULL);
+DEFINE_SCM_COMMAND(scm_recenter_top_bottom,            recenter_top_bottom,            NULL);
+DEFINE_SCM_COMMAND(scm_scroll_down_command,            scroll_down_command,            NULL);
+DEFINE_SCM_COMMAND(scm_scroll_up_command,              scroll_up_command,              NULL);
+DEFINE_SCM_COMMAND(scm_scroll_other_window,            scroll_other_window,            NULL);
+DEFINE_SCM_COMMAND(scm_scroll_other_window_down,       scroll_other_window_down,       NULL);
+DEFINE_SCM_COMMAND(scm_move_to_window_line,            move_to_window_line,            NULL);
+DEFINE_SCM_COMMAND(scm_move_to_window_line_top_bottom, move_to_window_line_top_bottom, NULL);
+DEFINE_SCM_COMMAND(scm_next_buffer,                    next_buffer,                    NULL);
+DEFINE_SCM_COMMAND(scm_previous_buffer,                previous_buffer,                NULL);
 
-static SCM scm_recenter(void) {
-    recenter();
-    return SCM_UNSPECIFIED;
-}
 
-static SCM scm_recenter_top_bottom(void) {
-    recenter_top_bottom();
-    return SCM_UNSPECIFIED;
-}
 
 // Query functions
 static SCM scm_point(void) {
@@ -831,14 +771,28 @@ static SCM scm_keychord_bindings(void) {
     return alist;
 }
 
+
+
 /// BUFFER
 
-
 static SCM buffer_type;
+static SCM buffer_object_cache;  // Hash table: Buffer* -> SCM
 
-// Create a buffer foreign object from a Buffer pointer
-static SCM make_buffer_object(Buffer *buf) {
-    return scm_make_foreign_object_1(buffer_type, buf);
+static SCM get_or_make_buffer_object(Buffer *buf) {
+    if (!buf) return SCM_BOOL_F;
+    
+    // Use pointer as key (convert to integer)
+    SCM key = scm_from_uintptr_t((uintptr_t)buf);
+    SCM cached = scm_hashq_ref(buffer_object_cache, key, SCM_BOOL_F);
+    
+    if (scm_is_true(cached)) {
+        return cached;
+    }
+    
+    // Not cached - create new object and cache it
+    SCM obj = scm_make_foreign_object_1(buffer_type, buf);
+    scm_hashq_set_x(buffer_object_cache, key, obj);
+    return obj;
 }
 
 // Extract Buffer* from foreign object
@@ -852,20 +806,6 @@ static SCM buffer_p(SCM obj) {
     return scm_from_bool(SCM_IS_A_P(obj, buffer_type));
 }
 
-// Printer for buffer objects
-static int print_buffer(SCM buffer_obj, SCM port, scm_print_state *pstate SCM_UNUSED) {
-    Buffer *buf = scm_to_buffer(buffer_obj);
-    scm_puts("#<buffer ", port);
-    scm_puts(buf->name, port);
-    scm_puts(">", port);
-    return 1;
-}
-
-// =============================================================================
-// UPDATED BUFFER FUNCTIONS
-// =============================================================================
-
-// switch-to-buffer now accepts either string or buffer object
 static SCM scm_switch_to_buffer(SCM buf_or_name) {
     Buffer *buf = NULL;
     
@@ -894,7 +834,6 @@ static SCM scm_switch_to_buffer(SCM buf_or_name) {
     return SCM_BOOL_F;
 }
 
-// kill-buffer: fixed to not kill minibuf or leave only minibuf
 static SCM scm_kill_buffer(SCM name) {
     Buffer *buf;
     
@@ -941,16 +880,14 @@ static SCM scm_kill_buffer(SCM name) {
     return SCM_BOOL_T;
 }
 
-// other-buffer: returns buffer object, doesn't switch
 static SCM scm_other_buffer(void) {
     Buffer *next = other_buffer();
     if (next) {
-        return make_buffer_object(next);
+        return get_or_make_buffer_object(next);
     }
     return SCM_EOL;
 }
 
-// get-buffer: returns buffer object instead of boolean
 static SCM scm_get_buffer(SCM name) {
     if (!scm_is_string(name)) {
         scm_wrong_type_arg("get-buffer", 1, name);
@@ -960,16 +897,14 @@ static SCM scm_get_buffer(SCM name) {
     Buffer *buf = get_buffer(buffer_name);
     free(buffer_name);
     
-    return buf ? make_buffer_object(buf) : SCM_EOL;
+    return buf ? get_or_make_buffer_object(buf) : SCM_EOL;
 }
 
-// current-buffer: returns current buffer as object
 static SCM scm_current_buffer(void) {
     if (!current_buffer) return SCM_EOL;
-    return make_buffer_object(current_buffer);
+    return get_or_make_buffer_object(current_buffer);
 }
 
-// buffer-name: can take optional buffer argument
 static SCM scm_buffer_name(SCM buf_arg) {
     Buffer *buf;
     
@@ -985,7 +920,6 @@ static SCM scm_buffer_name(SCM buf_arg) {
     return scm_from_locale_string(buf->name);
 }
 
-// buffer-list: returns list of buffer objects
 static SCM scm_buffer_list(void) {
     if (!all_buffers) return SCM_EOL;
     
@@ -993,7 +927,7 @@ static SCM scm_buffer_list(void) {
     Buffer *buf = all_buffers;
     
     do {
-        SCM buf_obj = make_buffer_object(buf);
+        SCM buf_obj = get_or_make_buffer_object(buf);
         list = scm_cons(buf_obj, list);
         buf = buf->next;
     } while (buf != all_buffers);
@@ -1001,16 +935,316 @@ static SCM scm_buffer_list(void) {
     return scm_reverse(list);
 }
 
-
-static SCM scm_next_buffer(void) {
-    next_buffer();
+static SCM scm_append_to_buffer(SCM buffer_or_name, SCM text, SCM prepend_newline_scm) {
+    Buffer *buf = NULL;
+    
+    if (scm_is_string(buffer_or_name)) {
+        // It's a buffer name string
+        char *name = scm_to_utf8_string(buffer_or_name);
+        buf = get_buffer(name);
+        free(name);
+        
+        if (!buf) {
+            scm_misc_error("append-to-buffer", "No buffer named ~S", scm_list_1(buffer_or_name));
+            return SCM_UNSPECIFIED;
+        }
+    } else if (SCM_IS_A_P(buffer_or_name, buffer_type)) {
+        // It's a buffer object
+        buf = (Buffer*)scm_foreign_object_ref(buffer_or_name, 0);
+    } else {
+        scm_wrong_type_arg("append-to-buffer", 1, buffer_or_name);
+        return SCM_UNSPECIFIED;
+    }
+    
+    if (!buf) {
+        return SCM_UNSPECIFIED;
+    }
+    
+    // Get the text to append
+    if (!scm_is_string(text)) {
+        scm_wrong_type_arg("append-to-buffer", 2, text);
+        return SCM_UNSPECIFIED;
+    }
+    
+    char *text_str = scm_to_utf8_string(text);
+    
+    // Get prepend_newline flag (default to #t)
+    bool prepend_newline = true;
+    if (!SCM_UNBNDP(prepend_newline_scm)) {
+        prepend_newline = scm_to_bool(prepend_newline_scm);
+    }
+    
+    // Call the C function
+    append_to_buffer(buf, text_str, prepend_newline);
+    
+    free(text_str);
     return SCM_UNSPECIFIED;
 }
 
-static SCM scm_previous_buffer(void) {
-    previous_buffer();
+
+/// WINDOW
+
+static SCM window_type;
+
+static SCM window_object_cache;  // Hash table: Window* -> SCM
+
+// NOTE This is so (eq? (next-window) (next-window)) => #t
+// Making Window objects have identity.
+// That's needed because every call to make_window_object()
+// creates a new Scheme foreign object, even if it wraps the same underlying C Window* pointer.
+
+static SCM get_or_make_window_object(Window *win) {
+    if (!win) return SCM_BOOL_F;
+    
+    // Use pointer as key (convert to integer)
+    SCM key = scm_from_uintptr_t((uintptr_t)win);
+    SCM cached = scm_hashq_ref(window_object_cache, key, SCM_BOOL_F);
+    
+    if (scm_is_true(cached)) {
+        return cached;
+    }
+    
+    // Not cached - create new object and cache it
+    SCM obj = scm_make_foreign_object_1(window_type, win);
+    scm_hashq_set_x(window_object_cache, key, obj);
+    return obj;
+}
+
+
+/* static SCM make_window_object(Window *win) { */
+/*     return scm_make_foreign_object_1(window_type, win); */
+/* } */
+
+static Window* scm_to_window(SCM obj) {
+    scm_assert_foreign_object_type(window_type, obj);
+    return scm_foreign_object_ref(obj, 0);
+}
+
+static SCM window_p(SCM obj) {
+    return scm_from_bool(SCM_IS_A_P(obj, window_type));
+}
+
+static SCM scm_selected_window(void) {
+    return get_or_make_window_object(wm.selected);
+}
+
+static SCM scm_minibuffer_window(void) {
+    return get_or_make_window_object(wm.minibuffer_window);
+}
+
+static SCM scm_window_buffer(SCM window_obj) {
+    Window *win;
+    
+    if (SCM_UNBNDP(window_obj)) {
+        win = wm.selected;
+    } else {
+        if (!scm_is_true(window_p(window_obj))) {
+            scm_wrong_type_arg("window-buffer", 1, window_obj);
+        }
+        win = scm_to_window(window_obj);
+    }
+    
+    return get_or_make_buffer_object(win->buffer);
+}
+
+static SCM scm_window_point(SCM window_obj) {
+    Window *win;
+    
+    if (SCM_UNBNDP(window_obj)) {
+        // No argument provided - use selected window
+        win = wm.selected;
+    } else {
+        if (!scm_is_true(window_p(window_obj))) {
+            scm_wrong_type_arg("window-point", 1, window_obj);
+        }
+        win = scm_to_window(window_obj);
+    }
+    
+    return scm_from_size_t(win->point);
+}
+
+static SCM scm_set_window_point(SCM window_obj, SCM pos_scm) {
+    if (!scm_is_true(window_p(window_obj))) {
+        scm_wrong_type_arg("set-window-point", 1, window_obj);
+    }
+    if (!scm_is_integer(pos_scm)) {
+        scm_wrong_type_arg("set-window-point", 2, pos_scm);
+    }
+    
+    Window *win = scm_to_window(window_obj);
+    win->point = scm_to_size_t(pos_scm);
+    
+    // If this is the selected window, update buffer's point too
+    if (win == wm.selected && win->buffer) {
+        win->buffer->pt = win->point;
+    }
+    
     return SCM_UNSPECIFIED;
 }
+
+static SCM scm_window_list(void) {
+    Window *leaves[256];
+    int count = 0;
+    collect_leaf_windows(wm.root, leaves, &count);
+    
+    SCM result = SCM_EOL;
+    for (int i = count - 1; i >= 0; i--) {
+        result = scm_cons(get_or_make_window_object(leaves[i]), result);
+    }
+    
+    // Add minibuffer if active
+    if (wm.minibuffer_active) {
+        result = scm_append(scm_list_2(result, 
+                           scm_list_1(get_or_make_window_object(wm.minibuffer_window))));
+    }
+    
+    return result;
+}
+
+///
+
+static SCM scm_next_window(SCM window_obj, SCM minibuf_scm) {
+    Window *win;
+    
+    if (SCM_UNBNDP(window_obj)) {
+        win = wm.selected;
+    } else {
+        if (!scm_is_true(window_p(window_obj))) {
+            scm_wrong_type_arg("next-window", 1, window_obj);
+        }
+        win = scm_to_window(window_obj);
+    }
+    
+    // TODO: handle minibuf argument (whether to include minibuffer in cycle)
+    // For now, use your existing next_window() logic
+    Window *next = next_window(win);
+    return get_or_make_window_object(next);
+}
+
+static SCM scm_previous_window(SCM window_obj, SCM minibuf_scm) {
+    Window *win;
+    
+    if (SCM_UNBNDP(window_obj)) {
+        win = wm.selected;
+    } else {
+        if (!scm_is_true(window_p(window_obj))) {
+            scm_wrong_type_arg("previous-window", 1, window_obj);
+        }
+        win = scm_to_window(window_obj);
+    }
+    
+    Window *prev = previous_window(win);
+    return get_or_make_window_object(prev);
+}
+
+static SCM scm_select_window(SCM window_obj) {
+    if (!scm_is_true(window_p(window_obj))) {
+        scm_wrong_type_arg("select-window", 1, window_obj);
+    }
+    
+    Window *win = scm_to_window(window_obj);
+    
+    if (win == wm.selected) {
+        return SCM_UNSPECIFIED;
+    }
+    
+    // Save current window's point
+    wm.selected->point = current_buffer->pt;
+    
+    // Switch selection
+    wm.selected->is_selected = false;
+    win->is_selected = true;
+    wm.selected = win;
+    
+    // Update buffer and point
+    current_buffer = win->buffer;
+    current_buffer->pt = win->point;
+    
+    return SCM_UNSPECIFIED;
+}
+
+static SCM scm_window_pixel_width(SCM window_obj) {
+    Window *win;
+    
+    if (SCM_UNBNDP(window_obj)) {
+        win = wm.selected;
+    } else {
+        if (!scm_is_true(window_p(window_obj))) {
+            scm_wrong_type_arg("window-width", 1, window_obj);
+        }
+        win = scm_to_window(window_obj);
+    }
+    
+    return scm_from_double(win->width);
+}
+
+static SCM scm_window_pixel_height(SCM window_obj) {
+    Window *win;
+    
+    if (SCM_UNBNDP(window_obj)) {
+        win = wm.selected;
+    } else {
+        if (!scm_is_true(window_p(window_obj))) {
+            scm_wrong_type_arg("window-height", 1, window_obj);
+        }
+        win = scm_to_window(window_obj);
+    }
+    
+    return scm_from_double(win->height);
+}
+
+static SCM scm_minibuffer_window_p(SCM window_obj) {
+    Window *win;
+    
+    if (SCM_UNBNDP(window_obj)) {
+        win = wm.selected;
+    } else {
+        if (!scm_is_true(window_p(window_obj))) {
+            scm_wrong_type_arg("window-minibuffer-p", 1, window_obj);
+        }
+        win = scm_to_window(window_obj);
+    }
+    
+    return scm_from_bool(is_minibuffer_window(win));
+}
+
+static SCM scm_set_window_buffer(SCM window_obj, SCM buffer_obj) {
+    if (!scm_is_true(window_p(window_obj))) {
+        scm_wrong_type_arg("set-window-buffer", 1, window_obj);
+    }
+    
+    Buffer *buf = NULL;
+    if (scm_is_string(buffer_obj)) {
+        char *name = scm_to_utf8_string(buffer_obj);
+        buf = get_buffer(name);
+        free(name);
+        if (!buf) {
+            scm_misc_error("set-window-buffer", "No buffer named ~S", scm_list_1(buffer_obj));
+        }
+    } else if (SCM_IS_A_P(buffer_obj, buffer_type)) {
+        buf = scm_to_buffer(buffer_obj);
+    } else {
+        scm_wrong_type_arg("set-window-buffer", 2, buffer_obj);
+    }
+    
+    Window *win = scm_to_window(window_obj);
+    win->buffer = buf;
+    
+    // If this is the selected window, update current_buffer
+    if (win == wm.selected) {
+        current_buffer = buf;
+        current_buffer->pt = win->point;
+    }
+    
+    return SCM_UNSPECIFIED;
+}
+
+
+
+
+
+
+
 
 
 
@@ -1019,13 +1253,11 @@ static SCM scm_previous_buffer(void) {
 #include <unistd.h>
 #include <pwd.h>
 
-// Helper to check if file exists
 static bool file_exists(const char *path) {
     struct stat st;
     return stat(path, &st) == 0 && S_ISREG(st.st_mode);
 }
 
-// Get home directory
 static const char* get_home_directory(void) {
     const char *home = getenv("HOME");
     if (home) return home;
@@ -1103,6 +1335,17 @@ static SCM scm_load(SCM filename) {
     return result;
 }
 
+#define REGISTER_COMMAND(scheme_name, scm_func)                                  \
+  do {                                                                         \
+    scm_c_define_gsubr(scheme_name, 0, 1, 0, scm_func);                        \
+    if (scm_func##_doc) {                                                      \
+      SCM proc = scm_variable_ref(scm_c_lookup(scheme_name));                  \
+      scm_set_procedure_property_x(proc,                                       \
+                                   scm_from_utf8_symbol("documentation"),      \
+                                   scm_from_utf8_string(scm_func##_doc));      \
+    }                                                                          \
+  } while (0)
+
 
 
 void lisp_init(void) {
@@ -1112,117 +1355,195 @@ void lisp_init(void) {
     SCM slots = scm_list_1(scm_from_utf8_symbol("data"));
     buffer_type = scm_make_foreign_object_type(name, slots, NULL);
 
+    // Initialize buffer object cache
+    buffer_object_cache = scm_make_hash_table(scm_from_int(16));
+    scm_gc_protect_object(buffer_object_cache);
+
+
+    // Initialize window foreign object type
+    name = scm_from_utf8_symbol("window");
+    slots = scm_list_1(scm_from_utf8_symbol("data"));
+    window_type = scm_make_foreign_object_type(name, slots, NULL);
+    
+    // Initialize window object cache
+    window_object_cache = scm_make_hash_table(scm_from_int(16));
+    scm_gc_protect_object(window_object_cache);
+    
+
+
     setup_user_init_file();
 
 
-    scm_c_define_gsubr("load",                     1, 0, 0, scm_load);
+    scm_c_define_gsubr("load",                           1, 0, 0, scm_load);
 
 
     // Eval
-    scm_c_define_gsubr("eval-last-sexp",           0, 0, 0, scm_eval_last_sexp);
-    scm_c_define_gsubr("eval-buffer",              0, 0, 0, scm_eval_buffer);
-    scm_c_define_gsubr("eval-region",              0, 0, 0, scm_eval_region);
+    scm_c_define_gsubr("eval-last-sexp",                 0, 0, 0, scm_eval_last_sexp);
+    scm_c_define_gsubr("eval-buffer",                    0, 0, 0, scm_eval_buffer);
+    scm_c_define_gsubr("eval-region",                    0, 0, 0, scm_eval_region);
 
     // Arg
-    scm_c_define_gsubr("universal-argument",       0, 0, 0, scm_universal_argument);
-    scm_c_define_gsubr("negative-argument",        0, 0, 0, scm_negative_argument);
-    scm_c_define_gsubr("digit-argument",           0, 0, 0, scm_digit_argument);
-    scm_c_define_gsubr("execute-extended-command", 0, 0, 0, scm_execute_extended_command);
-    scm_c_define_gsubr("keyboard-quit",            0, 0, 0, scm_keyboard_quit);
+    scm_c_define_gsubr("universal-argument",             0, 0, 0, scm_universal_argument);
+    scm_c_define_gsubr("negative-argument",              0, 0, 0, scm_negative_argument);
+    scm_c_define_gsubr("digit-argument",                 0, 0, 0, scm_digit_argument);
+    scm_c_define_gsubr("execute-extended-command",       0, 0, 0, scm_execute_extended_command);
+    scm_c_define_gsubr("keyboard-quit",                  0, 0, 0, scm_keyboard_quit);
 
     // Buffer
-    scm_c_define_gsubr("buffer?",                  1, 0, 0, buffer_p);
-    scm_c_define_gsubr("switch-to-buffer",         1, 0, 0, scm_switch_to_buffer);
-    scm_c_define_gsubr("kill-buffer",              0, 1, 0, scm_kill_buffer);
-    scm_c_define_gsubr("buffer-name",              0, 1, 0, scm_buffer_name);
-    scm_c_define_gsubr("buffer-list",              0, 0, 0, scm_buffer_list);
-    scm_c_define_gsubr("other-buffer",             0, 0, 0, scm_other_buffer);
-    scm_c_define_gsubr("get-buffer",               1, 0, 0, scm_get_buffer);
-    scm_c_define_gsubr("current-buffer",           0, 0, 0, scm_current_buffer);
-    scm_c_define_gsubr("next-buffer",              0, 0, 0, scm_next_buffer);
-    scm_c_define_gsubr("previous-buffer",          0, 0, 0, scm_previous_buffer);        
+    scm_c_define_gsubr("buffer?",                        1, 0, 0, buffer_p);
+    scm_c_define_gsubr("switch-to-buffer",               1, 0, 0, scm_switch_to_buffer);
+    scm_c_define_gsubr("kill-buffer",                    0, 1, 0, scm_kill_buffer);
+    scm_c_define_gsubr("buffer-name",                    0, 1, 0, scm_buffer_name);
+    scm_c_define_gsubr("buffer-list",                    0, 0, 0, scm_buffer_list);
+    scm_c_define_gsubr("other-buffer",                   0, 0, 0, scm_other_buffer);
+    scm_c_define_gsubr("get-buffer",                     1, 0, 0, scm_get_buffer);
+    scm_c_define_gsubr("current-buffer",                 0, 0, 0, scm_current_buffer);
+    scm_c_define_gsubr("next-buffer",                    0, 1, 0, scm_next_buffer);
+    scm_c_define_gsubr("previous-buffer",                0, 1, 0, scm_previous_buffer);        
+    scm_c_define_gsubr("append-to-buffer",               2, 1, 0, scm_append_to_buffer);
+
+    // Window
+    scm_c_define_gsubr("window?",                        1, 0, 0, window_p);
+    scm_c_define_gsubr("selected-window",                0, 0, 0, scm_selected_window);
+    scm_c_define_gsubr("minibuffer-window",              0, 0, 0, scm_minibuffer_window);
+    scm_c_define_gsubr("window-buffer",                  0, 1, 0, scm_window_buffer);
+    scm_c_define_gsubr("window-point",                   0, 1, 0, scm_window_point);
+    scm_c_define_gsubr("set-window-point",               2, 0, 0, scm_set_window_point);
+    scm_c_define_gsubr("window-list",                    0, 0, 0, scm_window_list);
+    
+    scm_c_define_gsubr("next-window",                    0, 2, 0, scm_next_window);
+    scm_c_define_gsubr("previous-window",                0, 2, 0, scm_previous_window);
+    scm_c_define_gsubr("select-window",                  1, 0, 0, scm_select_window);
+    scm_c_define_gsubr("window-pixel-width",             0, 1, 0, scm_window_pixel_width);
+    scm_c_define_gsubr("window-pixel-height",            0, 1, 0, scm_window_pixel_height);
+    scm_c_define_gsubr("minibuffer-window?",             0, 1, 0, scm_minibuffer_window_p);
+    scm_c_define_gsubr("set-window-buffer",              2, 0, 0, scm_set_window_buffer);    
+
 
     // Keychord
-    scm_c_define_gsubr("keychord-bind",            2, 0, 0, scm_keychord_bind);
-    scm_c_define_gsubr("keychord-unbind",          1, 0, 0, scm_keychord_unbind);
-    scm_c_define_gsubr("keychord-documentation",   1, 0, 0, scm_keychord_documentation);
-    scm_c_define_gsubr("keychord-bindings",        0, 0, 0, scm_keychord_bindings);    
+    scm_c_define_gsubr("keychord-bind",                  2, 0, 0, scm_keychord_bind);
+    scm_c_define_gsubr("keychord-unbind",                1, 0, 0, scm_keychord_unbind);
+    scm_c_define_gsubr("keychord-documentation",         1, 0, 0, scm_keychord_documentation);
+    scm_c_define_gsubr("keychord-bindings",              0, 0, 0, scm_keychord_bindings);    
 
     // Movement
-    scm_c_define_gsubr("forward-char",             0, 0, 0, scm_forward_char);
-    scm_c_define_gsubr("backward-char",            0, 0, 0, scm_backward_char);
-    scm_c_define_gsubr("next-line",                0, 0, 0, scm_next_line);
-    scm_c_define_gsubr("previous-line",            0, 0, 0, scm_previous_line);
-    scm_c_define_gsubr("forward-word",             0, 0, 0, scm_forward_word);
-    scm_c_define_gsubr("backward-word",            0, 0, 0, scm_backward_word);
-    scm_c_define_gsubr("forward-paragraph",        0, 0, 0, scm_forward_paragraph);
-    scm_c_define_gsubr("backward-paragraph",       0, 0, 0, scm_backward_paragraph);
-    scm_c_define_gsubr("beginning-of-line",        0, 0, 0, scm_beginning_of_line);
-    scm_c_define_gsubr("end-of-line",              0, 0, 0, scm_end_of_line);
-    scm_c_define_gsubr("beginning-of-buffer",      0, 0, 0, scm_beginning_of_buffer);
-    scm_c_define_gsubr("end-of-buffer",            0, 0, 0, scm_end_of_buffer);
+    scm_c_define_gsubr("forward-char",                   0, 1, 0, scm_forward_char);
+    scm_c_define_gsubr("backward-char",                  0, 1, 0, scm_backward_char);
+    scm_c_define_gsubr("next-line",                      0, 1, 0, scm_next_line);
+    scm_c_define_gsubr("previous-line",                  0, 1, 0, scm_previous_line);
+
+    scm_c_define_gsubr("forward-word",                   0, 1, 0, scm_forward_word);
+    scm_c_define_gsubr("backward-word",                  0, 1, 0, scm_backward_word);
+    scm_c_define_gsubr("forward-paragraph",              0, 1, 0, scm_forward_paragraph);
+    scm_c_define_gsubr("backward-paragraph",             0, 1, 0, scm_backward_paragraph);
+    scm_c_define_gsubr("beginning-of-line",              0, 1, 0, scm_beginning_of_line);
+    scm_c_define_gsubr("end-of-line",                    0, 1, 0, scm_end_of_line);
+    scm_c_define_gsubr("end-of-buffer",                  0, 1, 0, scm_end_of_buffer);
+    scm_c_define_gsubr("beginning-of-buffer",            0, 1, 0, scm_beginning_of_buffer);
     
     // Editing
-    scm_c_define_gsubr("insert",                   1, 0, 0, scm_insert);
-    scm_c_define_gsubr("delete-backward-char",     0, 0, 0, scm_delete_backward_char);
-    scm_c_define_gsubr("delete-char",              0, 0, 0, scm_delete_char);
-    scm_c_define_gsubr("newline",                  0, 0, 0, my_scm_newline);
-    scm_c_define_gsubr("open-line",                0, 0, 0, scm_open_line);
-    scm_c_define_gsubr("split-line",               0, 0, 0, scm_split_line);
+    scm_c_define_gsubr("insert",                         1, 0, 0, scm_insert);
+    scm_c_define_gsubr("delete-backward-char",           0, 1, 0, scm_delete_backward_char);
+    scm_c_define_gsubr("delete-char",                    0, 1, 0, scm_delete_char);
+    scm_c_define_gsubr("delete-blank-lines",             0, 0, 0, scm_delete_blank_lines);
+    scm_c_define_gsubr("delete-indentation",             0, 1, 0, scm_delete_indentation);
+    scm_c_define_gsubr("back-to-indentation",            0, 0, 0, scm_back_to_indentation);
+
+    /* scm_c_define_gsubr("newline",                        0, 1, 0, my_scm_newline); */
+    REGISTER_COMMAND("newline", my_scm_newline);
+    scm_c_define_gsubr("open-line",                      0, 1, 0, scm_open_line);
+    scm_c_define_gsubr("split-line",                     0, 1, 0, scm_split_line);
+    scm_c_define_gsubr("capitalize-word",                0, 1, 0, scm_capitalize_word);
+    scm_c_define_gsubr("downcase-word",                  0, 1, 0, scm_downcase_word);
+    scm_c_define_gsubr("upcase-word",                    0, 1, 0, scm_upcase_word);
+
+
+    // Transpose
+    scm_c_define_gsubr("transpose-chars",                0, 1, 0, scm_transpose_chars);
+    scm_c_define_gsubr("transpose-words",                0, 1, 0, scm_transpose_words);
+
+    // List
+    scm_c_define_gsubr("forward-list",                   0, 1, 0, scm_forward_list);
+    scm_c_define_gsubr("backward-list",                  0, 1, 0, scm_backward_list);
+
+    // Sexps
+
+    scm_c_define_gsubr("forward-sexp",                   0, 1, 0, scm_forward_sexp);
+    scm_c_define_gsubr("backward-sexp",                  0, 1, 0, scm_backward_sexp);
+    scm_c_define_gsubr("kill-sexp",                      0, 1, 0, scm_kill_sexp);
+
     
     // Kill/yank
-    scm_c_define_gsubr("kill-line",                0, 0, 0, scm_kill_line);
-    scm_c_define_gsubr("kill-word",                0, 0, 0, scm_kill_word);
-    scm_c_define_gsubr("backward-kill-word",       0, 0, 0, scm_backward_kill_word);
-    scm_c_define_gsubr("kill-region",              0, 0, 0, scm_kill_region);
-    scm_c_define_gsubr("yank",                     0, 0, 0, scm_yank);
+    scm_c_define_gsubr("kill-line",                      0, 1, 0, scm_kill_line);
+    scm_c_define_gsubr("kill-word",                      0, 1, 0, scm_kill_word);
+    scm_c_define_gsubr("backward-kill-word",             0, 1, 0, scm_backward_kill_word);
+    scm_c_define_gsubr("kill-region",                    0, 1, 0, scm_kill_region);
+    scm_c_define_gsubr("yank",                           0, 1, 0, scm_yank);
     
     // Region
-    scm_c_define_gsubr("set-mark-command",         0, 0, 0, scm_set_mark_command);
-    scm_c_define_gsubr("exchange-point-and-mark",  0, 0, 0, scm_exchange_point_and_mark);
-    scm_c_define_gsubr("delete-region",            0, 0, 0, scm_delete_region);
+    scm_c_define_gsubr("set-mark-command",               0, 1, 0, scm_set_mark_command);
+    scm_c_define_gsubr("set-mark",                       1, 0, 0, scm_set_mark);
+    scm_c_define_gsubr("exchange-point-and-mark",        0, 0, 0, scm_exchange_point_and_mark);
+    scm_c_define_gsubr("delete-region",                  0, 0, 0, scm_delete_region);
+    scm_c_define_gsubr("activate-mark",                  0, 0, 0, scm_activate_mark);
+    scm_c_define_gsubr("deactivate-mark",                0, 0, 0, scm_deactivate_mark);
     
     // Windows
-    scm_c_define_gsubr("split-window-below",       0, 0, 0, scm_split_window_below);
-    scm_c_define_gsubr("split-window-right",       0, 0, 0, scm_split_window_right);
-    scm_c_define_gsubr("delete-window",            0, 0, 0, scm_delete_window);
-    scm_c_define_gsubr("delete-other-windows",     0, 0, 0, scm_delete_other_windows);
-    scm_c_define_gsubr("other-window",             0, 0, 0, scm_other_window);
-    scm_c_define_gsubr("balance-windows",          0, 0, 0, scm_balance_windows);
-    scm_c_define_gsubr("enlarge-window",           0, 0, 0, scm_enlarge_window);
-    scm_c_define_gsubr("recenter",                 0, 0, 0, scm_recenter);
-    scm_c_define_gsubr("recenter-top-bottom",      0, 0, 0, scm_recenter_top_bottom);
+    scm_c_define_gsubr("split-window-below",             0, 1, 0, scm_split_window_below);
+    scm_c_define_gsubr("split-window-right",             0, 1, 0, scm_split_window_right);
+    scm_c_define_gsubr("delete-window",                  0, 1, 0, scm_delete_window);
+    scm_c_define_gsubr("delete-other-windows",           0, 1, 0, scm_delete_other_windows);
+    scm_c_define_gsubr("other-window",                   0, 1, 0, scm_other_window);
+    scm_c_define_gsubr("balance-windows",                0, 1, 0, scm_balance_windows);
+    scm_c_define_gsubr("enlarge-window",                 0, 1, 0, scm_enlarge_window);
+    scm_c_define_gsubr("recenter",                       0, 1, 0, scm_recenter);
+    scm_c_define_gsubr("recenter-top-bottom",            0, 1, 0, scm_recenter_top_bottom);
+    scm_c_define_gsubr("scroll-down-command",            0, 1, 0, scm_scroll_down_command);
+    scm_c_define_gsubr("scroll-up-command",              0, 1, 0, scm_scroll_up_command);
+    scm_c_define_gsubr("scroll-other-window",            0, 1, 0, scm_scroll_other_window);
+    scm_c_define_gsubr("scroll-other-window-down",       0, 1, 0, scm_scroll_other_window_down);
+    scm_c_define_gsubr("move-to-window-line",            0, 1, 0, scm_move_to_window_line);
+    scm_c_define_gsubr("move-to-window-line-top-bottom", 0, 1, 0, scm_move_to_window_line_top_bottom);
     
     // Query functions
-    scm_c_define_gsubr("point",                    0, 0, 0, scm_point);
-    scm_c_define_gsubr("mark",                     0, 0, 0, scm_mark);
-    scm_c_define_gsubr("mark-active?",             0, 0, 0, scm_mark_active_p);
-    scm_c_define_gsubr("buffer-size",              0, 0, 0, scm_buffer_size);
-    scm_c_define_gsubr("current-column",           0, 0, 0, scm_current_column);
-    scm_c_define_gsubr("line-beginning-position",  0, 0, 0, scm_line_beginning_position);
-    scm_c_define_gsubr("line-end-position",        0, 0, 0, scm_line_end_position);
+    scm_c_define_gsubr("point",                          0, 0, 0, scm_point);
+    scm_c_define_gsubr("mark",                           0, 0, 0, scm_mark);
+    scm_c_define_gsubr("mark-active?",                   0, 0, 0, scm_mark_active_p);
+    scm_c_define_gsubr("buffer-size",                    0, 0, 0, scm_buffer_size);
+    scm_c_define_gsubr("current-column",                 0, 0, 0, scm_current_column);
+    scm_c_define_gsubr("line-beginning-position",        0, 0, 0, scm_line_beginning_position);
+    scm_c_define_gsubr("line-end-position",              0, 0, 0, scm_line_end_position);
     
     // Buffer content
-    scm_c_define_gsubr("buffer-substring",         2, 0, 0, scm_buffer_substring);
-    scm_c_define_gsubr("char-after",               0, 1, 0, scm_char_after);
-    scm_c_define_gsubr("char-before",              0, 1, 0, scm_char_before);
+    scm_c_define_gsubr("buffer-substring",               2, 0, 0, scm_buffer_substring);
+    scm_c_define_gsubr("char-after",                     0, 1, 0, scm_char_after);
+    scm_c_define_gsubr("char-before",                    0, 1, 0, scm_char_before);
     
     // Message
-    scm_c_define_gsubr("message",                  1, 0, 1, scm_message);    
-    scm_c_define_gsubr("load-theme",               1, 0, 0, scm_load_theme);
+    scm_c_define_gsubr("message",                        1, 0, 1, scm_message);    
+    scm_c_define_gsubr("load-theme",                     1, 0, 0, scm_load_theme);
 
     // NOTE Eval init.scm after defining subroutine
-    /* scm_c_eval_string( */
-    /*     "(when (file-exists? \"init.scm\") " */
-    /*     "  (load \"init.scm\"))" */
-    /* ); */
 
     scm_c_eval_string(
         "(when (and user-init-file (string? user-init-file))"
         "  (catch #t"
         "    (lambda () (load user-init-file))"
         "    (lambda (key . args)"
-        "      (message \"Error loading init file: ~a\" user-init-file))))"
+        "      (let* ((port (open-output-string))"
+        "             (subr (and (pair? args) (car args)))"
+        "             (msg-template (and (pair? args) (pair? (cdr args)) (cadr args)))"
+        "             (msg-args (and (pair? args) (pair? (cdr args)) (pair? (cddr args)) (caddr args))))"
+        "        (display \"Error loading \" port)"
+        "        (display user-init-file port)"
+        "        (display \": \" port)"
+        "        (display key port)"
+        "        (when msg-template"
+        "          (display \" - \" port)"
+        "          (if (and msg-args (not (null? msg-args)))"
+        "              (simple-format port msg-template msg-args)"
+        "              (display msg-template port)))"
+        "        (message \"~a\" (get-output-string port))))))"
     );
 
 

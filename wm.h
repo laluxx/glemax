@@ -39,7 +39,7 @@ typedef struct {
     size_t point;
     bool is_selected;
     float scrollx, scrolly;
-    int left_index;   // Index of left child in array (-1 if leaf)
+    int left_index;   // Index of left child in array  (-1 if leaf)
     int right_index;  // Index of right child in array (-1 if leaf)
 } WindowSnapshot;
 
@@ -47,14 +47,15 @@ typedef struct {
     WindowSnapshot *windows; // Array of window snapshots
     int count;               // Number of windows
     int root_index;          // Index of root window
-    float root_x, root_y, root_width, root_height;  // Add these
+    float root_x, root_y;
+    float  root_width, root_height;
 } WindowConfiguration;
 
 typedef struct {
     Window *root;    
     Window *selected;
     Window *minibuffer_window;
-    Window *previous_window;   // NOTE Only tracked for the modeline
+    Window *previous_window;   // NOTE Only tracked for the modeline we might want to change name
     bool minibuffer_active;
     int window_count;
     WindowConfiguration saved_config;
@@ -106,7 +107,20 @@ void debug_print_windows();
 
 
 void update_window_scroll(Window *win);
-void recenter();
 
+
+// Window related editing functions
+
+void recenter();
 extern int recenter_positions;
 void recenter_top_bottom();
+
+
+void scroll_up_command();
+void scroll_down_command();
+void scroll_other_window();
+void scroll_other_window_down();
+
+void move_to_window_line();
+extern int move_to_window_line_positions;
+void move_to_window_line_top_bottom();
