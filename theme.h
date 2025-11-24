@@ -12,6 +12,8 @@ typedef struct FaceSpec {
     bool bold;
     bool italic;
     bool underline;
+    int inherit_from;
+    bool has_inherit;
     struct FaceSpec *next;
 } FaceSpec;
 

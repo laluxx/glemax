@@ -15,6 +15,7 @@ typedef struct {
     bool bold;
     bool italic;
     bool underline;
+    int inherit_from;
 } BaseFace;
 
 static BaseFace *base_faces = NULL;
@@ -39,6 +40,7 @@ void init_themes(void) {
                 base_faces[i].bold = face->bold;
                 base_faces[i].italic = face->italic;
                 base_faces[i].underline = face->underline;
+                base_faces[i].inherit_from = face->inherit_from;
             }
         }
     }
@@ -152,6 +154,7 @@ static void reapply_all_themes(void) {
             face->bold = base_faces[i].bold;
             face->italic = base_faces[i].italic;
             face->underline = base_faces[i].underline;
+            face->inherit_from = base_faces[i].inherit_from;
         }
     }
     
@@ -175,7 +178,20 @@ static void reapply_all_themes(void) {
             while (spec) {
                 Face *face = get_named_face(spec->face_name);
                 if (face) {
-                    // Only override what the theme explicitly sets
+                    // Apply inheritance first (if specified)
+                    if (spec->has_inherit) {
+                        face->inherit_from = spec->inherit_from;
+                        // When inherit is set, clear explicit color flags
+                        // so inheritance resolution can work
+                        if (!spec->has_fg) {
+                            face->fg_set = false;
+                        }
+                        if (!spec->has_bg) {
+                            face->bg_set = false;
+                        }
+                    }
+                    
+                    // Then apply explicit properties (these override inheritance)
                     if (spec->has_fg) {
                         face->fg = spec->fg;
                         face->fg_set = true;
@@ -184,8 +200,6 @@ static void reapply_all_themes(void) {
                         face->bg = spec->bg;
                         face->bg_set = true;
                     }
-                    // Note: bold, italic, underline are applied directly
-                    // You might want to track these separately too if needed
                     if (spec->bold) face->bold = true;
                     if (spec->italic) face->italic = true;
                     if (spec->underline) face->underline = true;
@@ -391,7 +405,10 @@ static SCM scm_custom_theme_set_faces(SCM theme_name, SCM rest) {
         fspec->bold = false;
         fspec->italic = false;
         fspec->underline = false;
-        
+        fspec->inherit_from = -1;      // Add this
+        fspec->has_inherit = false;    // Add this
+
+
         // Navigate: (face-name ((t (:foreground ...))))
         SCM rest_of_spec = scm_cdr(face_spec);
         
@@ -481,6 +498,18 @@ static SCM scm_custom_theme_set_faces(SCM theme_name, SCM rest) {
                             }
                             else if (strcmp(key_name, "underline") == 0) {
                                 fspec->underline = scm_is_true(value);
+                            }
+                            else if (strcmp(key_name, "inherit") == 0) {
+                                if (scm_is_symbol(value) || scm_is_string(value)) {
+                                    char *inherit_name = scm_to_c_string(value);
+                                    int inherit_id = face_id_from_name(inherit_name);
+                                    if (inherit_id >= 0) {
+                                        // Store this for later - you'll need to add inherit_from to FaceSpec too
+                                        fspec->inherit_from = inherit_id;
+                                        fspec->has_inherit = true;
+                                    }
+                                    free(inherit_name);
+                                }
                             }
                             
                             free(key_name);

@@ -1012,6 +1012,186 @@ static SCM scm_append_to_buffer(SCM buffer_or_name, SCM text, SCM prepend_newlin
 }
 
 
+/// Buffer local variables
+
+static SCM scm_set_default(SCM symbol, SCM value) {
+    if (!scm_is_symbol(symbol)) {
+        scm_wrong_type_arg("set-default", 1, symbol);
+    }
+    
+    set_default(symbol, value);
+    return value;
+}
+
+static SCM scm_default_value(SCM symbol) {
+    if (!scm_is_symbol(symbol)) {
+        scm_wrong_type_arg("default-value", 1, symbol);
+    }
+    
+    return default_value(symbol);
+}
+
+static SCM scm_buffer_local_value(SCM variable, SCM buffer_obj) {
+    if (!scm_is_symbol(variable)) {
+        scm_wrong_type_arg("buffer-local-value", 1, variable);
+    }
+    
+    Buffer *buf = scm_to_buffer(buffer_obj);
+    if (!buf) {
+        scm_wrong_type_arg("buffer-local-value", 2, buffer_obj);
+    }
+    
+    return buffer_local_value(variable, buf);
+}
+
+static SCM scm_set(SCM symbol, SCM newval) {
+    if (!scm_is_symbol(symbol)) {
+        scm_wrong_type_arg("set", 1, symbol);
+    }
+    
+    return buffer_set(symbol, newval, current_buffer);
+}
+
+static SCM scm_setq(SCM symbol, SCM value) {
+    if (!scm_is_symbol(symbol)) {
+        scm_wrong_type_arg("setq", 1, symbol);
+    }
+    
+    if (!current_buffer) {
+        // No current buffer, set globally
+        SCM symbol_str = scm_symbol_to_string(symbol);
+        char *c_str = scm_to_locale_string(symbol_str);
+        scm_c_module_define(scm_current_module(), c_str, value);
+        free(c_str);
+        return value;
+    }
+    
+    // Check if variable is already buffer-local in current buffer
+    if (local_variable_p(symbol, current_buffer)) {
+        return buffer_set(symbol, value, current_buffer);
+    }
+    
+    // Check if variable is marked as automatically buffer-local
+    if (is_automatically_buffer_local(symbol)) {
+        // Make it local first, then set it
+        if (!local_variable_p(symbol, current_buffer)) {
+            SCM def_val = default_value(symbol);
+            buffer_set(symbol, def_val, current_buffer);
+        }
+        return buffer_set(symbol, value, current_buffer);
+    }
+    
+    // Not buffer-local, set globally
+    SCM symbol_str = scm_symbol_to_string(symbol);
+    char *c_str = scm_to_locale_string(symbol_str);
+    scm_c_module_define(scm_current_module(), c_str, value);
+    free(c_str);
+    return value;
+}
+
+
+
+static SCM scm_local_variable_p(SCM symbol, SCM buffer_obj) {
+    if (!scm_is_symbol(symbol)) {
+        scm_wrong_type_arg("local-variable-p", 1, symbol);
+    }
+    
+    Buffer *buf;
+    if (SCM_UNBNDP(buffer_obj)) {
+        buf = current_buffer;
+    } else {
+        buf = scm_to_buffer(buffer_obj);
+        if (!buf) {
+            scm_wrong_type_arg("local-variable-p", 2, buffer_obj);
+        }
+    }
+    
+    return scm_from_bool(local_variable_p(symbol, buf));
+}
+
+static SCM scm_local_variable_if_set_p(SCM symbol, SCM buffer_obj) {
+    if (!scm_is_symbol(symbol)) {
+        scm_wrong_type_arg("local-variable-if-set-p", 1, symbol);
+    }
+    
+    Buffer *buf;
+    if (SCM_UNBNDP(buffer_obj)) {
+        buf = current_buffer;
+    } else {
+        buf = scm_to_buffer(buffer_obj);
+        if (!buf) {
+            scm_wrong_type_arg("local-variable-if-set-p", 2, buffer_obj);
+        }
+    }
+    
+    return scm_from_bool(local_variable_if_set_p(symbol, buf));
+}
+
+static SCM scm_kill_local_variable(SCM symbol) {
+    if (!scm_is_symbol(symbol)) {
+        scm_wrong_type_arg("kill-local-variable", 1, symbol);
+    }
+    
+    return kill_local_variable(symbol, current_buffer);
+}
+
+static SCM scm_kill_all_local_variables(void) {
+    kill_all_local_variables(current_buffer);
+    return SCM_UNSPECIFIED;
+}
+
+static SCM scm_buffer_local_variables(SCM buffer_obj) {
+    Buffer *buf;
+    if (SCM_UNBNDP(buffer_obj)) {
+        buf = current_buffer;
+    } else {
+        buf = scm_to_buffer(buffer_obj);
+        if (!buf) {
+            scm_wrong_type_arg("buffer-local-variables", 1, buffer_obj);
+        }
+    }
+    
+    return buffer_local_variables(buf);
+}
+
+static SCM scm_make_local_variable(SCM symbol) {
+    if (!scm_is_symbol(symbol)) {
+        scm_wrong_type_arg("make-local-variable", 1, symbol);
+    }
+    
+    if (!current_buffer) {
+        scm_misc_error("make-local-variable", "No current buffer", SCM_EOL);
+    }
+    
+    // If not already local, copy default value to make it local
+    if (!local_variable_p(symbol, current_buffer)) {
+        SCM def_val = default_value(symbol);
+        buffer_set(symbol, def_val, current_buffer);
+    }
+    
+    return symbol;
+}
+
+static SCM scm_make_variable_buffer_local(SCM symbol) {
+    if (!scm_is_symbol(symbol)) {
+        scm_wrong_type_arg("make-variable-buffer-local", 1, symbol);
+    }
+    
+    // Mark this variable as automatically buffer-local
+    mark_automatically_buffer_local(symbol);
+    
+    return symbol;
+}
+
+static SCM scm_automatically_buffer_local_p(SCM symbol) {
+    if (!scm_is_symbol(symbol)) {
+        scm_wrong_type_arg("automatically-buffer-local?", 1, symbol);
+    }
+    
+    return scm_from_bool(is_automatically_buffer_local(symbol));
+}
+
+
 /// WINDOW
 
 static SCM window_type;
@@ -1039,11 +1219,6 @@ static SCM get_or_make_window_object(Window *win) {
     scm_hashq_set_x(window_object_cache, key, obj);
     return obj;
 }
-
-
-/* static SCM make_window_object(Window *win) { */
-/*     return scm_make_foreign_object_1(window_type, win); */
-/* } */
 
 static Window* scm_to_window(SCM obj) {
     scm_assert_foreign_object_type(window_type, obj);
@@ -1365,6 +1540,7 @@ static SCM scm_load(SCM filename) {
     return result;
 }
 
+// TODO use this to register all other commands with doc
 #define REGISTER_COMMAND(scheme_name, scm_func)                                \
   do {                                                                         \
     scm_c_define_gsubr(scheme_name, 0, 1, 0, scm_func);                        \
@@ -1406,7 +1582,36 @@ void lisp_init(void) {
     init_face_bindings();
     init_textprop_bindings();
     init_theme_bindings();
+
+    init_buffer_locals();
     
+    // Buffer local variables
+    scm_c_define_gsubr("set-default!",                  2, 0, 0, scm_set_default);
+    scm_c_define_gsubr("setq-default",                  2, 0, 0, scm_set_default);
+    scm_c_define_gsubr("default-value",                 1, 0, 0, scm_default_value);
+    scm_c_define_gsubr("buffer-local-value",            2, 0, 0, scm_buffer_local_value);
+    scm_c_define_gsubr("set",                           2, 0, 0, scm_set);
+    scm_c_define_gsubr("setq",                          2, 0, 0, scm_setq);
+    scm_c_define_gsubr("local-variable?",               1, 1, 0, scm_local_variable_p);
+    scm_c_define_gsubr("local-variable-if-set?",        1, 1, 0, scm_local_variable_if_set_p);
+    scm_c_define_gsubr("kill-local-variable",           1, 0, 0, scm_kill_local_variable);
+    scm_c_define_gsubr("kill-all-local-variables",      0, 0, 0, scm_kill_all_local_variables);
+    scm_c_define_gsubr("buffer-local-variables",        0, 1, 0, scm_buffer_local_variables);
+    scm_c_define_gsubr("make-local-variable",           1, 0, 0, scm_make_local_variable);
+    scm_c_define_gsubr("make-variable-buffer-local",    1, 0, 0, scm_make_variable_buffer_local);
+    scm_c_define_gsubr("automatically-buffer-local?",   1, 0, 0, scm_automatically_buffer_local_p);    
+
+    // Set up common buffer-local defaults
+    set_default(scm_from_utf8_symbol("truncate-lines"), SCM_BOOL_F);
+    set_default(scm_from_utf8_symbol("fill-column"),    scm_from_int(70));
+    set_default(scm_from_utf8_symbol("tab-width"),      scm_from_int(8));
+
+    mark_automatically_buffer_local(scm_from_utf8_symbol("truncate-lines"));
+    mark_automatically_buffer_local(scm_from_utf8_symbol("fill-column"));
+    mark_automatically_buffer_local(scm_from_utf8_symbol("tab-width"));
+
+
+
     scm_c_define_gsubr("load",                           1, 0, 0, scm_load);
 
 
@@ -1483,7 +1688,6 @@ void lisp_init(void) {
     scm_c_define_gsubr("delete-indentation",             0, 1, 0, scm_delete_indentation);
     scm_c_define_gsubr("back-to-indentation",            0, 0, 0, scm_back_to_indentation);
 
-    /* scm_c_define_gsubr("newline",                        0, 1, 0, my_scm_newline); */
     REGISTER_COMMAND("newline", my_scm_newline);
     scm_c_define_gsubr("open-line",                      0, 1, 0, scm_open_line);
     scm_c_define_gsubr("split-line",                     0, 1, 0, scm_split_line);
@@ -1555,7 +1759,6 @@ void lisp_init(void) {
     
     // Message
     scm_c_define_gsubr("message",                        1, 0, 1, scm_message);    
-    /* scm_c_define_gsubr("load-theme",                     1, 0, 0, scm_load_theme); */
 
     // NOTE Eval init.scm after defining subroutine
 

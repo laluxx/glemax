@@ -19,14 +19,15 @@ typedef struct {
 #include "textprop.h"
 
 typedef struct Buffer {
-    struct Buffer *next;    // Next buffer in circular list
-    struct Buffer *prev;    // Previous buffer in circular list
+    struct Buffer *next; // Next buffer in circular list
+    struct Buffer *prev; // Previous buffer in circular list
     char *name;
     rope_t *rope;           
     Cursor cursor;
     size_t pt;
     Region region;
     TextProp *props;    
+    SCM local_var_alist; // Alist of (SYMBOL . VALUE) pairs
 } Buffer;
 
 extern Buffer *all_buffers;
@@ -56,6 +57,22 @@ void end_of_line();
 void beginning_of_line();
 void beginning_of_buffer();
 void end_of_buffer();
+
+/// Buffer local variables
+
+void init_buffer_locals(void);
+bool is_automatically_buffer_local(SCM symbol);
+void mark_automatically_buffer_local(SCM symbol);
+void set_default(SCM symbol, SCM value);
+SCM default_value(SCM symbol);
+SCM buffer_local_value(SCM variable, Buffer *buf);
+SCM buffer_set(SCM symbol, SCM newval, Buffer *buf);
+bool local_variable_p(SCM symbol, Buffer *buf);
+bool local_variable_if_set_p(SCM symbol, Buffer *buf);
+SCM kill_local_variable(SCM symbol, Buffer *buf);
+void kill_all_local_variables(Buffer *buf);
+SCM buffer_local_variables(Buffer *buf);
+
 
 
 /// ARG

@@ -2,7 +2,7 @@
 
 <img src="assets/uwu.png" width="200" align="right" />
 
-Glemax is a faithful, function-by-function reimplementation of GNU Emacs, built from scratch in C with a Vulkan rendering engine. This is not an Emacs-inspired editor—it is Emacs itself, rebuilt on a foundation designed for modern hardware.
+Glemax is a faithful, function-by-function reimplementation of GNU Emacs, built from scratch in C with a Vulkan rendering engine. This is not an Emacs-inspired editor, it is Emacs itself, rebuilt on a foundation designed for modern hardware.
 
 ## For Emacs Users
 
@@ -10,7 +10,7 @@ If you're proficient at using Emacs for text editing, you'll feel right at home.
 
 `C-n` moves down a line. `C-k` kills to end of line or the whole line if `kill-whole-line` is #t, or backward to beginning with `C-0 C-k`. `C-3 M-f` moves forward three words. `C-x 2` splits the window horizontally. `C-x o` cycles through windows. Everything works.
 
-The keychord system is complete: multi-key sequences like `C-x C-f`, prefix arguments that propagate correctly, lambdas with arguments bound to keys. Window management behaves identically—splits maintain correct proportions, `C-x 0` deletes the current window, `C-x 1` deletes others, `C-x +` balances sizes.
+The keychord system is complete: multi-key sequences like `C-x C-f`, prefix arguments that propagate correctly, lambdas with arguments bound to keys. Window management behaves identically, splits maintain correct proportions, `C-x 0` deletes the current window, `C-x 1` deletes others, `C-x +` balances sizes.
 
 Movement commands handle all the edge cases you're used to. Words stop at the right boundaries. Paragraphs find blank lines. S-expressions understand nesting, strings, and comments. The kill ring appends consecutive kills just like Emacs, the implementation tracks `last-command` to get this right.
 
@@ -165,7 +165,7 @@ Glemax comes with carefully crafted themes:
 
 ### Multiple Theme Layering
 
-Just like Emacs, Glemax supports multiple active themes simultaneously. Themes are layered—later themes override settings from earlier themes:
+Just like Emacs, Glemax supports multiple active themes simultaneously. Themes are layered, later themes override settings from earlier themes:
 
 ```scheme
 ;; Load base theme
@@ -325,7 +325,7 @@ This works right now:
 
 ### Emacs Compatibility First
 
-Every command must behave exactly like GNU Emacs. Not "close enough"—exactly. Edge cases, prefix arguments, point movement, mark activation—all identical.
+Every command must behave exactly like GNU Emacs. Not "close enough", exactly. Edge cases, prefix arguments, point movement, mark activation, asall identical.
 
 When implementing:
 1. Read the Emacs Lisp manual

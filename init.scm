@@ -458,10 +458,54 @@ With prefix argument, delete them only before point."
 (deftheme 'test-theme "test theme that only sets red foreground")
 
 (custom-theme-set-faces 'test-theme
-  '(default            ((t (:foreground "#FF0000"))))
-  '(cursor             ((t (:inherit 'default))))
+  '(default            ((t (:foreground "#FF0000" :background "#882200"))))
+  '(cursor             ((t (:inherit default))))
 )
 
 
 
 (load-theme 'dark-one)
+
+
+
+;; defvar - define a variable with a default value
+(define-syntax defvar
+  (syntax-rules ()
+    ((_ var default-value)
+     (set-default! 'var default-value))
+    ((_ var default-value docstring)
+     (set-default! 'var default-value))))
+
+;; Define a buffer-local variable (automatically buffer-local in all buffers)
+(define-syntax defvar-local
+  (syntax-rules ()
+    ((_ var default-value)
+     (begin
+       (set-default! 'var default-value)
+       (make-variable-buffer-local 'var)))
+    ((_ var default-value docstring)
+     (begin
+       (set-default! 'var default-value)
+       (make-variable-buffer-local 'var)))))
+
+;; setq-local - set buffer-local value
+(define (setq-local symbol value)
+  (when (not (local-variable? symbol))
+    (make-local-variable symbol))
+  (set symbol value))
+
+
+(defvar-local truncate-lines #f
+  "Non-nil means truncate lines in this buffer.
+When truncating is off, long lines are folded.")
+
+
+;; TODO Make draw_buffer respect this
+(define (toggle-truncate-lines)
+  "Toggle truncating of long lines for the current buffer."
+  (let ((current-val (buffer-local-value 'truncate-lines (current-buffer))))
+    (setq 'truncate-lines (not current-val))
+    (message "Truncate long lines ~a" 
+             (if (not current-val) "enabled" "disabled"))))
+
+(keychord-bind "C-x x t" toggle-truncate-lines)
