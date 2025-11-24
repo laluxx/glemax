@@ -1,6 +1,7 @@
 #include "buffer.h"
 #include "wm.h"
 #include "lisp.h"
+#include "faces.h"
 #include <stdbool.h>
 
 Buffer *all_buffers = NULL;
@@ -26,7 +27,7 @@ bool is_kill_command(SCM proc) {
            is_scm_proc(proc, "kill-region");
 }
 
-Buffer* buffer_create(Font *font, const char *name) {
+Buffer* buffer_create(/* Font *font, */ const char *name) {
     Buffer *buffer = (Buffer*)malloc(sizeof(Buffer));
     if (!buffer) return NULL;
     
@@ -39,9 +40,10 @@ Buffer* buffer_create(Font *font, const char *name) {
     buffer->cursor.last_blink = 0.0;
     buffer->cursor.blink_count = 0;
     buffer->cursor.goal_column = 0;
-    buffer->font = font;
+    /* buffer->font = font; */
     buffer->region.active = false;
     buffer->region.mark = 0;
+    buffer->props = NULL;
     
     // Add to circular buffer list
     if (all_buffers == NULL) {
@@ -86,6 +88,7 @@ void buffer_destroy(Buffer *buffer) {
     
     free(buffer->name);
     rope_free(buffer->rope);
+    clear_text_properties(buffer);
     free(buffer);
 }
 
@@ -103,11 +106,11 @@ Buffer *get_buffer(const char *name) {
     return NULL;
 }
 
-Buffer *get_buffer_create(Font *font, const char *name) {
+Buffer *get_buffer_create(const char *name) {
     Buffer *buf = get_buffer(name);
     if (buf) return buf;
     
-    return buffer_create(font, name);
+    return buffer_create(name);
 }
 
 void switch_to_buffer(Buffer *buf) {
@@ -421,41 +424,46 @@ void keyboard_quit() {
     }
 }
 
+
 void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) {
     float x = start_x;
     float y = start_y;
-    float line_height = buffer->font->ascent + buffer->font->descent;
     
-    // Calculate usable width (accounting for right fringe)
-    float max_x = start_x + (win->width - 2 * fringe_width);
+    size_t point = win ? win->point : buffer->pt;
+    
+    // Get face and font at cursor position
+    int face_id = get_text_property_face(buffer, point);
+    Face *face = get_face(face_id);
+    Font *font = face->font;
+    
+    float line_height = font->ascent + font->descent;
+    float max_x = start_x + (win->width - (2 * fringe_width));
     
     size_t text_len = rope_char_length(buffer->rope);
     int lineCount = 0;
     
-    // Get point from window, not buffer
-    size_t point = win ? win->point : buffer->pt;
-    
-    // Use iterator to calculate cursor position
     rope_iter_t iter;
     rope_iter_init(&iter, buffer->rope, 0);
     
     uint32_t ch;
     size_t i = 0;
     while (i < point && rope_iter_next_char(&iter, &ch)) {
+        // Get font for each character to calculate position correctly
+        int char_face_id = get_text_property_face(buffer, i);
+        Face *char_face = get_face(char_face_id);
+        Font *char_font = char_face->font;
+        
         if (ch == '\n') {
             lineCount++;
             x = start_x;
         } else {
-            // Check if we need to wrap before advancing
-            float char_width = character_width(buffer->font, ch);
+            float char_width = character_width(char_font, ch);
             if (x + char_width > max_x) {
-                // Wrap to next line
                 x = start_x;
                 lineCount++;
             }
             
-            // Get character width from font (handles all Unicode)
-            Character *char_info = font_get_character(buffer->font, ch);
+            Character *char_info = font_get_character(char_font, ch);
             if (char_info) {
                 x += char_info->ax;
             }
@@ -463,37 +471,46 @@ void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) {
         i++;
     }
     
+    // Check if the character AT the cursor position would wrap
+    if (i == point && point < text_len) {
+        uint32_t ch_at_cursor = rope_char_at(buffer->rope, point);
+        if (ch_at_cursor != '\n') {
+            float char_width = character_width(font, ch_at_cursor);
+            if (x + char_width > max_x) {
+                x = start_x;
+                lineCount++;
+            }
+        }
+    }
+    
     rope_iter_destroy(&iter);
     
-    y = start_y - lineCount * line_height - (buffer->font->descent * 2);
+    y = start_y - lineCount * line_height - (font->descent * 2);
     
     buffer->cursor.x = x;
     buffer->cursor.y = y;
     
-    // Determine cursor width - check character at cursor position
+    // Determine cursor width using font at cursor
     float cursor_width;
-    Character *space = font_get_character(buffer->font, ' ');
-    float space_width = space ? space->ax : buffer->font->ascent;
+    Character *space = font_get_character(font, ' ');
+    float space_width = space ? space->ax : font->ascent;
     
     if (point < text_len) {
         uint32_t ch_at_cursor = rope_char_at(buffer->rope, point);
         if (ch_at_cursor == '\n') {
             cursor_width = space_width;
         } else {
-            Character *char_info = font_get_character(buffer->font, ch_at_cursor);
+            Character *char_info = font_get_character(font, ch_at_cursor);
             cursor_width = char_info ? char_info->ax : space_width;
         }
     } else {
-        // Cursor is at end of buffer - use space width
         cursor_width = space_width;
     }
     
-    float cursor_height = buffer->font->ascent + buffer->font->descent;
+    float cursor_height = font->ascent + font->descent;
     
-    // Check if this window is selected
     bool is_selected = win && win->is_selected;
     
-    // Don't draw cursor in inactive minibuffer
     if (win && win->is_minibuffer && !wm.minibuffer_active) {
         return;
     }
@@ -504,7 +521,6 @@ void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) {
         float blink_cursor_interval = scm_get_float("blink-cursor-interval", 0.1);
         float blink_cursor_delay = scm_get_float("blink-cursor-delay", 0.1);
 
-        // Selected window: filled cursor with blinking
         if (blink_cursor_mode && buffer->cursor.blink_count < blink_cursor_blinks) {
             double currentTime = getTime();
             double interval = buffer->cursor.visible ? blink_cursor_interval : blink_cursor_delay;
@@ -518,62 +534,71 @@ void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) {
             }
             
             if (buffer->cursor.visible) {
-                // Draw filled cursor
                 quad2D((vec2){buffer->cursor.x, buffer->cursor.y},
-                       (vec2){cursor_width, cursor_height}, CT.cursor);
+                       (vec2){cursor_width, cursor_height}, face_cache->faces[FACE_CURSOR]->bg);
             }
         } else {
-            // Always draw filled cursor when blink limit reached or mode disabled
             quad2D((vec2){buffer->cursor.x, buffer->cursor.y},
-                   (vec2){cursor_width, cursor_height}, CT.cursor);
+                   (vec2){cursor_width, cursor_height}, face_cache->faces[FACE_CURSOR]->bg);
         }
     } else {
-        // Non-selected window: hollow cursor (border only), no blinking
         float border_width = 1.0f;
         
-        // Top border
         quad2D((vec2){buffer->cursor.x, buffer->cursor.y + cursor_height - border_width},
-               (vec2){cursor_width, border_width}, CT.cursor);
+               (vec2){cursor_width, border_width}, face_cache->faces[FACE_CURSOR]->bg);
         
-        // Bottom border
         quad2D((vec2){buffer->cursor.x, buffer->cursor.y},
-               (vec2){cursor_width, border_width}, CT.cursor);
+               (vec2){cursor_width, border_width}, face_cache->faces[FACE_CURSOR]->bg);
         
-        // Left border
         quad2D((vec2){buffer->cursor.x, buffer->cursor.y},
-               (vec2){border_width, cursor_height}, CT.cursor);
+               (vec2){border_width, cursor_height}, face_cache->faces[FACE_CURSOR]->bg);
         
-        // Right border
         quad2D((vec2){buffer->cursor.x + cursor_width - border_width, buffer->cursor.y},
-               (vec2){border_width, cursor_height}, CT.cursor);
+               (vec2){border_width, cursor_height}, face_cache->faces[FACE_CURSOR]->bg);
     }
 }
 
 void draw_mark(Window *win, float start_x, float start_y) {
     Buffer *buffer = win->buffer;
     
-    // Only draw mark in the selected window
     if (!win->is_selected) return;
-    if (buffer->region.mark == buffer->pt) return;
+    if (buffer->region.mark == win->point) return;
+    
+    // Get face and font at mark position
+    int face_id = get_text_property_face(buffer, buffer->region.mark);
+    Face *face = get_face(face_id);
+    Font *font = face->font;
     
     float mark_x = start_x;
     float mark_y = start_y;
-    float line_height = buffer->font->ascent + buffer->font->descent;
+    float line_height = font->ascent + font->descent;
+    float max_x = start_x + (win->width - (2 * fringe_width));
+    
     size_t text_len = rope_char_length(buffer->rope);
     int lineCount = 0;
     
-    // Use iterator to calculate mark position
     rope_iter_t iter;
     rope_iter_init(&iter, buffer->rope, 0);
     
     uint32_t ch;
     size_t i = 0;
     while (i < buffer->region.mark && rope_iter_next_char(&iter, &ch)) {
+        // Get font for each character to calculate position correctly
+        int char_face_id = get_text_property_face(buffer, i);
+        Face *char_face = get_face(char_face_id);
+        Font *char_font = char_face->font;
+        
         if (ch == '\n') {
             lineCount++;
             mark_x = start_x;
         } else {
-            Character *char_info = font_get_character(buffer->font, ch);
+            float char_width = character_width(char_font, ch);
+            if (mark_x + char_width > max_x) {
+                mark_x = start_x;
+                lineCount++;
+            }
+            
+            Character *char_info = font_get_character(char_font, ch);
             if (char_info) {
                 mark_x += char_info->ax;
             }
@@ -581,32 +606,274 @@ void draw_mark(Window *win, float start_x, float start_y) {
         i++;
     }
     
+    // Check if the character AT the mark position would wrap
+    if (i == buffer->region.mark && buffer->region.mark < text_len) {
+        uint32_t ch_at_mark = rope_char_at(buffer->rope, buffer->region.mark);
+        if (ch_at_mark != '\n') {
+            float char_width = character_width(font, ch_at_mark);
+            if (mark_x + char_width > max_x) {
+                mark_x = start_x;
+                lineCount++;
+            }
+        }
+    }
+    
     rope_iter_destroy(&iter);
     
-    mark_y = start_y - lineCount * line_height - (buffer->font->descent * 2);
+    mark_y = start_y - lineCount * line_height - (font->descent * 2);
     
-    // Determine mark width
+    // Determine mark width using font at mark
     float mark_width;
-    Character *space = font_get_character(buffer->font, ' ');
-    float space_width = space ? space->ax : buffer->font->ascent;
+    Character *space = font_get_character(font, ' ');
+    float space_width = space ? space->ax : font->ascent;
     
     if (buffer->region.mark < text_len) {
         uint32_t ch_at_mark = rope_char_at(buffer->rope, buffer->region.mark);
         if (ch_at_mark == '\n') {
             mark_width = space_width;
         } else {
-            Character *char_info = font_get_character(buffer->font, ch_at_mark);
+            Character *char_info = font_get_character(font, ch_at_mark);
             mark_width = char_info ? char_info->ax : space_width;
         }
     } else {
-        // Mark is at end of buffer - use space width
         mark_width = space_width;
     }
     
-    float mark_height = buffer->font->ascent + buffer->font->descent;
+    float mark_height = font->ascent + font->descent;
     
-    quad2D((vec2){mark_x, mark_y}, (vec2){mark_width, mark_height}, CT.function);
+    quad2D((vec2){mark_x, mark_y}, (vec2){mark_width, mark_height}, face_cache->faces[FACE_VISIBLE_MARK]->bg);
 }
+
+/* void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) { */
+/*     float x = start_x; */
+/*     float y = start_y; */
+/*     float line_height = buffer->font->ascent + buffer->font->descent; */
+    
+/*     // Calculate usable width (accounting for right fringe) */
+/*     float max_x = start_x + (win->width - (2 * fringe_width)); */
+    
+/*     size_t text_len = rope_char_length(buffer->rope); */
+/*     int lineCount = 0; */
+    
+/*     // Get point from window, not buffer */
+/*     size_t point = win ? win->point : buffer->pt; */
+    
+/*     // Use iterator to calculate cursor position */
+/*     rope_iter_t iter; */
+/*     rope_iter_init(&iter, buffer->rope, 0); */
+    
+/*     uint32_t ch; */
+/*     size_t i = 0; */
+/*     while (i < point && rope_iter_next_char(&iter, &ch)) { */
+/*         if (ch == '\n') { */
+/*             lineCount++; */
+/*             x = start_x; */
+/*         } else { */
+/*             // Check if we need to wrap before advancing */
+/*             float char_width = character_width(buffer->font, ch); */
+/*             if (x + char_width > max_x) { */
+/*                 // Wrap to next line */
+/*                 x = start_x; */
+/*                 lineCount++; */
+/*             } */
+            
+/*             // Get character width from font (handles all Unicode) */
+/*             Character *char_info = font_get_character(buffer->font, ch); */
+/*             if (char_info) { */
+/*                 x += char_info->ax; */
+/*             } */
+/*         } */
+/*         i++; */
+/*     } */
+    
+/*     // CRITICAL FIX: Check if the character AT the cursor position would wrap */
+/*     // This ensures cursor and text stay aligned */
+/*     if (i == point && point < text_len) { */
+/*         uint32_t ch_at_cursor = rope_char_at(buffer->rope, point); */
+/*         if (ch_at_cursor != '\n') { */
+/*             float char_width = character_width(buffer->font, ch_at_cursor); */
+/*             if (x + char_width > max_x) { */
+/*                 // The character at cursor wraps, so cursor should wrap too */
+/*                 x = start_x; */
+/*                 lineCount++; */
+/*             } */
+/*         } */
+/*     } */
+    
+/*     rope_iter_destroy(&iter); */
+    
+/*     y = start_y - lineCount * line_height - (buffer->font->descent * 2); */
+    
+/*     buffer->cursor.x = x; */
+/*     buffer->cursor.y = y; */
+    
+/*     // Determine cursor width - check character at cursor position */
+/*     float cursor_width; */
+/*     Character *space = font_get_character(buffer->font, ' '); */
+/*     float space_width = space ? space->ax : buffer->font->ascent; */
+    
+/*     if (point < text_len) { */
+/*         uint32_t ch_at_cursor = rope_char_at(buffer->rope, point); */
+/*         if (ch_at_cursor == '\n') { */
+/*             cursor_width = space_width; */
+/*         } else { */
+/*             Character *char_info = font_get_character(buffer->font, ch_at_cursor); */
+/*             cursor_width = char_info ? char_info->ax : space_width; */
+/*         } */
+/*     } else { */
+/*         // Cursor is at end of buffer - use space width */
+/*         cursor_width = space_width; */
+/*     } */
+    
+/*     float cursor_height = buffer->font->ascent + buffer->font->descent; */
+    
+/*     // Check if this window is selected */
+/*     bool is_selected = win && win->is_selected; */
+    
+/*     // Don't draw cursor in inactive minibuffer */
+/*     if (win && win->is_minibuffer && !wm.minibuffer_active) { */
+/*         return; */
+/*     } */
+    
+/*     if (is_selected) { */
+/*         bool blink_cursor_mode = scm_get_bool("blink-cursor-mode", true);         */
+/*         size_t blink_cursor_blinks = scm_get_size_t("blink-cursor-blinks", 0); */
+/*         float blink_cursor_interval = scm_get_float("blink-cursor-interval", 0.1); */
+/*         float blink_cursor_delay = scm_get_float("blink-cursor-delay", 0.1); */
+
+/*         // Selected window: filled cursor with blinking */
+/*         if (blink_cursor_mode && buffer->cursor.blink_count < blink_cursor_blinks) { */
+/*             double currentTime = getTime(); */
+/*             double interval = buffer->cursor.visible ? blink_cursor_interval : blink_cursor_delay; */
+            
+/*             if (currentTime - buffer->cursor.last_blink >= interval) { */
+/*                 buffer->cursor.visible = !buffer->cursor.visible; */
+/*                 buffer->cursor.last_blink = currentTime; */
+/*                 if (buffer->cursor.visible) { */
+/*                     buffer->cursor.blink_count++; */
+/*                 } */
+/*             } */
+            
+/*             if (buffer->cursor.visible) { */
+/*                 // Draw filled cursor */
+/*                 quad2D((vec2){buffer->cursor.x, buffer->cursor.y}, */
+/*                        (vec2){cursor_width, cursor_height}, CT.cursor); */
+/*             } */
+/*         } else { */
+/*             // Always draw filled cursor when blink limit reached or mode disabled */
+/*             quad2D((vec2){buffer->cursor.x, buffer->cursor.y}, */
+/*                    (vec2){cursor_width, cursor_height}, CT.cursor); */
+/*         } */
+/*     } else { */
+/*         // Non-selected window: hollow cursor (border only), no blinking */
+/*         float border_width = 1.0f; */
+        
+/*         // Top border */
+/*         quad2D((vec2){buffer->cursor.x, buffer->cursor.y + cursor_height - border_width}, */
+/*                (vec2){cursor_width, border_width}, CT.cursor); */
+        
+/*         // Bottom border */
+/*         quad2D((vec2){buffer->cursor.x, buffer->cursor.y}, */
+/*                (vec2){cursor_width, border_width}, CT.cursor); */
+        
+/*         // Left border */
+/*         quad2D((vec2){buffer->cursor.x, buffer->cursor.y}, */
+/*                (vec2){border_width, cursor_height}, CT.cursor); */
+        
+/*         // Right border */
+/*         quad2D((vec2){buffer->cursor.x + cursor_width - border_width, buffer->cursor.y}, */
+/*                (vec2){border_width, cursor_height}, CT.cursor); */
+/*     } */
+/* } */
+
+/* void draw_mark(Window *win, float start_x, float start_y) { */
+/*     Buffer *buffer = win->buffer; */
+    
+/*     // Only draw mark in the selected window */
+/*     if (!win->is_selected) return; */
+/*     if (buffer->region.mark == win->point) return; */
+    
+/*     float mark_x = start_x; */
+/*     float mark_y = start_y; */
+/*     float line_height = buffer->font->ascent + buffer->font->descent; */
+    
+/*     // Calculate usable width (accounting for right fringe) */
+/*     float max_x = start_x + (win->width - (2 * fringe_width)); */
+    
+/*     size_t text_len = rope_char_length(buffer->rope); */
+/*     int lineCount = 0; */
+    
+/*     // Use iterator to calculate mark position */
+/*     rope_iter_t iter; */
+/*     rope_iter_init(&iter, buffer->rope, 0); */
+    
+/*     uint32_t ch; */
+/*     size_t i = 0; */
+/*     while (i < buffer->region.mark && rope_iter_next_char(&iter, &ch)) { */
+/*         if (ch == '\n') { */
+/*             lineCount++; */
+/*             mark_x = start_x; */
+/*         } else { */
+/*             // Check if we need to wrap before advancing */
+/*             float char_width = character_width(buffer->font, ch); */
+/*             if (mark_x + char_width > max_x) { */
+/*                 // Wrap to next line */
+/*                 mark_x = start_x; */
+/*                 lineCount++; */
+/*             } */
+            
+/*             // Get character width from font (handles all Unicode) */
+/*             Character *char_info = font_get_character(buffer->font, ch); */
+/*             if (char_info) { */
+/*                 mark_x += char_info->ax; */
+/*             } */
+/*         } */
+/*         i++; */
+/*     } */
+    
+/*     // CRITICAL FIX: Check if the character AT the mark position would wrap */
+/*     // This ensures mark and text stay aligned */
+/*     if (i == buffer->region.mark && buffer->region.mark < text_len) { */
+/*         uint32_t ch_at_mark = rope_char_at(buffer->rope, buffer->region.mark); */
+/*         if (ch_at_mark != '\n') { */
+/*             float char_width = character_width(buffer->font, ch_at_mark); */
+/*             if (mark_x + char_width > max_x) { */
+/*                 // The character at mark wraps, so mark should wrap too */
+/*                 mark_x = start_x; */
+/*                 lineCount++; */
+/*             } */
+/*         } */
+/*     } */
+    
+/*     rope_iter_destroy(&iter); */
+    
+/*     mark_y = start_y - lineCount * line_height - (buffer->font->descent * 2); */
+    
+/*     // Determine mark width */
+/*     float mark_width; */
+/*     Character *space = font_get_character(buffer->font, ' '); */
+/*     float space_width = space ? space->ax : buffer->font->ascent; */
+    
+/*     if (buffer->region.mark < text_len) { */
+/*         uint32_t ch_at_mark = rope_char_at(buffer->rope, buffer->region.mark); */
+/*         if (ch_at_mark == '\n') { */
+/*             mark_width = space_width; */
+/*         } else { */
+/*             Character *char_info = font_get_character(buffer->font, ch_at_mark); */
+/*             mark_width = char_info ? char_info->ax : space_width; */
+/*         } */
+/*     } else { */
+/*         // Mark is at end of buffer - use space width */
+/*         mark_width = space_width; */
+/*     } */
+    
+/*     float mark_height = buffer->font->ascent + buffer->font->descent; */
+    
+/*     quad2D((vec2){mark_x, mark_y}, (vec2){mark_width, mark_height}, CT.function); */
+/* } */
+
+
+
 
 // Helper function to find the character position at a given scroll offset
 static size_t find_start_position(Buffer *buffer, Window *win, float *out_start_y) {
@@ -615,7 +882,16 @@ static size_t find_start_position(Buffer *buffer, Window *win, float *out_start_
         return 0;
     }
     
-    float line_height = buffer->font->ascent + buffer->font->descent;
+    // Get default face font for initial calculation
+    Face *default_face = get_face(FACE_DEFAULT);
+    Font *default_font = default_face ? default_face->font : NULL;
+    if (!default_font) {
+        *out_start_y = 0;
+        
+        return 0;
+    }
+    
+    float line_height = default_font->ascent + default_font->descent;
     float max_x = win->width - 2 * fringe_width;
     
     // Calculate how many lines are scrolled off the top
@@ -634,17 +910,22 @@ static size_t find_start_position(Buffer *buffer, Window *win, float *out_start_
     
     uint32_t ch;
     while (rope_iter_next_char(&iter, &ch) && current_line < skip_lines) {
+        // Get the face and font at this position
+        int face_id = get_text_property_face(buffer, pos);
+        Face *face = get_face(face_id);
+        Font *font = (face && face->font) ? face->font : default_font;
+        
         if (ch == '\n') {
             current_line++;
             x = 0;
         } else {
-            float char_width = character_width(buffer->font, ch);
+            float char_width = character_width(font, ch);
             if (x + char_width > max_x) {
                 current_line++;
                 x = 0;
             }
             
-            Character *char_info = font_get_character(buffer->font, ch);
+            Character *char_info = font_get_character(font, ch);
             if (char_info) {
                 x += char_info->ax;
             }
@@ -658,29 +939,33 @@ static size_t find_start_position(Buffer *buffer, Window *win, float *out_start_
     return pos;
 }
 
-// TODO It’s wrapping one character before where it should actually start wrapping
+
+#include "theme.h"
+
+
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
-    float line_height = buffer->font->ascent + buffer->font->descent;
+    // Get default face for fallback
+    Face *default_face = get_face(FACE_DEFAULT);
+    Font *default_font = default_face ? get_face_font(default_face) : NULL;
+    if (!default_font) return;
     
-    // Calculate usable width (accounting for right fringe)
+    // Get base colors from active theme
+    Color base_bg = theme_cache->base_bg;
+    Color base_fg = theme_cache->base_fg;
+    
+    float line_height = default_font->ascent + default_font->descent;
     float max_x = start_x + (win->width - 2 * fringe_width);
     
-    // Calculate clipping region (don't draw outside window)
     float window_bottom = win->y;
     float window_top = win->y + win->height;
     
-    // Account for modeline (but minibuffer doesn't have one)
     if (!win->is_minibuffer) {
         window_bottom += line_height;
     }
     
-    // Get point from window if provided
     size_t point = win ? win->point : buffer->pt;
-    
-    // Check if this window is selected
     bool is_selected = win && win->is_selected;
     
-    // Find where to start drawing based on scroll position
     float scroll_offset_y = 0;
     size_t start_pos = 0;
     
@@ -688,7 +973,6 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
         start_pos = find_start_position(buffer, win, &scroll_offset_y);
     }
     
-    // Initialize rendering position
     float x = start_x;
     float y = start_y + (win && !win->is_minibuffer ? win->scrolly : 0) - scroll_offset_y;
     
@@ -697,59 +981,88 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     
     uint32_t ch;
     size_t i = start_pos;
-
     bool visible_mark_mode = scm_get_bool("visible-mark-mode", false);
     
+    // Track current line height based on tallest font in the line
+    float current_line_height = line_height;
+    
     while (rope_iter_next_char(&iter, &ch)) {
-        // Early exit if we've scrolled past the bottom of the window
-        if (y < window_bottom - line_height) {
+        // Get face for this character position
+        int face_id = get_text_property_face(buffer, i);
+        Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
+        if (!face) face = default_face;
+        
+        // Use get_face_font to get the appropriate cached font variant
+        Font *char_font = get_face_font(face);
+        if (!char_font) char_font = default_font;
+        
+        // Update line height if this font is taller
+        float font_height = char_font->ascent + char_font->descent;
+        if (font_height > current_line_height) {
+            current_line_height = font_height;
+        }
+        
+        if (y < window_bottom - current_line_height) {
             break;
         }
         
         if (ch == '\n') {
             x = start_x;
-            y -= line_height;
+            y -= current_line_height;
+            current_line_height = line_height; // Reset for next line
         } else {
-            // Check if we need to wrap before drawing this character
-            float char_width = character_width(buffer->font, ch);
+            float char_width = character_width(char_font, ch);
             if (x + char_width > max_x) {
-                // Wrap to next line
                 x = start_x;
-                y -= line_height;
+                y -= current_line_height;
+                current_line_height = line_height; // Reset for wrapped line
                 
-                // Early exit if wrapped past bottom
-                if (y < window_bottom - line_height) {
+                if (y < window_bottom - current_line_height) {
                     break;
                 }
             }
             
-            // Only draw if within visible region
             if (y >= window_bottom && y <= window_top) {
+                // Determine character color
+                Color char_color = face->fg;
+                Color bg_color = face->bg;
                 
-                // Determine color based on cursor/mark position
-                Color char_color = CT.text; // Default color
+                // Check for cursor/mark positions
+                bool at_cursor = (i == point && is_selected && buffer->cursor.visible);
+                bool at_mark = (i == buffer->region.mark && is_selected &&
+                               visible_mark_mode && buffer->region.mark != point);
                 
-                // Mark gets CT.bg (non-blinking) when visible-mark-mode is on and mark != point
-                if (i == buffer->region.mark && is_selected && visible_mark_mode && 
-                    buffer->region.mark != point) {
-                    char_color = CT.bg;
+                // Cursor/mark override colors
+                if (at_cursor) {
+                    // Get cursor face background for cursor color
+                    Face *cursor_face = get_face(FACE_CURSOR);
+                    bg_color = cursor_face ? cursor_face->bg : base_fg;
+                    char_color = base_bg;
+                } else if (at_mark) {
+                    bg_color = base_fg;
+                    char_color = base_bg;
                 }
-                // Cursor position gets CT.bg but only when visible (blinking)
-                else if (i == point && is_selected && buffer->cursor.visible) {
-                    char_color = CT.bg;
+                
+                // Only draw background if it differs from base background
+                bool needs_bg = !color_equals(bg_color, base_bg) || at_cursor || at_mark;
+                
+                if (needs_bg) {
+                    Character *char_info = font_get_character(char_font, ch);
+                    float bg_width = char_info ? char_info->ax : char_width;
+                    float bg_height = char_font->ascent + char_font->descent;
+                    quad2D((vec2){x, y - char_font->descent * 2}, 
+                           (vec2){bg_width, bg_height}, bg_color);
                 }
                 
-                
-                // Render the character
-                float advance = character(buffer->font, ch, x, y, char_color);
+                // Render character
+                float advance = character(char_font, ch, x, y, char_color);
                 x += advance;
-            } else if (y > window_top) {
-                // NOTE Removing this changes nothing and gives a HUGE FPS boost
-                /* // Still need to advance x even if not drawing (we're above viewport) */
-                /* Character *char_info = font_get_character(buffer->font, ch); */
-                /* if (char_info) { */
-                /*     x += char_info->ax; */
-                /* } */
+            } else {
+                // Character not in visible area, but still advance position
+                if (y >= window_bottom) {
+                    float advance = character_width(char_font, ch);
+                    x += advance;
+                }
             }
         }
         i++;
@@ -757,10 +1070,521 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     
     rope_iter_destroy(&iter);
     
-    // Calculate the scroll offset to pass to draw_mark and draw_cursor
     float scroll_offset = (win && !win->is_minibuffer) ? win->scrolly : 0;
     
     if (visible_mark_mode) draw_mark(win, start_x, start_y + scroll_offset);
     draw_cursor(buffer, win, start_x, start_y + scroll_offset);
 }
 
+
+
+
+// NOTE We draw a quad2D for every character that has a face with background
+// This is SOOOOO BAD we should draw only 1 quad2D per interval at most and merge them
+/* void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) { */
+/*     // Get default face for fallback */
+/*     Face *default_face = get_face(FACE_DEFAULT); */
+/*     Font *default_font = default_face ? default_face->font : NULL; */
+/*     if (!default_font) return; */
+    
+/*     // Get base colors from active theme */
+/*     Color base_bg = theme_cache ? theme_cache->base_bg : default_face->bg; */
+/*     Color base_fg = theme_cache ? theme_cache->base_fg : default_face->fg; */
+    
+/*     float line_height = default_font->ascent + default_font->descent; */
+/*     float max_x = start_x + (win->width - 2 * fringe_width); */
+    
+/*     float window_bottom = win->y; */
+/*     float window_top = win->y + win->height; */
+    
+/*     if (!win->is_minibuffer) { */
+/*         window_bottom += line_height; */
+/*     } */
+    
+/*     size_t point = win ? win->point : buffer->pt; */
+/*     bool is_selected = win && win->is_selected; */
+    
+/*     float scroll_offset_y = 0; */
+/*     size_t start_pos = 0; */
+    
+/*     if (win && !win->is_minibuffer) { */
+/*         start_pos = find_start_position(buffer, win, &scroll_offset_y); */
+/*     } */
+    
+/*     float x = start_x; */
+/*     float y = start_y + (win && !win->is_minibuffer ? win->scrolly : 0) - scroll_offset_y; */
+    
+/*     rope_iter_t iter; */
+/*     rope_iter_init(&iter, buffer->rope, start_pos); */
+    
+/*     uint32_t ch; */
+/*     size_t i = start_pos; */
+/*     bool visible_mark_mode = scm_get_bool("visible-mark-mode", false); */
+    
+/*     // Track current line height based on tallest font in the line */
+/*     float current_line_height = line_height; */
+    
+/*     while (rope_iter_next_char(&iter, &ch)) { */
+/*         // Get face for this character position */
+/*         int face_id = get_text_property_face(buffer, i); */
+/*         Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id); */
+/*         if (!face) face = default_face; */
+        
+/*         Font *char_font = face->font ? face->font : default_font; */
+        
+/*         // Update line height if this font is taller */
+/*         float font_height = char_font->ascent + char_font->descent; */
+/*         if (font_height > current_line_height) { */
+/*             current_line_height = font_height; */
+/*         } */
+        
+/*         if (y < window_bottom - current_line_height) { */
+/*             break; */
+/*         } */
+        
+/*         if (ch == '\n') { */
+/*             x = start_x; */
+/*             y -= current_line_height; */
+/*             current_line_height = line_height; // Reset for next line */
+/*         } else { */
+/*             float char_width = character_width(char_font, ch); */
+/*             if (x + char_width > max_x) { */
+/*                 x = start_x; */
+/*                 y -= current_line_height; */
+/*                 current_line_height = line_height; // Reset for wrapped line */
+                
+/*                 if (y < window_bottom - current_line_height) { */
+/*                     break; */
+/*                 } */
+/*             } */
+            
+/*             if (y >= window_bottom && y <= window_top) { */
+/*                 // Determine character color */
+/*                 Color char_color = face->fg; */
+/*                 Color bg_color = face->bg; */
+                
+/*                 // Check for cursor/mark positions */
+/*                 bool at_cursor = (i == point && is_selected && buffer->cursor.visible); */
+/*                 bool at_mark = (i == buffer->region.mark && is_selected && */
+/*                                visible_mark_mode && buffer->region.mark != point); */
+                
+/*                 // Cursor/mark override colors */
+/*                 if (at_cursor) { */
+/*                     // Get cursor face background for cursor color */
+/*                     Face *cursor_face = get_face(FACE_CURSOR); */
+/*                     bg_color = cursor_face ? cursor_face->bg : base_fg; */
+/*                     char_color = base_bg; */
+/*                 } else if (at_mark) { */
+/*                     bg_color = base_fg; */
+/*                     char_color = base_bg; */
+/*                 } */
+                
+/*                 // Only draw background if it differs from base background */
+/*                 // This is the key optimization - never compare, never draw for base_bg */
+/*                 bool needs_bg = !color_equals(bg_color, base_bg) || at_cursor || at_mark; */
+                
+/*                 if (needs_bg) { */
+/*                     Character *char_info = font_get_character(char_font, ch); */
+/*                     float bg_width = char_info ? char_info->ax : char_width; */
+/*                     float bg_height = char_font->ascent + char_font->descent; */
+/*                     quad2D((vec2){x, y - char_font->descent * 2},  */
+/*                            (vec2){bg_width, bg_height}, bg_color); */
+/*                 } */
+                
+/*                 // Render character */
+/*                 float advance = character(char_font, ch, x, y, char_color); */
+/*                 x += advance; */
+/*             } else { */
+/*                 // Character not in visible area, but still advance position */
+/*                 if (y >= window_bottom) { */
+/*                     float advance = character_width(char_font, ch); */
+/*                     x += advance; */
+/*                 } */
+/*             } */
+/*         } */
+/*         i++; */
+/*     } */
+    
+/*     rope_iter_destroy(&iter); */
+    
+/*     float scroll_offset = (win && !win->is_minibuffer) ? win->scrolly : 0; */
+    
+/*     if (visible_mark_mode) draw_mark(win, start_x, start_y + scroll_offset); */
+/*     draw_cursor(buffer, win, start_x, start_y + scroll_offset); */
+/* } */
+
+// FIRST FACE
+/* void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) { */
+/*     // Get default face for fallback */
+/*     Face *default_face = get_face(FACE_DEFAULT); */
+/*     Font *default_font = default_face ? default_face->font : NULL; */
+/*     if (!default_font) return; */
+    
+/*     float line_height = default_font->ascent + default_font->descent; */
+/*     float max_x = start_x + (win->width - 2 * fringe_width); */
+    
+/*     float window_bottom = win->y; */
+/*     float window_top = win->y + win->height; */
+    
+/*     if (!win->is_minibuffer) { */
+/*         window_bottom += line_height; */
+/*     } */
+    
+/*     size_t point = win ? win->point : buffer->pt; */
+/*     bool is_selected = win && win->is_selected; */
+    
+/*     float scroll_offset_y = 0; */
+/*     size_t start_pos = 0; */
+    
+/*     if (win && !win->is_minibuffer) { */
+/*         start_pos = find_start_position(buffer, win, &scroll_offset_y); */
+/*     } */
+    
+/*     float x = start_x; */
+/*     float y = start_y + (win && !win->is_minibuffer ? win->scrolly : 0) - scroll_offset_y; */
+    
+/*     rope_iter_t iter; */
+/*     rope_iter_init(&iter, buffer->rope, start_pos); */
+    
+/*     uint32_t ch; */
+/*     size_t i = start_pos; */
+/*     bool visible_mark_mode = scm_get_bool("visible-mark-mode", false); */
+    
+/*     // Track current line height based on tallest font in the line */
+/*     float current_line_height = line_height; */
+/*     float current_line_start_x = x; */
+    
+/*     while (rope_iter_next_char(&iter, &ch)) { */
+/*         // Get face and font for this character */
+/*         int face_id = get_text_property_face(buffer, i); */
+/*         Face *face = get_face(face_id); */
+/*         Font *char_font = (face && face->font) ? face->font : default_font; */
+        
+/*         // Update line height if this font is taller */
+/*         float font_height = char_font->ascent + char_font->descent; */
+/*         if (font_height > current_line_height) { */
+/*             current_line_height = font_height; */
+/*         } */
+        
+/*         if (y < window_bottom - current_line_height) { */
+/*             break; */
+/*         } */
+        
+/*         if (ch == '\n') { */
+/*             x = start_x; */
+/*             y -= current_line_height; */
+/*             current_line_height = line_height; // Reset for next line */
+/*             current_line_start_x = x; */
+/*         } else { */
+/*             float char_width = character_width(char_font, ch); */
+/*             if (x + char_width > max_x) { */
+/*                 x = start_x; */
+/*                 y -= current_line_height; */
+/*                 current_line_height = line_height; // Reset for wrapped line */
+/*                 current_line_start_x = x; */
+                
+/*                 if (y < window_bottom - current_line_height) { */
+/*                     break; */
+/*                 } */
+/*             } */
+            
+/*             if (y >= window_bottom && y <= window_top) { */
+/*                 // Use face color and font */
+/*                 Color char_color = face ? face->fg : CT.text; */
+/*                 Color bg_color = face ? face->bg : CT.bg; */
+                
+/*                 // Special case: cursor and mark override face colors */
+/*                 bool at_cursor = (i == point && is_selected && buffer->cursor.visible); */
+/*                 bool at_mark = (i == buffer->region.mark && is_selected && */
+/*                                visible_mark_mode && buffer->region.mark != point); */
+                
+/*                 if (at_cursor || at_mark) { */
+/*                     char_color = CT.bg; */
+/*                 } */
+                
+/*                 // Draw background if it differs from default */
+/*                 if (face && (bg_color.r != CT.bg.r || bg_color.g != CT.bg.g || */
+/*                             bg_color.b != CT.bg.b || bg_color.a != CT.bg.a)) { */
+/*                     Character *char_info = font_get_character(char_font, ch); */
+/*                     float bg_width = char_info ? char_info->ax : char_width; */
+/*                     float bg_height = char_font->ascent + char_font->descent; */
+/*                     quad2D((vec2){x, y - char_font->descent * 2}, (vec2){bg_width, bg_height}, bg_color); */
+/*                 } */
+                
+/*                 // Render character with the face's font and color */
+/*                 float advance = character(char_font, ch, x, y, char_color); */
+/*                 x += advance; */
+/*             } */
+/*         } */
+/*         i++; */
+/*     } */
+    
+/*     rope_iter_destroy(&iter); */
+    
+/*     float scroll_offset = (win && !win->is_minibuffer) ? win->scrolly : 0; */
+    
+/*     if (visible_mark_mode) draw_mark(win, start_x, start_y + scroll_offset); */
+/*     draw_cursor(buffer, win, start_x, start_y + scroll_offset); */
+/* } */
+
+
+
+
+
+// NOTE BASE NO FACES
+// Helper function to find the character position at a given scroll offset
+/* static size_t find_start_position(Buffer *buffer, Window *win, float *out_start_y) { */
+/*     if (!win || win->is_minibuffer) { */
+/*         *out_start_y = 0; */
+/*         return 0; */
+/*     } */
+    
+/*     float line_height = buffer->font->ascent + buffer->font->descent; */
+/*     float max_x = win->width - 2 * fringe_width; */
+    
+/*     // Calculate how many lines are scrolled off the top */
+/*     // Add a buffer of a few lines to avoid visual glitches */
+/*     float lines_scrolled = (win->scrolly / line_height); */
+/*     int skip_lines = (int)lines_scrolled - 2;  // Start 2 lines earlier for safety */
+/*     if (skip_lines < 0) skip_lines = 0; */
+    
+/*     // Find the character position at skip_lines */
+/*     size_t pos = 0; */
+/*     int current_line = 0; */
+/*     float x = 0; */
+    
+/*     rope_iter_t iter; */
+/*     rope_iter_init(&iter, buffer->rope, 0); */
+    
+/*     uint32_t ch; */
+/*     while (rope_iter_next_char(&iter, &ch) && current_line < skip_lines) { */
+/*         if (ch == '\n') { */
+/*             current_line++; */
+/*             x = 0; */
+/*         } else { */
+/*             float char_width = character_width(buffer->font, ch); */
+/*             if (x + char_width > max_x) { */
+/*                 current_line++; */
+/*                 x = 0; */
+/*             } */
+            
+/*             Character *char_info = font_get_character(buffer->font, ch); */
+/*             if (char_info) { */
+/*                 x += char_info->ax; */
+/*             } */
+/*         } */
+/*         pos++; */
+/*     } */
+    
+/*     rope_iter_destroy(&iter); */
+    
+/*     *out_start_y = current_line * line_height; */
+/*     return pos; */
+/* } */
+
+
+
+/* void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) { */
+/*     float line_height = buffer->font->ascent + buffer->font->descent; */
+    
+/*     float max_x = start_x + (win->width - 2 * fringe_width); */
+    
+/*     float window_bottom = win->y; */
+/*     float window_top = win->y + win->height; */
+    
+/*     if (!win->is_minibuffer) { */
+/*         window_bottom += line_height; */
+/*     } */
+    
+/*     size_t point = win ? win->point : buffer->pt; */
+/*     bool is_selected = win && win->is_selected; */
+    
+/*     float scroll_offset_y = 0; */
+/*     size_t start_pos = 0; */
+    
+/*     if (win && !win->is_minibuffer) { */
+/*         start_pos = find_start_position(buffer, win, &scroll_offset_y); */
+/*     } */
+    
+/*     float x = start_x; */
+/*     float y = start_y + (win && !win->is_minibuffer ? win->scrolly : 0) - scroll_offset_y; */
+    
+/*     rope_iter_t iter; */
+/*     rope_iter_init(&iter, buffer->rope, start_pos); */
+    
+/*     uint32_t ch; */
+/*     size_t i = start_pos; */
+/*     bool visible_mark_mode = scm_get_bool("visible-mark-mode", false); */
+    
+/*     while (rope_iter_next_char(&iter, &ch)) { */
+/*         if (y < window_bottom - line_height) { */
+/*             break; */
+/*         } */
+        
+/*         if (ch == '\n') { */
+/*             x = start_x; */
+/*             y -= line_height; */
+/*         } else { */
+/*             float char_width = character_width(buffer->font, ch); */
+/*             if (x + char_width > max_x) { */
+/*                 x = start_x; */
+/*                 y -= line_height; */
+                
+/*                 if (y < window_bottom - line_height) { */
+/*                     break; */
+/*                 } */
+/*             } */
+            
+/*             if (y >= window_bottom && y <= window_top) { */
+/*                 // Get face for this position */
+/*                 int face_id = get_text_property_face(buffer, i); */
+/*                 Face *face = get_face(face_id); */
+                
+/*                 // Use face color and font */
+/*                 Color char_color = face ? face->fg : CT.text; */
+/*                 Color bg_color = face ? face->bg : CT.bg; */
+/*                 Font *char_font = (face && face->font) ? face->font : buffer->font; */
+                
+/*                 // Special case: cursor and mark override face colors */
+/*                 bool at_cursor = (i == point && is_selected && buffer->cursor.visible); */
+/*                 bool at_mark = (i == buffer->region.mark && is_selected && */
+/*                                visible_mark_mode && buffer->region.mark != point); */
+                
+/*                 if (at_cursor || at_mark) { */
+/*                     char_color = CT.bg; */
+/*                 } */
+                
+/*                 // Draw background if it differs from default */
+/*                 if (face && (bg_color.r != CT.bg.r || bg_color.g != CT.bg.g || */
+/*                             bg_color.b != CT.bg.b || bg_color.a != CT.bg.a)) { */
+/*                     Character *char_info = font_get_character(char_font, ch); */
+/*                     float bg_width = char_info ? char_info->ax : char_width; */
+/*                     float bg_height = char_font->ascent + char_font->descent; */
+/*                     quad2D((vec2){x, y - face->font->descent * 2}, (vec2){bg_width, bg_height}, bg_color); */
+/*                 } */
+                
+/*                 // Render character with the face's font and color */
+/*                 float advance = character(char_font, ch, x, y, char_color); */
+/*                 x += advance; */
+/*             } */
+/*         } */
+/*         i++; */
+/*     } */
+    
+/*     rope_iter_destroy(&iter); */
+    
+/*     float scroll_offset = (win && !win->is_minibuffer) ? win->scrolly : 0; */
+    
+/*     if (visible_mark_mode) draw_mark(win, start_x, start_y + scroll_offset); */
+/*     draw_cursor(buffer, win, start_x, start_y + scroll_offset); */
+/* } */
+
+
+
+
+// NOTE We are iterating the buffer from the start 3 times currently
+// First for drawing characters, for the mark and for the cursor this is bad!
+/* void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) { */
+/*     float line_height = buffer->font->ascent + buffer->font->descent; */
+    
+/*     // Calculate usable width (accounting for right fringe) */
+/*     float max_x = start_x + (win->width - 2 * fringe_width); */
+    
+/*     // Calculate clipping region (don't draw outside window) */
+/*     float window_bottom = win->y; */
+/*     float window_top = win->y + win->height; */
+    
+/*     // Account for modeline (but minibuffer doesn't have one) */
+/*     if (!win->is_minibuffer) { */
+/*         window_bottom += line_height; */
+/*     } */
+    
+/*     // Get point from window if provided */
+/*     size_t point = win ? win->point : buffer->pt; */
+    
+/*     // Check if this window is selected */
+/*     bool is_selected = win && win->is_selected; */
+    
+/*     // Find where to start drawing based on scroll position */
+/*     float scroll_offset_y = 0; */
+/*     size_t start_pos = 0; */
+    
+/*     if (win && !win->is_minibuffer) { */
+/*         start_pos = find_start_position(buffer, win, &scroll_offset_y); */
+/*     } */
+    
+/*     // Initialize rendering position */
+/*     float x = start_x; */
+/*     float y = start_y + (win && !win->is_minibuffer ? win->scrolly : 0) - scroll_offset_y; */
+    
+/*     rope_iter_t iter; */
+/*     rope_iter_init(&iter, buffer->rope, start_pos); */
+    
+/*     uint32_t ch; */
+/*     size_t i = start_pos; */
+
+/*     bool visible_mark_mode = scm_get_bool("visible-mark-mode", false); */
+    
+/*     while (rope_iter_next_char(&iter, &ch)) { */
+/*         // Early exit if we've scrolled past the bottom of the window */
+/*         if (y < window_bottom - line_height) { */
+/*             break; */
+/*         } */
+        
+/*         if (ch == '\n') { */
+/*             x = start_x; */
+/*             y -= line_height; */
+/*         } else { */
+/*             // Check if we need to wrap before drawing this character */
+/*             float char_width = character_width(buffer->font, ch); */
+/*             if (x + char_width > max_x) { */
+/*                 // Wrap to next line */
+/*                 x = start_x; */
+/*                 y -= line_height; */
+                
+/*                 // Early exit if wrapped past bottom */
+/*                 if (y < window_bottom - line_height) { */
+/*                     break; */
+/*                 } */
+/*             } */
+            
+/*             // Only draw if within visible region */
+/*             if (y >= window_bottom && y <= window_top) { */
+                
+/*                 // Determine color based on cursor/mark position */
+/*                 Color char_color = CT.text; // Default color */
+                
+/*                 // Mark gets CT.bg (non-blinking) when visible-mark-mode is on and mark != point */
+/*                 if (i == buffer->region.mark && is_selected && visible_mark_mode &&  */
+/*                     buffer->region.mark != point) { */
+/*                     char_color = CT.bg; */
+/*                 } */
+/*                 // Cursor position gets CT.bg but only when visible (blinking) */
+/*                 else if (i == point && is_selected && buffer->cursor.visible) { */
+/*                     char_color = CT.bg; */
+/*                 } */
+                
+                
+/*                 // Render the character */
+/*                 float advance = character(buffer->font, ch, x, y, char_color); */
+/*                 x += advance; */
+/*             } else if (y > window_top) { */
+/*                 // NOTE Removing this changes nothing and gives a HUGE FPS boost */
+/*                 /\* // Still need to advance x even if not drawing (we're above viewport) *\/ */
+/*                 /\* Character *char_info = font_get_character(buffer->font, ch); *\/ */
+/*                 /\* if (char_info) { *\/ */
+/*                 /\*     x += char_info->ax; *\/ */
+/*                 /\* } *\/ */
+/*             } */
+/*         } */
+/*         i++; */
+/*     } */
+    
+/*     rope_iter_destroy(&iter); */
+    
+/*     // Calculate the scroll offset to pass to draw_mark and draw_cursor */
+/*     float scroll_offset = (win && !win->is_minibuffer) ? win->scrolly : 0; */
+    
+/*     if (visible_mark_mode) draw_mark(win, start_x, start_y + scroll_offset); */
+/*     draw_cursor(buffer, win, start_x, start_y + scroll_offset); */
+/* } */

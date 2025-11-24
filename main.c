@@ -4,6 +4,7 @@
 #include <obsidian/obsidian.h>
 #include <obsidian/renderer.h>
 #include "buffer.h"
+#include "faces.h"
 #include "wm.h"
 #include "lisp.h"
 #include "edit.h"
@@ -15,8 +16,8 @@
 uint32_t sw = 1920;
 uint32_t sh = 1080;
 
-Font *jetbrains;
-Font *lilex;
+/* Font *jetbrains; */
+/* Font *lilex; */
 
 void text_callback(unsigned int codepoint) {
     bool electric_pair_mode = scm_get_bool("electric-pair-mode", false);
@@ -196,19 +197,23 @@ void cursor_pos_callback(double xpos, double ypos) {
 static void inner_main (void *data, int argc, char **argv) {
     initWindow(sw, sh, "Kink");
     
-    jetbrains = load_font("./assets/fonts/JetBrainsMonoNerdFont-Regular.ttf", 22);
+    /* jetbrains = load_font("./assets/fonts/JetBrainsMonoNerdFont-Regular.ttf", 22); */
+
+    /* jetbrains = load_font("./assets/fonts/JetBrainsMonoNerdFont-Medium.ttf", 22); */
+
     /* jetbrains = load_font("./assets/fonts/JetBrainsMonoNerdFont-Regular.ttf", 122); */
     /* lilex = load_font("./assets/fonts/LilexNerdFont-Regular.ttf", 22); */
     /* lilex = load_font("./assets/fonts/DejaVuMathTeXGyre.ttf", 100); */
     
-    Buffer *scratch_buffer = buffer_create(jetbrains, "*scratch*");
-    Buffer *minibuf = buffer_create(jetbrains, "minibuf");
-    Buffer *messages = buffer_create(jetbrains, "*Messages*");
+    Buffer *scratch_buffer = buffer_create("*scratch*");
+    Buffer *minibuf = buffer_create("minibuf");
+    Buffer *messages = buffer_create("*Messages*");
     
     sh = context.swapChainExtent.height; // TODO move into
     sw = context.swapChainExtent.width;  // Resize callback
     wm_init(scratch_buffer, minibuf, 0, 0, sw, sh);
 
+    init_faces();
     lisp_init(); // IMPORTANT After initializing the windowManager
 
     
@@ -232,21 +237,19 @@ static void inner_main (void *data, int argc, char **argv) {
     while (!windowShouldClose()) {
         beginFrame();
         
+        clear_background(face_cache->faces[FACE_DEFAULT]->bg);
         
-        clear_background(CT.bg);
-        
-        fps(jetbrains, sw - 400, 200, RED);
+        fps(face_cache->faces[FACE_DEFAULT]->font, sw - 400, 200, RED);
 
         wm_draw();
-
        
         endFrame();
     }
     
     wm_cleanup();
     buffer_destroy(scratch_buffer);
-    destroy_font(jetbrains);
-    destroy_font(lilex);
+    /* destroy_font(jetbrains); */
+    /* destroy_font(lilex); */
     
     
     cleanup(&context);

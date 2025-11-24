@@ -16,6 +16,8 @@ typedef struct {
     bool active;
 } Region;
 
+#include "textprop.h"
+
 typedef struct Buffer {
     struct Buffer *next;    // Next buffer in circular list
     struct Buffer *prev;    // Previous buffer in circular list
@@ -23,8 +25,8 @@ typedef struct Buffer {
     rope_t *rope;           
     Cursor cursor;
     size_t pt;
-    Font *font;
     Region region;
+    TextProp *props;    
 } Buffer;
 
 extern Buffer *all_buffers;
@@ -36,10 +38,10 @@ extern bool ctrl;
 extern bool alt;
 extern bool argument_manually_set;
 
-Buffer* buffer_create(Font *font, const char *name);
+Buffer* buffer_create(const char *name);
 void buffer_destroy(Buffer *buffer);
 Buffer *get_buffer(const char *name);
-Buffer *get_buffer_create(Font *font, const char *name);
+Buffer *get_buffer_create(const char *name);
 void switch_to_buffer(Buffer *buf);
 Buffer *other_buffer();
 void kill_buffer(Buffer *buf);
@@ -54,7 +56,6 @@ void end_of_line();
 void beginning_of_line();
 void beginning_of_buffer();
 void end_of_buffer();
-
 
 
 /// ARG

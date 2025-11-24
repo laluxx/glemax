@@ -663,18 +663,24 @@ void shrink_window() {
     wm_recalculate_layout();
 }
 
+#include "faces.h"
+
+
 static void draw_modeline(Window *win) {
     if (!win) return;
     
-    float line_height = win->buffer->font->ascent + win->buffer->font->descent;
+    Font *font = face_cache->faces[FACE_DEFAULT]->font;
+
+    float line_height = font->ascent + font->descent;
     float modeline_height = line_height;
     float modeline_y = win->y;
     
     // If minibuffer is active and this is the previous window, keep it highlighted
     bool is_active = win->is_selected || 
                     (wm.minibuffer_active && win == wm.previous_window);
-    
-    Color color = is_active ? CT.mode_line_active_bg : CT.mode_line_inactive_bg;
+
+    Color color = is_active ? face_cache->faces[FACE_MODE_LINE_ACTIVE]->bg :
+        face_cache->faces[FACE_MODE_LINE_INACTIVE]->bg;
     
     quad2D((vec2){win->x, modeline_y},
            (vec2){win->width, modeline_height},
@@ -685,7 +691,8 @@ void update_window_scroll(Window *win) {
     if (win->is_minibuffer) return;  // Don't scroll minibuffer
     
     Buffer *buffer = win->buffer;
-    float line_height = buffer->font->ascent + buffer->font->descent;
+    Font *font = face_cache->faces[FACE_DEFAULT]->font;
+    float line_height = font->ascent + font->descent;
     
     // Account for modeline at bottom (1 line high)
     float modeline_height = line_height;
@@ -706,13 +713,13 @@ void update_window_scroll(Window *win) {
             cursor_line++;
             x = 0;
         } else {
-            float char_width = character_width(buffer->font, ch);
+            float char_width = character_width(font, ch);
             if (x + char_width > max_x) {
                 cursor_line++;
                 x = 0;
             }
             
-            Character *char_info = font_get_character(buffer->font, ch);
+            Character *char_info = font_get_character(font, ch);
             if (char_info) {
                 x += char_info->ax;
             }
@@ -761,19 +768,21 @@ static void draw_window(Window *win) {
     if (!win) return;
     
     if (is_leaf_window(win)) {
-       
+
+        Font *font = face_cache->faces[FACE_DEFAULT]->font;
+
         if (win->buffer) {
             draw_buffer(win->buffer, win, win->x + fringe_width,
-                       win->y + win->height - win->buffer->font->ascent + win->buffer->font->descent);
+                       win->y + win->height - font->ascent + font->descent);
         }
 
         // Left fringe
         quad2D((vec2){win->x, win->y},
-               (vec2){fringe_width, win->height}, CT.fringe_bg);
+               (vec2){fringe_width, win->height}, face_cache->faces[FACE_FRINGE]->bg);
         
         // Right fringe
         quad2D((vec2){win->x + win->width - fringe_width, win->y},
-               (vec2){fringe_width, win->height}, CT.fringe_bg);
+               (vec2){fringe_width, win->height}, face_cache->faces[FACE_FRINGE]->bg);
  
         if (!win->is_minibuffer) draw_modeline(win);
 
@@ -792,7 +801,7 @@ static void draw_dividers_recursive(Window *win) {
         float divider_width = 1.0f;
         
         quad2D((vec2){divider_x - divider_width / 2, win->y},
-               (vec2){divider_width, win->height}, CT.window_divider);
+               (vec2){divider_width, win->height}, face_cache->faces[FACE_WINDOW_DIVIDER]->bg);
     }
     
     // Recursively draw dividers in children
@@ -831,9 +840,9 @@ static size_t count_buffer_lines(Buffer *buf) {
 static float calculate_minibuffer_height() {
     if (!wm.minibuffer_window || !wm.minibuffer_window->buffer) return 0.0f;
     
+    Font *font = face_cache->faces[FACE_DEFAULT]->font;
     size_t line_count = count_buffer_lines(wm.minibuffer_window->buffer);
-    float line_height = wm.minibuffer_window->buffer->font->ascent + 
-                       wm.minibuffer_window->buffer->font->descent;
+    float line_height = font->ascent + font->descent;
     
     return line_height * line_count;
 }
@@ -873,8 +882,9 @@ int recenter_positions = 0;  // 0=middle, 1=top, 2=bottom
 void recenter() {
     if (is_minibuffer_window(wm.selected)) return;
     
+    Font *font = face_cache->faces[FACE_DEFAULT]->font;
     Buffer *buf = wm.selected->buffer;
-    float line_height = buf->font->ascent + buf->font->descent;
+    float line_height = font->ascent + font->descent;
     float modeline_height = line_height;
     float usable_height = wm.selected->height - modeline_height;
     float visible_lines = usable_height / line_height;
@@ -894,13 +904,13 @@ void recenter() {
             cursor_line++;
             x = 0;
         } else {
-            float char_width = character_width(buf->font, ch);
+            float char_width = character_width(font, ch);
             if (x + char_width > max_x) {
                 cursor_line++;
                 x = 0;
             }
             
-            Character *char_info = font_get_character(buf->font, ch);
+            Character *char_info = font_get_character(font, ch);
             if (char_info) {
                 x += char_info->ax;
             }
@@ -1015,7 +1025,8 @@ void scroll_up_command() {
     if (is_minibuffer_window(wm.selected)) return;
     
     Buffer *buf = wm.selected->buffer;
-    float line_height = buf->font->ascent + buf->font->descent;
+    Font *font = face_cache->faces[FACE_DEFAULT]->font;
+    float line_height = font->ascent + font->descent;
     float modeline_height = line_height;
     float usable_height = wm.selected->height - modeline_height;
     float visible_lines = usable_height / line_height;
@@ -1060,13 +1071,13 @@ void scroll_up_command() {
             cursor_line++;
             x = 0;
         } else {
-            float char_width = character_width(buf->font, ch);
+            float char_width = character_width(font, ch);
             if (x + char_width > max_x) {
                 cursor_line++;
                 x = 0;
             }
             
-            Character *char_info = font_get_character(buf->font, ch);
+            Character *char_info = font_get_character(font, ch);
             if (char_info) {
                 x += char_info->ax;
             }
@@ -1084,13 +1095,13 @@ void scroll_up_command() {
             total_lines++;
             x = 0;
         } else {
-            float char_width = character_width(buf->font, ch);
+            float char_width = character_width(font, ch);
             if (x + char_width > max_x) {
                 total_lines++;
                 x = 0;
             }
             
-            Character *char_info = font_get_character(buf->font, ch);
+            Character *char_info = font_get_character(font, ch);
             if (char_info) {
                 x += char_info->ax;
             }
@@ -1168,13 +1179,13 @@ void scroll_up_command() {
                     current_line++;
                     x = 0;
                 } else {
-                    float char_width = character_width(buf->font, ch);
+                    float char_width = character_width(font, ch);
                     if (x + char_width > max_x) {
                         current_line++;
                         x = 0;
                     }
                     
-                    Character *char_info = font_get_character(buf->font, ch);
+                    Character *char_info = font_get_character(font, ch);
                     if (char_info) {
                         x += char_info->ax;
                     }
@@ -1192,7 +1203,8 @@ void scroll_down_command() {
     if (is_minibuffer_window(wm.selected)) return;
     
     Buffer *buf = wm.selected->buffer;
-    float line_height = buf->font->ascent + buf->font->descent;
+    Font *font = face_cache->faces[FACE_DEFAULT]->font;
+    float line_height = font->ascent + font->descent;
     float modeline_height = line_height;
     float usable_height = wm.selected->height - modeline_height;
     float visible_lines = usable_height / line_height;
@@ -1237,13 +1249,13 @@ void scroll_down_command() {
             cursor_line++;
             x = 0;
         } else {
-            float char_width = character_width(buf->font, ch);
+            float char_width = character_width(font, ch);
             if (x + char_width > max_x) {
                 cursor_line++;
                 x = 0;
             }
             
-            Character *char_info = font_get_character(buf->font, ch);
+            Character *char_info = font_get_character(font, ch);
             if (char_info) {
                 x += char_info->ax;
             }
@@ -1320,13 +1332,13 @@ void scroll_down_command() {
                     current_line++;
                     x = 0;
                 } else {
-                    float char_width = character_width(buf->font, ch);
+                    float char_width = character_width(font, ch);
                     if (x + char_width > max_x) {
                         current_line++;
                         x = 0;
                     }
                     
-                    Character *char_info = font_get_character(buf->font, ch);
+                    Character *char_info = font_get_character(font, ch);
                     if (char_info) {
                         x += char_info->ax;
                     }
@@ -1382,12 +1394,12 @@ void scroll_other_window_down() {
     current_buffer->pt = original->point;
 }
 
-
 void move_to_window_line() {
     if (is_minibuffer_window(wm.selected)) return;
     
     Buffer *buf = wm.selected->buffer;
-    float line_height = buf->font->ascent + buf->font->descent;
+    Font *font = face_cache->faces[FACE_DEFAULT]->font;
+    float line_height = font->ascent + font->descent;
     float modeline_height = line_height;
     float usable_height = wm.selected->height - modeline_height;
     float visible_lines = usable_height / line_height;
@@ -1441,7 +1453,7 @@ void move_to_window_line() {
             x = 0;
             line_start_pos = iter.char_pos;  // Next line starts after newline
         } else {
-            float char_width = character_width(buf->font, ch);
+            float char_width = character_width(font, ch);
             if (x + char_width > max_x) {
                 // Line wrap
                 current_visual_line++;
@@ -1450,7 +1462,7 @@ void move_to_window_line() {
                 line_start_pos = iter.char_pos - 1;
             }
             
-            Character *char_info = font_get_character(buf->font, ch);
+            Character *char_info = font_get_character(font, ch);
             if (char_info) {
                 x += char_info->ax;
             }
@@ -1514,4 +1526,3 @@ void move_to_window_line_top_bottom() {
     set_prefix_arg(saved_arg);
     argument_manually_set = saved_manually_set;
 }
-

@@ -28,15 +28,49 @@ void insert(uint32_t codepoint) {
     }
     
     if (len > 0) {
-
         if (current_buffer->pt < current_buffer->region.mark) current_buffer->region.mark++;
-
         current_buffer->rope = rope_insert_chars(current_buffer->rope, current_buffer->pt, utf8, len);
         adjust_all_window_points_after_modification(current_buffer->pt, 1);
+        adjust_text_properties(current_buffer, current_buffer->pt, 1);  // ADD THIS LINE
         set_point(current_buffer->pt + 1);
         update_goal_column();
     }
 }
+
+/* void insert(uint32_t codepoint) { */
+/*     char utf8[5] = {0}; */
+/*     size_t len = 0; */
+    
+/*     if (codepoint < 0x80) { */
+/*         utf8[0] = (char)codepoint; */
+/*         len = 1; */
+/*     } else if (codepoint < 0x800) { */
+/*         utf8[0] = 0xC0 | (codepoint >> 6); */
+/*         utf8[1] = 0x80 | (codepoint & 0x3F); */
+/*         len = 2; */
+/*     } else if (codepoint < 0x10000) { */
+/*         utf8[0] = 0xE0 | (codepoint >> 12); */
+/*         utf8[1] = 0x80 | ((codepoint >> 6) & 0x3F); */
+/*         utf8[2] = 0x80 | (codepoint & 0x3F); */
+/*         len = 3; */
+/*     } else if (codepoint < 0x110000) { */
+/*         utf8[0] = 0xF0 | (codepoint >> 18); */
+/*         utf8[1] = 0x80 | ((codepoint >> 12) & 0x3F); */
+/*         utf8[2] = 0x80 | ((codepoint >> 6) & 0x3F); */
+/*         utf8[3] = 0x80 | (codepoint & 0x3F); */
+/*         len = 4; */
+/*     } */
+    
+/*     if (len > 0) { */
+
+/*         if (current_buffer->pt < current_buffer->region.mark) current_buffer->region.mark++; */
+
+/*         current_buffer->rope = rope_insert_chars(current_buffer->rope, current_buffer->pt, utf8, len); */
+/*         adjust_all_window_points_after_modification(current_buffer->pt, 1); */
+/*         set_point(current_buffer->pt + 1); */
+/*         update_goal_column(); */
+/*     } */
+/* } */
 
 size_t delete(size_t pos, size_t count) {
     if (count == 0) {

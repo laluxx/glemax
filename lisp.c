@@ -3,11 +3,14 @@
 #include <obsidian/theme.h>
 #include <stdbool.h>
 #include "lisp.h"
+#include "faces.h"
 #include "libguile/scm.h"
 #include "libguile/strings.h"
 #include "rope.h"
 #include "buffer.h"
 #include "edit.h"
+#include "textprop.h"
+#include "theme.h"
 #include "wm.h"
 
 
@@ -819,7 +822,7 @@ static SCM scm_switch_to_buffer(SCM buf_or_name) {
         
         if (!buf) {
             // Create new buffer if doesn't exist
-            buf = buffer_create(current_buffer->font, buffer_name);
+            buf = buffer_create(buffer_name);
         }
         free(buffer_name);
     } else {
@@ -888,17 +891,44 @@ static SCM scm_other_buffer(void) {
     return SCM_EOL;
 }
 
-static SCM scm_get_buffer(SCM name) {
-    if (!scm_is_string(name)) {
-        scm_wrong_type_arg("get-buffer", 1, name);
+static SCM scm_get_buffer(SCM buffer_or_name) {
+    Buffer *buf = NULL;
+    
+    if (SCM_IS_A_P(buffer_or_name, buffer_type)) {
+        // It's already a buffer object - just return it
+        return buffer_or_name;
+    } else if (scm_is_string(buffer_or_name)) {
+        // It's a string name - look it up
+        char *buffer_name = scm_to_locale_string(buffer_or_name);
+        buf = get_buffer(buffer_name);
+        free(buffer_name);
+        
+        return buf ? get_or_make_buffer_object(buf) : SCM_BOOL_F;
+    } else {
+        scm_wrong_type_arg("get-buffer", 1, buffer_or_name);
+        return SCM_BOOL_F;  // Won't reach here, but satisfies compiler
     }
-    
-    char *buffer_name = scm_to_locale_string(name);
-    Buffer *buf = get_buffer(buffer_name);
-    free(buffer_name);
-    
-    return buf ? get_or_make_buffer_object(buf) : SCM_EOL;
 }
+
+static SCM scm_get_buffer_create(SCM buffer_or_name) {
+    Buffer *buf = NULL;
+    
+    if (SCM_IS_A_P(buffer_or_name, buffer_type)) {
+        // It's already a buffer object - just return it
+        return buffer_or_name;
+    } else if (scm_is_string(buffer_or_name)) {
+        // It's a string name - get or create it
+        char *buffer_name = scm_to_locale_string(buffer_or_name);
+        buf = get_buffer_create(buffer_name);
+        free(buffer_name);
+        
+        return get_or_make_buffer_object(buf);
+    } else {
+        scm_wrong_type_arg("get-buffer-create", 1, buffer_or_name);
+        return SCM_BOOL_F;  // Won't reach here, but satisfies compiler
+    }
+}
+
 
 static SCM scm_current_buffer(void) {
     if (!current_buffer) return SCM_EOL;
@@ -1335,7 +1365,7 @@ static SCM scm_load(SCM filename) {
     return result;
 }
 
-#define REGISTER_COMMAND(scheme_name, scm_func)                                  \
+#define REGISTER_COMMAND(scheme_name, scm_func)                                \
   do {                                                                         \
     scm_c_define_gsubr(scheme_name, 0, 1, 0, scm_func);                        \
     if (scm_func##_doc) {                                                      \
@@ -1347,6 +1377,8 @@ static SCM scm_load(SCM filename) {
   } while (0)
 
 
+
+#include "theme.h"
 
 void lisp_init(void) {
 
@@ -1369,11 +1401,12 @@ void lisp_init(void) {
     window_object_cache = scm_make_hash_table(scm_from_int(16));
     scm_gc_protect_object(window_object_cache);
     
-
-
     setup_user_init_file();
 
-
+    init_face_bindings();
+    init_textprop_bindings();
+    init_theme_bindings();
+    
     scm_c_define_gsubr("load",                           1, 0, 0, scm_load);
 
 
@@ -1397,6 +1430,7 @@ void lisp_init(void) {
     scm_c_define_gsubr("buffer-list",                    0, 0, 0, scm_buffer_list);
     scm_c_define_gsubr("other-buffer",                   0, 0, 0, scm_other_buffer);
     scm_c_define_gsubr("get-buffer",                     1, 0, 0, scm_get_buffer);
+    scm_c_define_gsubr("get-buffer-create",              1, 0, 0, scm_get_buffer_create);
     scm_c_define_gsubr("current-buffer",                 0, 0, 0, scm_current_buffer);
     scm_c_define_gsubr("next-buffer",                    0, 1, 0, scm_next_buffer);
     scm_c_define_gsubr("previous-buffer",                0, 1, 0, scm_previous_buffer);        
@@ -1521,7 +1555,7 @@ void lisp_init(void) {
     
     // Message
     scm_c_define_gsubr("message",                        1, 0, 1, scm_message);    
-    scm_c_define_gsubr("load-theme",                     1, 0, 0, scm_load_theme);
+    /* scm_c_define_gsubr("load-theme",                     1, 0, 0, scm_load_theme); */
 
     // NOTE Eval init.scm after defining subroutine
 
