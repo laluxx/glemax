@@ -699,12 +699,12 @@ static char* get_scheme_proc_documentation(SCM proc) {
 
 
 
-static SCM scm_keychord_bind(SCM notation_scm, SCM action_scm) {
+static SCM scm_keymap_global_set(SCM notation_scm, SCM action_scm) {
     if (!scm_is_string(notation_scm)) {
-        scm_wrong_type_arg("keychord-bind", 1, notation_scm);
+        scm_wrong_type_arg("keymap-global-set", 1, notation_scm);
     }
     if (!scm_is_true(scm_procedure_p(action_scm))) {
-        scm_wrong_type_arg("keychord-bind", 2, action_scm);
+        scm_wrong_type_arg("keymap-global-set", 2, action_scm);
     }
     
     char *notation = scm_to_locale_string(notation_scm);
@@ -721,9 +721,9 @@ static SCM scm_keychord_bind(SCM notation_scm, SCM action_scm) {
     return scm_from_bool(result);
 }
 
-static SCM scm_keychord_unbind(SCM notation_scm) {
+static SCM scm_keymap_global_unset(SCM notation_scm) {
     if (!scm_is_string(notation_scm)) {
-        scm_wrong_type_arg("keychord-unbind", 1, notation_scm);
+        scm_wrong_type_arg("keymap-global-unset", 1, notation_scm);
     }
     
     char *notation = scm_to_locale_string(notation_scm);
@@ -1089,8 +1089,6 @@ static SCM scm_setq(SCM symbol, SCM value) {
     return value;
 }
 
-
-
 static SCM scm_local_variable_p(SCM symbol, SCM buffer_obj) {
     if (!scm_is_symbol(symbol)) {
         scm_wrong_type_arg("local-variable-p", 1, symbol);
@@ -1445,10 +1443,82 @@ static SCM scm_set_window_buffer(SCM window_obj, SCM buffer_obj) {
 }
 
 
+/// Keymap
 
+// Keymap type for Scheme
+static SCM keymap_type;
 
+// Convert KeyChordMap* to SCM
+static SCM keymap_to_scm(KeyChordMap *map) {
+    if (!map) return SCM_BOOL_F;
+    
+    return scm_make_foreign_object_1(keymap_type, map);
+}
 
+// Convert SCM to KeyChordMap*
+static KeyChordMap* scm_to_keymap(SCM obj) {
+    if (scm_is_false(obj)) return NULL;
+    
+    scm_assert_foreign_object_type(keymap_type, obj);
+    return scm_foreign_object_ref(obj, 0);
+}
 
+static SCM scm_make_sparse_keymap(void) {
+    KeyChordMap *map = make_sparse_keymap();
+    return keymap_to_scm(map);
+}
+
+static SCM scm_use_local_map(SCM keymap_scm) {
+    KeyChordMap *map = scm_to_keymap(keymap_scm);
+    use_local_map(map, current_buffer);
+    return SCM_UNSPECIFIED;
+}
+
+static SCM scm_current_local_map(void) {
+    KeyChordMap *map = current_local_map(current_buffer);
+    return keymap_to_scm(map);
+}
+
+static SCM scm_current_global_map(void) {
+    KeyChordMap *map = current_global_map();
+    return keymap_to_scm(map);
+}
+
+static SCM scm_define_key(SCM keymap_scm, SCM key_scm, SCM def_scm) {
+    if (!scm_is_string(key_scm)) {
+        scm_wrong_type_arg("define-key", 2, key_scm);
+    }
+    if (!scm_is_true(scm_procedure_p(def_scm))) {
+        scm_wrong_type_arg("define-key", 3, def_scm);
+    }
+    
+    KeyChordMap *map = scm_to_keymap(keymap_scm);
+    if (!map) {
+        scm_misc_error("define-key", "Invalid keymap", SCM_EOL);
+    }
+    
+    char *notation = scm_to_locale_string(key_scm);
+    char *description = get_scheme_proc_documentation(def_scm);
+    
+    bool result = keychord_bind_scheme(map, notation, def_scm,
+                                       description, PRESS | REPEAT);
+    
+    free(notation);
+    if (description) {
+        free(description);
+    }
+    
+    return scm_from_bool(result);
+}
+
+// Keymap finalizer - called when Scheme GCs the keymap
+static void finalize_keymap(SCM keymap_obj) {
+    KeyChordMap *map = scm_foreign_object_ref(keymap_obj, 0);
+    if (map) {
+        keymap_free(map);
+        free(map);
+    }
+}
 
 
 
@@ -1556,6 +1626,7 @@ static SCM scm_load(SCM filename) {
 
 #include "theme.h"
 
+
 void lisp_init(void) {
 
     // Initialize buffer foreign object type
@@ -1577,6 +1648,13 @@ void lisp_init(void) {
     window_object_cache = scm_make_hash_table(scm_from_int(16));
     scm_gc_protect_object(window_object_cache);
     
+
+    // Initialize keymap foreign object type WITH FINALIZER
+    name = scm_from_utf8_symbol("keymap");
+    slots = scm_list_1(scm_from_utf8_symbol("data"));
+    keymap_type = scm_make_foreign_object_type(name, slots, finalize_keymap);
+
+
     setup_user_init_file();
 
     init_face_bindings();
@@ -1585,6 +1663,15 @@ void lisp_init(void) {
 
     init_buffer_locals();
     
+
+    // Keymap functions
+    scm_c_define_gsubr("make-sparse-keymap",            0, 0, 0, scm_make_sparse_keymap);
+    scm_c_define_gsubr("use-local-map",                 1, 0, 0, scm_use_local_map);
+    scm_c_define_gsubr("current-local-map",             0, 0, 0, scm_current_local_map);
+    scm_c_define_gsubr("current-global-map",            0, 0, 0, scm_current_global_map);
+    scm_c_define_gsubr("define-key",                    3, 0, 0, scm_define_key);
+
+
     // Buffer local variables
     scm_c_define_gsubr("set-default!",                  2, 0, 0, scm_set_default);
     scm_c_define_gsubr("setq-default",                  2, 0, 0, scm_set_default);
@@ -1660,8 +1747,8 @@ void lisp_init(void) {
 
 
     // Keychord
-    scm_c_define_gsubr("keychord-bind",                  2, 0, 0, scm_keychord_bind);
-    scm_c_define_gsubr("keychord-unbind",                1, 0, 0, scm_keychord_unbind);
+    scm_c_define_gsubr("keymap-global-set",              2, 0, 0, scm_keymap_global_set);
+    scm_c_define_gsubr("keymap-global-unset",            1, 0, 0, scm_keymap_global_unset);
     scm_c_define_gsubr("keychord-documentation",         1, 0, 0, scm_keychord_documentation);
     scm_c_define_gsubr("keychord-bindings",              0, 0, 0, scm_keychord_bindings);    
 
@@ -1782,6 +1869,4 @@ void lisp_init(void) {
         "              (display msg-template port)))"
         "        (message \"~a\" (get-output-string port))))))"
     );
-
-
 }

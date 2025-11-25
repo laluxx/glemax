@@ -28,10 +28,18 @@ typedef struct Buffer {
     Region region;
     TextProp *props;    
     SCM local_var_alist; // Alist of (SYMBOL . VALUE) pairs
+    KeyChordMap *keymap;  // Buffer-local keymap (can be NULL)
 } Buffer;
 
 extern Buffer *all_buffers;
 extern Buffer *current_buffer;
+
+
+// Keymap functions
+KeyChordMap* make_sparse_keymap(void);
+void use_local_map(KeyChordMap *local_map, Buffer *buf);
+KeyChordMap* current_local_map(Buffer *buf);
+KeyChordMap* current_global_map(void);
 
 
 extern bool shift;

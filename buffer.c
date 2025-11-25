@@ -47,7 +47,9 @@ Buffer* buffer_create(const char *name) {
     // Initialize buffer-local variables as empty alist
     buffer->local_var_alist = SCM_EOL;
     scm_gc_protect_object(buffer->local_var_alist);
-    
+
+    // Initialize keymap as NULL (will use global keymap)
+    buffer->keymap = NULL;    
 
     // Add to circular buffer list
     if (all_buffers == NULL) {
@@ -93,6 +95,15 @@ void buffer_destroy(Buffer *buffer) {
     // Unprotect the alist
     scm_gc_unprotect_object(buffer->local_var_alist);
 
+
+    // Free buffer-local keymap if it exists
+    if (buffer->keymap) {
+        keymap_free(buffer->keymap);
+        free(buffer->keymap);
+        buffer->keymap = NULL;
+    }
+
+
     free(buffer->name);
     rope_free(buffer->rope);
     clear_text_properties(buffer);
@@ -123,13 +134,18 @@ Buffer *get_buffer_create(const char *name) {
 void switch_to_buffer(Buffer *buf) {
     if (!buf) return;
 
-
     if (buf == wm.minibuffer_window->buffer) {
         message("Can't switch to minibuf buffer");
         return; 
     }
     
     current_buffer = buf;
+    
+    // Update keymap stack
+    keymap_stack_clear();
+    if (buf->keymap) {
+        keymap_stack_push(buf->keymap);
+    }
     
     // Update selected window to point to new buffer
     if (wm.selected) {
@@ -558,6 +574,51 @@ SCM buffer_local_variables(Buffer *buf) {
     // Return a copy of the alist
     return scm_list_copy(buf->local_var_alist);
 }
+
+
+/// Keymap
+
+
+KeyChordMap* make_sparse_keymap(void) {
+    KeyChordMap *map = malloc(sizeof(KeyChordMap));
+    if (!map) return NULL;
+    
+    keymap_init(map);
+    return map;
+}
+
+
+void use_local_map(KeyChordMap *local_map, Buffer *buf) {
+    if (!buf) return;
+    
+    // If this is the current buffer, clear stack FIRST
+    // This ensures no references to the old keymap exist in the stack
+    if (buf == current_buffer) {
+        keymap_stack_clear();
+    }
+    
+    // DON'T free the old keymap here!
+    // The Scheme foreign object still owns it and will GC it later
+    // Just replace the pointer
+    buf->keymap = local_map;
+    
+    // Push the new keymap to stack if this is the current buffer
+    if (buf == current_buffer && local_map) {
+        keymap_stack_push(local_map);
+    }
+}
+
+KeyChordMap* current_local_map(Buffer *buf) {
+    if (!buf) return NULL;
+    return buf->keymap;
+}
+
+KeyChordMap* current_global_map(void) {
+    return &keymap;
+}
+
+
+
 
 
 

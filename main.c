@@ -197,14 +197,6 @@ void cursor_pos_callback(double xpos, double ypos) {
 static void inner_main (void *data, int argc, char **argv) {
     initWindow(sw, sh, "Kink");
     
-    /* jetbrains = load_font("./assets/fonts/JetBrainsMonoNerdFont-Regular.ttf", 22); */
-
-    /* jetbrains = load_font("./assets/fonts/JetBrainsMonoNerdFont-Medium.ttf", 22); */
-
-    /* jetbrains = load_font("./assets/fonts/JetBrainsMonoNerdFont-Regular.ttf", 122); */
-    /* lilex = load_font("./assets/fonts/LilexNerdFont-Regular.ttf", 22); */
-    /* lilex = load_font("./assets/fonts/DejaVuMathTeXGyre.ttf", 100); */
-    
     Buffer *scratch_buffer = buffer_create("*scratch*");
     Buffer *minibuf = buffer_create("minibuf");
     Buffer *messages = buffer_create("*Messages*");
@@ -212,6 +204,7 @@ static void inner_main (void *data, int argc, char **argv) {
     sh = context.swapChainExtent.height; // TODO move into
     sw = context.swapChainExtent.width;  // Resize callback
     wm_init(scratch_buffer, minibuf, 0, 0, sw, sh);
+
 
     init_faces();
     lisp_init(); // IMPORTANT After initializing the windowManager

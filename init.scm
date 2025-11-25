@@ -9,115 +9,110 @@
   (message "The best number is: ~a" number))
 
 
-(define-syntax keychord-bind-with-args
-  (syntax-rules ()
-    ((_ key func arg ...)
-     (keychord-bind key (lambda () (func arg ...))))))
+;; (keychord-bind-with-args "C-c f" (lambda () (load user-init-file)))
 
-(keychord-bind-with-args "M-m" my-function 10)
-(keychord-bind-with-args "C-c f" (lambda () (load user-init-file)))
-
-(keychord-bind "M-z"
-               (lambda ()
-                 "docstring"
-                 (message "Point: ~d" (point))))
+;; (keymap-global-set "M-z"
+;;                (lambda ()
+;;                  "docstring"
+;;                  (message "Point: ~d" (point))))
 
 ;; Bind it - documentation is automatically extracted
-(keychord-bind "C-c i" my-custom-command)
+(keymap-global-set "C-c i" my-custom-command)
 
-(keychord-bind "C-x k" kill-buffer)
-(keychord-bind "C-x <left>"  previous-buffer)
-(keychord-bind "C-x <right>" next-buffer)
-(keychord-bind "C-b" backward-char)
-(keychord-bind "C-f" forward-char)
-(keychord-bind "C-n" next-line)
-(keychord-bind "C-p" previous-line)
-(keychord-bind "<left>" backward-char)
-(keychord-bind "<right>" forward-char)
-(keychord-bind "<down>" next-line)
-(keychord-bind "<up>" previous-line)
-(keychord-bind "M-f" forward-word)
-(keychord-bind "M-b" backward-word)
-(keychord-bind "C-<right>" forward-word)
-(keychord-bind "C-<left>" backward-word)
-(keychord-bind "M-d" kill-word)
-(keychord-bind "C-e" end-of-line)
-(keychord-bind "C-a" beginning-of-line)
-(keychord-bind "M-<" beginning-of-buffer)
-(keychord-bind "C-c p" beginning-of-buffer)
-(keychord-bind "M->" end-of-buffer)
-(keychord-bind "C-c n" end-of-buffer)
-(keychord-bind "RET" newline)
-(keychord-bind "C-j" newline)
-(keychord-bind "C-m" newline)
-(keychord-bind "<backspace>" delete-backward-char)
-(keychord-bind "C-<backspace>" backward-kill-word)
-(keychord-bind "C-d" delete-char)
-(keychord-bind "<delete>" delete-char)
-(keychord-bind "C-o" open-line)
-(keychord-bind "C-M-o" split-line)
-(keychord-bind "C-SPC" set-mark-command)
-(keychord-bind "C-x C-x" exchange-point-and-mark)
-(keychord-bind "S-<backspace>" delete-region)
-(keychord-bind "C-w" kill-region)
-(keychord-bind "C-y" yank)
-(keychord-bind "C-k" kill-line)
-(keychord-bind "M-}" forward-paragraph)
-(keychord-bind "M-{" backward-paragraph)
-(keychord-bind "C-<down>" forward-paragraph)
-(keychord-bind "C-<up>" backward-paragraph)
-(keychord-bind "C-x 2" split-window-below)
-(keychord-bind "C-x 3" split-window-right)
-(keychord-bind "C-x 0" delete-window)
-(keychord-bind "C-x 1" delete-other-windows)
-(keychord-bind "C-x o" other-window)
-(keychord-bind "C-x +" balance-windows)
-(keychord-bind "C-x ^" enlarge-window)
-(keychord-bind "C-l" recenter-top-bottom)
-(keychord-bind "C-v" recenter)
-(keychord-bind "C-u" universal-argument)
-(keychord-bind "C--" negative-argument)
-(keychord-bind "C-0" digit-argument)
-(keychord-bind "C-1" digit-argument)
-(keychord-bind "C-2" digit-argument)
-(keychord-bind "C-3" digit-argument)
-(keychord-bind "C-4" digit-argument)
-(keychord-bind "C-5" digit-argument)
-(keychord-bind "C-6" digit-argument)
-(keychord-bind "C-7" digit-argument)
-(keychord-bind "C-8" digit-argument)
-(keychord-bind "C-9" digit-argument)
-(keychord-bind "M-x" execute-extended-command)
-(keychord-bind "C-g" keyboard-quit)
-(keychord-bind "C-x C-e" eval-last-sexp)
-(keychord-bind "C-x C-b" eval-buffer)
-(keychord-bind "C-x C-r" eval-region)
-(keychord-bind "C-t" transpose-chars)
-(keychord-bind "M-t" transpose-words)
+(keymap-global-set "C-x k" kill-buffer)
+(keymap-global-set "C-x <left>"  previous-buffer)
+(keymap-global-set "C-x <right>" next-buffer)
+(keymap-global-set "C-b" backward-char)
+(keymap-global-set "C-f" forward-char)
+(keymap-global-set "C-n" next-line)
+(keymap-global-set "C-p" previous-line)
+(keymap-global-set "<left>" backward-char)
+(keymap-global-set "<right>" forward-char)
+(keymap-global-set "<down>" next-line)
+(keymap-global-set "<up>" previous-line)
+(keymap-global-set "M-f" forward-word)
+(keymap-global-set "M-b" backward-word)
+(keymap-global-set "C-<right>" forward-word)
+(keymap-global-set "C-<left>" backward-word)
+(keymap-global-set "M-d" kill-word)
+(keymap-global-set "C-e" end-of-line)
+(keymap-global-set "C-a" beginning-of-line)
+(keymap-global-set "M-<" beginning-of-buffer)
+(keymap-global-set "C-c p" beginning-of-buffer)
+(keymap-global-set "M->" end-of-buffer)
+(keymap-global-set "C-c n" end-of-buffer)
+(keymap-global-set "RET" newline)
+(keymap-global-set "C-j" newline)
+(keymap-global-set "C-m" newline)
+(keymap-global-set "<backspace>" delete-backward-char)
+(keymap-global-set "C-<backspace>" backward-kill-word)
+(keymap-global-set "C-d" delete-char)
+(keymap-global-set "<delete>" delete-char)
+(keymap-global-set "C-o" open-line)
+(keymap-global-set "C-M-o" split-line)
+(keymap-global-set "C-SPC" set-mark-command)
+(keymap-global-set "C-x C-x" exchange-point-and-mark)
+(keymap-global-set "S-<backspace>" delete-region)
+(keymap-global-set "C-w" kill-region)
+(keymap-global-set "C-y" yank)
+(keymap-global-set "C-k" kill-line)
+(keymap-global-set "M-}" forward-paragraph)
+(keymap-global-set "M-{" backward-paragraph)
+(keymap-global-set "C-<down>" forward-paragraph)
+(keymap-global-set "C-<up>" backward-paragraph)
+(keymap-global-set "C-x 2" split-window-below)
+(keymap-global-set "C-x 3" split-window-right)
+(keymap-global-set "C-x 0" delete-window)
+(keymap-global-set "C-x 1" delete-other-windows)
+(keymap-global-set "C-x o" other-window)
+(keymap-global-set "C-x +" balance-windows)
+(keymap-global-set "C-x ^" enlarge-window)
+(keymap-global-set "C-l" recenter-top-bottom)
+(keymap-global-set "C-v" recenter)
+(keymap-global-set "C-u" universal-argument)
+(keymap-global-set "C--" negative-argument)
+(keymap-global-set "C-0" digit-argument)
+(keymap-global-set "C-1" digit-argument)
+(keymap-global-set "C-2" digit-argument)
+(keymap-global-set "C-3" digit-argument)
+(keymap-global-set "C-4" digit-argument)
+(keymap-global-set "C-5" digit-argument)
+(keymap-global-set "C-6" digit-argument)
+(keymap-global-set "C-7" digit-argument)
+(keymap-global-set "C-8" digit-argument)
+(keymap-global-set "C-9" digit-argument)
+(keymap-global-set "M-x" execute-extended-command)
+(keymap-global-set "C-g" keyboard-quit)
+(keymap-global-set "C-x C-e" eval-last-sexp)
+(keymap-global-set "C-x C-b" eval-buffer)
+(keymap-global-set "C-x C-r" eval-region)
+(keymap-global-set "C-t" transpose-chars)
+(keymap-global-set "M-t" transpose-words)
 ;; Well.. We need to get arguments right.
 ;; ..ooor do some maro magic but it would be bad
-;; (keychord-bind "C-T" (lambda () (set! prefix-arg -1) (transpose-chars)))
-;; (keychord-bind "M-T" (lambda () (set! prefix-arg -1) (transpose-words)))
+;; NOTE That this is what actually happens under the hood, maybe it’s bad..
+;; (keymap-global-set "C-T" (lambda () (set! prefix-arg -1) (transpose-chars)))
+;; (keymap-global-set "M-T" (lambda () (set! prefix-arg -1) (transpose-words)))
 ;; We did it!
-(keychord-bind "C-T" (lambda () (transpose-chars -1)))
-(keychord-bind "M-T" (lambda () (transpose-words -1)))
+(keymap-global-set "C-T" (lambda () (transpose-chars -1)))
+(keymap-global-set "M-T" (lambda () (transpose-words -1)))
 
-(keychord-bind "C-M-n" forward-list)
-(keychord-bind "C-M-p" backward-list)
-(keychord-bind "C-v" scroll-up-command)
-(keychord-bind "M-v" scroll-down-command)
-(keychord-bind "C-M-v" scroll-other-window)
-(keychord-bind "C-M-S-v" scroll-other-window-down)
-(keychord-bind "M-r" move-to-window-line-top-bottom)
-(keychord-bind "M-u" upcase-word)
-(keychord-bind "M-l" downcase-word)
-(keychord-bind "M-c" capitalize-word)
-(keychord-bind "C-x C-o" delete-blank-lines)
-(keychord-bind "M-m" back-to-indentation)
-(keychord-bind "M-^" delete-indentation)
-(keychord-bind "C-M-f" forward-sexp)
-(keychord-bind "C-M-b" backward-sexp)
-(keychord-bind "C-M-k" kill-sexp)
+(keymap-global-set "C-M-n" forward-list)
+(keymap-global-set "C-M-p" backward-list)
+(keymap-global-set "C-v" scroll-up-command)
+(keymap-global-set "M-v" scroll-down-command)
+(keymap-global-set "C-M-v" scroll-other-window)
+(keymap-global-set "C-M-S-v" scroll-other-window-down)
+(keymap-global-set "M-r" move-to-window-line-top-bottom)
+(keymap-global-set "M-u" upcase-word)
+(keymap-global-set "M-l" downcase-word)
+(keymap-global-set "M-c" capitalize-word)
+(keymap-global-set "C-x C-o" delete-blank-lines)
+(keymap-global-set "M-m" back-to-indentation)
+(keymap-global-set "M-^" delete-indentation)
+(keymap-global-set "C-M-f" forward-sexp)
+(keymap-global-set "C-M-b" backward-sexp)
+(keymap-global-set "C-M-k" kill-sexp)
 
 
 
@@ -126,7 +121,7 @@
   (set-mark (buffer-size))
   (beginning-of-buffer))
 
-(keychord-bind "C-x h" mark-whole-buffer)
+(keymap-global-set "C-x h" mark-whole-buffer)
 
 
 ;; TODO
@@ -292,7 +287,7 @@ With prefix argument, delete them only before point."
                   (or (= ch 32) (= ch 9)))) ; space or tab
       (delete-char))))
 
-(keychord-bind "M-\\" delete-horizontal-space)
+(keymap-global-set "M-\\" delete-horizontal-space)
 
 
 
@@ -468,6 +463,7 @@ With prefix argument, delete them only before point."
 
 
 
+
 ;; defvar - define a variable with a default value
 (define-syntax defvar
   (syntax-rules ()
@@ -508,4 +504,57 @@ When truncating is off, long lines are folded.")
     (message "Truncate long lines ~a" 
              (if (not current-val) "enabled" "disabled"))))
 
-(keychord-bind "C-x x t" toggle-truncate-lines)
+(keymap-global-set "C-x x t" toggle-truncate-lines)
+
+
+
+
+
+(define-syntax define-derived-mode
+  (syntax-rules ()
+    ((_ mode parent-mode name docstring . body)
+     (define (mode)
+       docstring
+       (kill-all-local-variables)
+       (when parent-mode (parent-mode))
+       (setq 'major-mode 'mode)
+       (setq 'mode-name name)
+       . body))))
+
+
+(define lisp-mode-map (make-sparse-keymap))
+
+(define (lisp-test-1)
+  (message "Lisp mode binding 1"))
+
+(define (lisp-test-2)
+  (message "Lisp mode binding 2"))
+
+(define-key lisp-mode-map "C-j" lisp-test-1)
+(define-key lisp-mode-map "C-k" lisp-test-2)
+
+(define-derived-mode lisp-mode #f "Lisp"
+  "Major mode for editing Lisp code."
+  (use-local-map lisp-mode-map)
+  (setq-local 'tab-width 2)
+  (message "Lisp mode enabled"))
+
+
+
+(define text-mode-map (make-sparse-keymap))
+
+(define (text-test-1)
+  (message "Text mode binding 1"))
+
+(define (text-test-2)
+  (message "Text mode binding 2"))
+
+(define-key text-mode-map "C-c 1" text-test-1)
+(define-key text-mode-map "C-c 2" text-test-2)
+
+(define-derived-mode text-mode #f "Text"
+  "Major mode for editing text."
+  (use-local-map text-mode-map)
+  (setq-local 'fill-column 80)
+  (message "Text mode enabled"))
+
