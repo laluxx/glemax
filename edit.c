@@ -3,10 +3,12 @@
 #include "lisp.h"
 #include <ctype.h>
 
+
 void insert(uint32_t codepoint) {
     char utf8[5] = {0};
     size_t len = 0;
     
+    // Convert Unicode codepoint to UTF-8
     if (codepoint < 0x80) {
         utf8[0] = (char)codepoint;
         len = 1;
@@ -27,19 +29,87 @@ void insert(uint32_t codepoint) {
         len = 4;
     }
     
-    if (len > 0) {
-        if (current_buffer->pt < current_buffer->region.mark) current_buffer->region.mark++;
-        current_buffer->rope = rope_insert_chars(current_buffer->rope, current_buffer->pt, utf8, len);
-        adjust_all_window_points_after_modification(current_buffer->pt, 1);
-        adjust_text_properties(current_buffer, current_buffer->pt, 1);
-        set_point(current_buffer->pt + 1);
-        update_goal_column();
+    if (len == 0) return;
+    
+    size_t insert_pos = current_buffer->pt;
+    
+    // Check if tree-sitter is active
+    bool has_treesit = current_buffer->ts_state && current_buffer->ts_state->tree;
+    
+    // Capture tree-sitter state BEFORE modification
+    size_t start_byte = 0;
+    TSPoint start_point = {0, 0};
+    TSPoint new_end_point = {0, 0};
+    
+    if (has_treesit) {
+        start_byte = rope_char_to_byte(current_buffer->rope, insert_pos);
+        start_point = treesit_char_to_point(current_buffer, insert_pos);
+        
+        // Calculate new_end_point based on inserted content
+        new_end_point = start_point;
+        
+        // Scan inserted bytes for newlines
+        size_t bytes_after_last_newline = 0;
+        for (size_t i = 0; i < len; i++) {
+            if (utf8[i] == '\n') {
+                new_end_point.row++;
+                new_end_point.column = 0;
+                bytes_after_last_newline = 0;
+            } else {
+                bytes_after_last_newline++;
+            }
+        }
+        
+        // Update column based on whether we had newlines
+        if (bytes_after_last_newline > 0 || new_end_point.row == start_point.row) {
+            new_end_point.column += bytes_after_last_newline;
+        }
     }
+    
+    // Update region mark
+    if (current_buffer->region.mark > insert_pos) {
+        current_buffer->region.mark++;
+    }
+    
+    // Perform the rope insertion
+    current_buffer->rope = rope_insert_chars(
+        current_buffer->rope,
+        insert_pos,
+        utf8,
+        len
+    );
+    
+    // Update tree-sitter if active
+    if (has_treesit) {
+        size_t new_end_byte = start_byte + len;
+        
+        treesit_update_tree(
+            current_buffer,
+            start_byte,
+            start_byte,      // old_end_byte = start_byte (nothing was there before)
+            new_end_byte,
+            start_point,
+            start_point,     // old_end_point = start_point (nothing was there before)
+            new_end_point
+        );
+        
+        treesit_reparse_if_needed(current_buffer);
+        treesit_apply_highlights(current_buffer);
+    }
+    
+    // Only adjust text properties if tree-sitter is NOT active
+    if (!has_treesit) {
+        adjust_text_properties(current_buffer, insert_pos, 1);
+    }
+    
+    adjust_all_window_points_after_modification(insert_pos, 1);
+    set_point(current_buffer->pt + 1);
+    update_goal_column();
+    reset_cursor_blink(current_buffer);
 }
 
 size_t delete(size_t pos, size_t count) {
     if (count == 0) {
-        // Deleting nothing - check if we're at a boundary
         size_t text_len = rope_char_length(current_buffer->rope);
         if (pos == 0) {
             message("Beginning of buffer");
@@ -51,33 +121,75 @@ size_t delete(size_t pos, size_t count) {
     
     size_t text_len = rope_char_length(current_buffer->rope);
     
-    // Check for end of buffer
     if (pos >= text_len) {
         message("End of buffer");
         return pos;
     }
     
-    // Clamp count to available characters
     if (pos + count > text_len) {
         count = text_len - pos;
     }
     
-    // If clamping reduced count to 0, we hit end of buffer
     if (count == 0) {
         message("End of buffer");
         return pos;
     }
     
-    // Update mark if region is active
     size_t delete_end = pos + count;
+    
+    // Check if tree-sitter is active
+    bool has_treesit = current_buffer->ts_state && current_buffer->ts_state->tree;
+    
+    // Capture tree-sitter state BEFORE modification
+    size_t start_byte = 0;
+    size_t old_end_byte = 0;
+    TSPoint start_point = {0, 0};
+    TSPoint old_end_point = {0, 0};
+    
+    if (has_treesit) {
+        start_byte = rope_char_to_byte(current_buffer->rope, pos);
+        old_end_byte = rope_char_to_byte(current_buffer->rope, delete_end);
+        start_point = treesit_char_to_point(current_buffer, pos);
+        old_end_point = treesit_char_to_point(current_buffer, delete_end);
+    }
+    
+    // Update region mark
     if (current_buffer->region.mark >= delete_end) {
         current_buffer->region.mark -= count;
     } else if (current_buffer->region.mark > pos) {
         current_buffer->region.mark = pos;
     }
     
+    // Perform the deletion
     current_buffer->rope = rope_delete_chars(current_buffer->rope, pos, count);
-    adjust_all_window_points_after_modification(current_buffer->pt, -count);
+    
+    // Update tree-sitter if active
+    if (has_treesit) {
+        size_t new_end_byte = start_byte;  // Collapsed to start after deletion
+        TSPoint new_end_point = start_point;
+        
+        treesit_update_tree(
+            current_buffer,
+            start_byte,
+            old_end_byte,
+            new_end_byte,
+            start_point,
+            old_end_point,
+            new_end_point
+        );
+        
+        treesit_reparse_if_needed(current_buffer);
+        treesit_apply_highlights(current_buffer);
+    }
+    
+    // Only adjust text properties if tree-sitter is NOT active
+    if (!has_treesit) {
+        adjust_text_properties(current_buffer, pos, -(int)count);
+    }
+    
+    adjust_all_window_points_after_modification(pos, -(int)count);
+    reset_cursor_blink(current_buffer);
+    
     return pos;
 }
 
@@ -927,6 +1039,8 @@ void kill_region() {
 }
 
 // TODO Support ARG to yank N times
+// TODO Don’t adjust the syntax if treesit
+// TODO parse if treesit
 void yank() {
     const char *clipboard_text = getClipboardString();
     

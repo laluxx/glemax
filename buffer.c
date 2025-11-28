@@ -2,6 +2,7 @@
 #include "wm.h"
 #include "lisp.h"
 #include "faces.h"
+#include <obsidian/window.h>
 #include <stdbool.h>
 
 Buffer *all_buffers = NULL;
@@ -43,6 +44,7 @@ Buffer* buffer_create(const char *name) {
     buffer->region.active = false;
     buffer->region.mark = 0;
     buffer->props = NULL;
+    buffer->ts_state = NULL;
 
     // Initialize buffer-local variables as empty alist
     buffer->local_var_alist = SCM_EOL;
@@ -50,6 +52,7 @@ Buffer* buffer_create(const char *name) {
 
     // Initialize keymap as NULL (will use global keymap)
     buffer->keymap = NULL;    
+
 
     // Add to circular buffer list
     if (all_buffers == NULL) {
@@ -101,6 +104,11 @@ void buffer_destroy(Buffer *buffer) {
         keymap_free(buffer->keymap);
         free(buffer->keymap);
         buffer->keymap = NULL;
+    }
+
+    if (buffer->ts_state) {
+        treesit_parser_delete(buffer->ts_state);
+        buffer->ts_state = NULL;
     }
 
 
@@ -619,228 +627,160 @@ KeyChordMap* current_global_map(void) {
 
 
 
-
-
-
-
-void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) {
-    float x = start_x;
-    float y = start_y;
+/* void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y) { */
+/*     float x = start_x; */
+/*     float y = start_y; */
     
-    size_t point = win ? win->point : buffer->pt;
+/*     size_t point = win ? win->point : buffer->pt; */
     
-    // Get face and font at cursor position
-    int face_id = get_text_property_face(buffer, point);
-    Face *face = get_face(face_id);
-    Font *font = face->font;
+/*     // Get face and font at cursor position */
+/*     int face_id = get_text_property_face(buffer, point); */
+/*     Face *face = get_face(face_id); */
+/*     Font *font = face->font; */
     
-    float line_height = font->ascent + font->descent;
-    float max_x = start_x + (win->width - (2 * fringe_width));
+/*     float line_height = font->ascent + font->descent; */
+/*     float max_x = start_x + (win->width - (2 * fringe_width)); */
     
-    size_t text_len = rope_char_length(buffer->rope);
-    int lineCount = 0;
+/*     // Get truncate-lines buffer-local variable */
+/*     SCM truncate_lines_sym = scm_from_utf8_symbol("truncate-lines"); */
+/*     SCM truncate_lines_val = buffer_local_value(truncate_lines_sym, buffer); */
+/*     bool truncate_lines = scm_is_true(truncate_lines_val); */
     
-    rope_iter_t iter;
-    rope_iter_init(&iter, buffer->rope, 0);
+/*     size_t text_len = rope_char_length(buffer->rope); */
+/*     int lineCount = 0; */
     
-    uint32_t ch;
-    size_t i = 0;
-    while (i < point && rope_iter_next_char(&iter, &ch)) {
-        // Get font for each character to calculate position correctly
-        int char_face_id = get_text_property_face(buffer, i);
-        Face *char_face = get_face(char_face_id);
-        Font *char_font = char_face->font;
+/*     rope_iter_t iter; */
+/*     rope_iter_init(&iter, buffer->rope, 0); */
+    
+/*     uint32_t ch; */
+/*     size_t i = 0; */
+/*     while (i < point && rope_iter_next_char(&iter, &ch)) { */
+/*         // Get font for each character to calculate position correctly */
+/*         int char_face_id = get_text_property_face(buffer, i); */
+/*         Face *char_face = get_face(char_face_id); */
+/*         Font *char_font = char_face->font; */
         
-        if (ch == '\n') {
-            lineCount++;
-            x = start_x;
-        } else {
-            float char_width = character_width(char_font, ch);
-            if (x + char_width > max_x) {
-                x = start_x;
-                lineCount++;
-            }
+/*         if (ch == '\n') { */
+/*             lineCount++; */
+/*             x = start_x; */
+/*         } else { */
+/*             float char_width = character_width(char_font, ch); */
+/*             if (!truncate_lines && x + char_width > max_x) { */
+/*                 x = start_x; */
+/*                 lineCount++; */
+/*             } */
             
-            Character *char_info = font_get_character(char_font, ch);
-            if (char_info) {
-                x += char_info->ax;
-            }
-        }
-        i++;
-    }
+/*             Character *char_info = font_get_character(char_font, ch); */
+/*             if (char_info) { */
+/*                 x += char_info->ax; */
+/*             } */
+/*         } */
+/*         i++; */
+/*     } */
     
-    // Check if the character AT the cursor position would wrap
-    if (i == point && point < text_len) {
-        uint32_t ch_at_cursor = rope_char_at(buffer->rope, point);
-        if (ch_at_cursor != '\n') {
-            float char_width = character_width(font, ch_at_cursor);
-            if (x + char_width > max_x) {
-                x = start_x;
-                lineCount++;
-            }
-        }
-    }
+/*     // Check if the character AT the cursor position would wrap */
+/*     if (i == point && point < text_len) { */
+/*         uint32_t ch_at_cursor = rope_char_at(buffer->rope, point); */
+/*         if (ch_at_cursor != '\n') { */
+/*             float char_width = character_width(font, ch_at_cursor); */
+/*             if (!truncate_lines && x + char_width > max_x) { */
+/*                 x = start_x; */
+/*                 lineCount++; */
+/*             } */
+/*         } */
+/*     } */
     
-    rope_iter_destroy(&iter);
+/*     rope_iter_destroy(&iter); */
     
-    y = start_y - lineCount * line_height - (font->descent * 2);
+/*     // Don't draw cursor if it's beyond window edge when truncating */
+/*     if (truncate_lines && x >= max_x) { */
+/*         return; */
+/*     } */
     
-    buffer->cursor.x = x;
-    buffer->cursor.y = y;
+/*     y = start_y - lineCount * line_height - (font->descent * 2); */
     
-    // Determine cursor width using font at cursor
-    float cursor_width;
-    Character *space = font_get_character(font, ' ');
-    float space_width = space ? space->ax : font->ascent;
+/*     buffer->cursor.x = x; */
+/*     buffer->cursor.y = y; */
     
-    if (point < text_len) {
-        uint32_t ch_at_cursor = rope_char_at(buffer->rope, point);
-        if (ch_at_cursor == '\n') {
-            cursor_width = space_width;
-        } else {
-            Character *char_info = font_get_character(font, ch_at_cursor);
-            cursor_width = char_info ? char_info->ax : space_width;
-        }
-    } else {
-        cursor_width = space_width;
-    }
-    
-    float cursor_height = font->ascent + font->descent;
-    
-    bool is_selected = win && win->is_selected;
-    
-    if (win && win->is_minibuffer && !wm.minibuffer_active) {
-        return;
-    }
-    
-    if (is_selected) {
-        bool blink_cursor_mode = scm_get_bool("blink-cursor-mode", true);        
-        size_t blink_cursor_blinks = scm_get_size_t("blink-cursor-blinks", 0);
-        float blink_cursor_interval = scm_get_float("blink-cursor-interval", 0.1);
-        float blink_cursor_delay = scm_get_float("blink-cursor-delay", 0.1);
+/*     // Determine cursor width using font at cursor */
+/*     float cursor_width; */
+/*     Character *space = font_get_character(font, ' '); */
+/*     float space_width = space ? space->ax : font->ascent; */
 
-        if (blink_cursor_mode && buffer->cursor.blink_count < blink_cursor_blinks) {
-            double currentTime = getTime();
-            double interval = buffer->cursor.visible ? blink_cursor_interval : blink_cursor_delay;
-            
-            if (currentTime - buffer->cursor.last_blink >= interval) {
-                buffer->cursor.visible = !buffer->cursor.visible;
-                buffer->cursor.last_blink = currentTime;
-                if (buffer->cursor.visible) {
-                    buffer->cursor.blink_count++;
-                }
-            }
-            
-            if (buffer->cursor.visible) {
-                quad2D((vec2){buffer->cursor.x, buffer->cursor.y},
-                       (vec2){cursor_width, cursor_height}, face_cache->faces[FACE_CURSOR]->bg);
-            }
-        } else {
-            quad2D((vec2){buffer->cursor.x, buffer->cursor.y},
-                   (vec2){cursor_width, cursor_height}, face_cache->faces[FACE_CURSOR]->bg);
-        }
-    } else {
-        float border_width = 1.0f;
-        
-        quad2D((vec2){buffer->cursor.x, buffer->cursor.y + cursor_height - border_width},
-               (vec2){cursor_width, border_width}, face_cache->faces[FACE_CURSOR]->bg);
-        
-        quad2D((vec2){buffer->cursor.x, buffer->cursor.y},
-               (vec2){cursor_width, border_width}, face_cache->faces[FACE_CURSOR]->bg);
-        
-        quad2D((vec2){buffer->cursor.x, buffer->cursor.y},
-               (vec2){border_width, cursor_height}, face_cache->faces[FACE_CURSOR]->bg);
-        
-        quad2D((vec2){buffer->cursor.x + cursor_width - border_width, buffer->cursor.y},
-               (vec2){border_width, cursor_height}, face_cache->faces[FACE_CURSOR]->bg);
-    }
-}
+/*     bool crystal_point_mode = scm_get_bool("crystal-point-mode", false); */
+/*     Color color; */
 
-void draw_mark(Window *win, float start_x, float start_y) {
-    Buffer *buffer = win->buffer;
+/*     if (point < text_len) { */
+/*         uint32_t ch_at_cursor = rope_char_at(buffer->rope, point); */
+/*         if (ch_at_cursor == '\n') { */
+/*             cursor_width = space_width; */
+/*         } else { */
+/*             Character *char_info = font_get_character(font, ch_at_cursor); */
+/*             cursor_width = char_info ? char_info->ax : space_width; */
+/*         } */
+
+/*         // Set cursor color based on crystal-point-mode and character type */
+/*         if (crystal_point_mode && ch_at_cursor != '\n' && ch_at_cursor != ' ' && ch_at_cursor != '\t') { */
+/*             color = face->fg; */
+/*         } else { */
+/*             color = face_cache->faces[FACE_CURSOR]->bg; */
+/*         } */
+/*     } else { */
+/*         // At EOF */
+/*         cursor_width = space_width; */
+/*         color = face_cache->faces[FACE_CURSOR]->bg; */
+/*     } */
     
-    if (!win->is_selected) return;
-    if (buffer->region.mark == win->point) return;
+/*     float cursor_height = font->ascent + font->descent; */
     
-    // Get face and font at mark position
-    int face_id = get_text_property_face(buffer, buffer->region.mark);
-    Face *face = get_face(face_id);
-    Font *font = face->font;
+/*     bool is_selected = win && win->is_selected; */
     
-    float mark_x = start_x;
-    float mark_y = start_y;
-    float line_height = font->ascent + font->descent;
-    float max_x = start_x + (win->width - (2 * fringe_width));
+/*     if (win && win->is_minibuffer && !wm.minibuffer_active) { */
+/*         return; */
+/*     } */
     
-    size_t text_len = rope_char_length(buffer->rope);
-    int lineCount = 0;
-    
-    rope_iter_t iter;
-    rope_iter_init(&iter, buffer->rope, 0);
-    
-    uint32_t ch;
-    size_t i = 0;
-    while (i < buffer->region.mark && rope_iter_next_char(&iter, &ch)) {
-        // Get font for each character to calculate position correctly
-        int char_face_id = get_text_property_face(buffer, i);
-        Face *char_face = get_face(char_face_id);
-        Font *char_font = char_face->font;
-        
-        if (ch == '\n') {
-            lineCount++;
-            mark_x = start_x;
-        } else {
-            float char_width = character_width(char_font, ch);
-            if (mark_x + char_width > max_x) {
-                mark_x = start_x;
-                lineCount++;
-            }
+/*     if (is_selected) { */
+/*         bool blink_cursor_mode = scm_get_bool("blink-cursor-mode", true); */
+/*         size_t blink_cursor_blinks = scm_get_size_t("blink-cursor-blinks", 0); */
+/*         float blink_cursor_interval = scm_get_float("blink-cursor-interval", 0.1); */
+/*         float blink_cursor_delay = scm_get_float("blink-cursor-delay", 0.1); */
+
+/*         if (blink_cursor_mode && buffer->cursor.blink_count < blink_cursor_blinks) { */
+/*             double currentTime = getTime(); */
+/*             double interval = buffer->cursor.visible ? blink_cursor_interval : blink_cursor_delay; */
             
-            Character *char_info = font_get_character(char_font, ch);
-            if (char_info) {
-                mark_x += char_info->ax;
-            }
-        }
-        i++;
-    }
-    
-    // Check if the character AT the mark position would wrap
-    if (i == buffer->region.mark && buffer->region.mark < text_len) {
-        uint32_t ch_at_mark = rope_char_at(buffer->rope, buffer->region.mark);
-        if (ch_at_mark != '\n') {
-            float char_width = character_width(font, ch_at_mark);
-            if (mark_x + char_width > max_x) {
-                mark_x = start_x;
-                lineCount++;
-            }
-        }
-    }
-    
-    rope_iter_destroy(&iter);
-    
-    mark_y = start_y - lineCount * line_height - (font->descent * 2);
-    
-    // Determine mark width using font at mark
-    float mark_width;
-    Character *space = font_get_character(font, ' ');
-    float space_width = space ? space->ax : font->ascent;
-    
-    if (buffer->region.mark < text_len) {
-        uint32_t ch_at_mark = rope_char_at(buffer->rope, buffer->region.mark);
-        if (ch_at_mark == '\n') {
-            mark_width = space_width;
-        } else {
-            Character *char_info = font_get_character(font, ch_at_mark);
-            mark_width = char_info ? char_info->ax : space_width;
-        }
-    } else {
-        mark_width = space_width;
-    }
-    
-    float mark_height = font->ascent + font->descent;
-    
-    quad2D((vec2){mark_x, mark_y}, (vec2){mark_width, mark_height}, face_cache->faces[FACE_VISIBLE_MARK]->bg);
-}
+/*             if (currentTime - buffer->cursor.last_blink >= interval) { */
+/*                 buffer->cursor.visible = !buffer->cursor.visible; */
+/*                 buffer->cursor.last_blink = currentTime; */
+/*                 if (buffer->cursor.visible) { */
+/*                     buffer->cursor.blink_count++; */
+/*                 } */
+/*             } */
+            
+/*             if (buffer->cursor.visible) { */
+/*                 quad2D((vec2){buffer->cursor.x, buffer->cursor.y}, */
+/*                        (vec2){cursor_width, cursor_height}, color); */
+/*             } */
+/*         } else { */
+/*             quad2D((vec2){buffer->cursor.x, buffer->cursor.y}, */
+/*                    (vec2){cursor_width, cursor_height}, color); */
+/*         } */
+/*     } else { */
+/*         float border_width = 1.0f; */
+        
+/*         quad2D((vec2){buffer->cursor.x, buffer->cursor.y + cursor_height - border_width}, */
+/*                (vec2){cursor_width, border_width}, color); */
+        
+/*         quad2D((vec2){buffer->cursor.x, buffer->cursor.y}, */
+/*                (vec2){cursor_width, border_width}, color); */
+        
+/*         quad2D((vec2){buffer->cursor.x, buffer->cursor.y}, */
+/*                (vec2){border_width, cursor_height}, color); */
+        
+/*         quad2D((vec2){buffer->cursor.x + cursor_width - border_width, buffer->cursor.y}, */
+/*                (vec2){border_width, cursor_height}, color); */
+/*     } */
+/* } */
 
 // Helper function to find the character position at a given scroll offset
 static size_t find_start_position(Buffer *buffer, Window *win, float *out_start_y) {
@@ -906,12 +846,10 @@ static size_t find_start_position(Buffer *buffer, Window *win, float *out_start_
     return pos;
 }
 
-
 #include "theme.h"
 
 
-// NOTE We draw a quad2D for every character that has a face with background
-// This is SOOOOO BAD we should draw only 1 quad2D per interval at most and merge them
+
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     // Get default face for fallback
     Face *default_face = get_face(FACE_DEFAULT);
@@ -924,6 +862,11 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     
     float line_height = default_font->ascent + default_font->descent;
     float max_x = start_x + (win->width - 2 * fringe_width);
+    
+    // Get truncate-lines buffer-local variable
+    SCM truncate_lines_sym = scm_from_utf8_symbol("truncate-lines");
+    SCM truncate_lines_val = buffer_local_value(truncate_lines_sym, buffer);
+    bool truncate_lines = scm_is_true(truncate_lines_val);
     
     float window_bottom = win->y;
     float window_top = win->y + win->height;
@@ -942,7 +885,11 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
         start_pos = find_start_position(buffer, win, &scroll_offset_y);
     }
     
-    float x = start_x;
+    // Apply horizontal scroll offset for truncate-lines
+    float scroll_offset_x = (win && !win->is_minibuffer && truncate_lines) ? win->scrollx : 0;
+    float line_start_x = start_x - scroll_offset_x;
+    
+    float x = line_start_x;
     float y = start_y + (win && !win->is_minibuffer ? win->scrolly : 0) - scroll_offset_y;
     
     rope_iter_t iter;
@@ -951,21 +898,24 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     uint32_t ch;
     size_t i = start_pos;
     bool visible_mark_mode = scm_get_bool("visible-mark-mode", false);
+    bool crystal_point_mode = scm_get_bool("crystal-point-mode", false);
     
-    // Track current line height based on tallest font in the line
     float current_line_height = line_height;
     
+    // Track cursor position for drawing later
+    float cursor_x = 0, cursor_y = 0;
+    float cursor_width = 0, cursor_height = 0;
+    bool cursor_found = false;
+    Color cursor_color;
+    
     while (rope_iter_next_char(&iter, &ch)) {
-        // Get face for this character position
         int face_id = get_text_property_face(buffer, i);
         Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
         if (!face) face = default_face;
         
-        // Use get_face_font to get the appropriate cached font variant
         Font *char_font = get_face_font(face);
         if (!char_font) char_font = default_font;
         
-        // Update line height if this font is taller
         float font_height = char_font->ascent + char_font->descent;
         if (font_height > current_line_height) {
             current_line_height = font_height;
@@ -976,58 +926,113 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
         }
         
         if (ch == '\n') {
-            x = start_x;
+            // Check if cursor is at newline position
+            if (i == point) {
+                cursor_x = x;
+                cursor_y = y - (char_font->descent * 2);
+                Character *space = font_get_character(char_font, ' ');
+                cursor_width = space ? space->ax : char_font->ascent;
+                cursor_height = char_font->ascent + char_font->descent;
+                cursor_color = face_cache->faces[FACE_CURSOR]->bg;
+                cursor_found = true;
+            }
+            
+            // Check if mark is at newline position
+            if (i == buffer->region.mark && is_selected && visible_mark_mode && 
+                buffer->region.mark != point && y >= window_bottom && y <= window_top) {
+                Character *space = font_get_character(char_font, ' ');
+                float mark_width = space ? space->ax : char_font->ascent;
+                float mark_height = char_font->ascent + char_font->descent;
+                quad2D((vec2){x, y - (char_font->descent * 2)},
+                       (vec2){mark_width, mark_height}, 
+                       face_cache->faces[FACE_VISIBLE_MARK]->bg);
+            }
+            
+            x = line_start_x;
             y -= current_line_height;
-            current_line_height = line_height; // Reset for next line
+            current_line_height = line_height;
         } else {
             float char_width = character_width(char_font, ch);
-            if (x + char_width > max_x) {
-                x = start_x;
-                y -= current_line_height;
-                current_line_height = line_height; // Reset for wrapped line
-                
-                if (y < window_bottom - current_line_height) {
-                    break;
+            
+            // Check for truncation or wrapping based on truncate-lines
+            if (truncate_lines) {
+                if (x > max_x) {
+                    // Skip rest of line until newline when truncating
+                    while (rope_iter_next_char(&iter, &ch) && ch != '\n') {
+                        i++;
+                    }
+                    if (ch == '\n') {
+                        x = line_start_x;
+                        y -= current_line_height;
+                        current_line_height = line_height;
+                    }
+                    i += 2;
+                    continue;
+                }
+            } else {
+                if (x + char_width > max_x) {
+                    x = start_x;
+                    y -= current_line_height;
+                    current_line_height = line_height;
+                    
+                    if (y < window_bottom - current_line_height) {
+                        break;
+                    }
                 }
             }
             
             if (y >= window_bottom && y <= window_top) {
-                // Determine character color
                 Color char_color = face->fg;
                 Color bg_color = face->bg;
                 
-                // Check for cursor/mark positions
-                bool at_cursor = (i == point && is_selected && buffer->cursor.visible);
+                // Check if we're at the cursor position (regardless of selection)
+                bool at_cursor = (i == point);
+                
+                // Check if we're at the mark position (but NOT the cursor)
                 bool at_mark = (i == buffer->region.mark && is_selected &&
                                visible_mark_mode && buffer->region.mark != point);
                 
-                // Cursor/mark override colors
                 if (at_cursor) {
-                    // Get cursor face background for cursor color
-                    Face *cursor_face = get_face(FACE_CURSOR);
-                    bg_color = cursor_face ? cursor_face->bg : base_fg;
-                    char_color = base_bg;
+                    // Save cursor position and properties for later drawing
+                    cursor_x = x;
+                    cursor_y = y - (char_font->descent * 2);
+                    Character *char_info = font_get_character(char_font, ch);
+                    cursor_width = char_info ? char_info->ax : char_width;
+                    cursor_height = char_font->ascent + char_font->descent;
+                    
+                    // Determine cursor color based on crystal-point-mode
+                    if (crystal_point_mode && ch != '\n' && ch != ' ' && ch != '\t') {
+                        cursor_color = face->fg;
+                    } else {
+                        cursor_color = face_cache->faces[FACE_CURSOR]->bg;
+                    }
+                    cursor_found = true;
+                    
+                    // Only modify character appearance if window is selected and cursor is visible
+                    if (is_selected && buffer->cursor.visible) {
+                        char_color = base_bg;
+                    }
                 } else if (at_mark) {
-                    bg_color = base_fg;
+                    // Draw mark background
+                    bg_color = face_cache->faces[FACE_VISIBLE_MARK]->bg;
                     char_color = base_bg;
                 }
                 
-                // Only draw background if it differs from base background
-                bool needs_bg = !color_equals(bg_color, base_bg) || at_cursor || at_mark;
+                // Draw background if needed
+                bool needs_bg = (!at_cursor || !is_selected || !buffer->cursor.visible) && 
+                                (!color_equals(bg_color, base_bg) || at_mark);
                 
                 if (needs_bg) {
                     Character *char_info = font_get_character(char_font, ch);
                     float bg_width = char_info ? char_info->ax : char_width;
                     float bg_height = char_font->ascent + char_font->descent;
-                    quad2D((vec2){x, y - char_font->descent * 2}, 
+                    quad2D((vec2){x, y - char_font->descent * 2},
                            (vec2){bg_width, bg_height}, bg_color);
                 }
                 
-                // Render character
                 float advance = character(char_font, ch, x, y, char_color);
                 x += advance;
             } else {
-                // Character not in visible area, but still advance position
                 if (y >= window_bottom) {
                     float advance = character_width(char_font, ch);
                     x += advance;
@@ -1039,8 +1044,78 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     
     rope_iter_destroy(&iter);
     
-    float scroll_offset = (win && !win->is_minibuffer) ? win->scrolly : 0;
+    // Handle cursor at end of buffer
+    if (point >= rope_char_length(buffer->rope)) {
+        int face_id = get_text_property_face(buffer, point);
+        Face *face = get_face(face_id);
+        Font *char_font = face ? face->font : default_font;
+        
+        cursor_x = x;
+        cursor_y = y - (char_font->descent * 2);
+        Character *space = font_get_character(char_font, ' ');
+        cursor_width = space ? space->ax : char_font->ascent;
+        cursor_height = char_font->ascent + char_font->descent;
+        cursor_color = face_cache->faces[FACE_CURSOR]->bg;
+        cursor_found = true;
+    }
     
-    if (visible_mark_mode) draw_mark(win, start_x, start_y + scroll_offset);
-    draw_cursor(buffer, win, start_x, start_y + scroll_offset);
+    // Update cursor position in buffer
+    buffer->cursor.x = cursor_x;
+    buffer->cursor.y = cursor_y;
+    
+    // Draw cursor based on window selection state
+    if (cursor_found) {
+        // Skip drawing if minibuffer is not active
+        if (win && win->is_minibuffer && !wm.minibuffer_active) {
+            return;
+        }
+        
+        if (is_selected) {
+            // Draw filled cursor with optional blinking for selected window
+            bool blink_cursor_mode = scm_get_bool("blink-cursor-mode", true);
+            size_t blink_cursor_blinks = scm_get_size_t("blink-cursor-blinks", 0);
+            float blink_cursor_interval = scm_get_float("blink-cursor-interval", 0.1);
+            float blink_cursor_delay = scm_get_float("blink-cursor-delay", 0.1);
+
+            if (blink_cursor_mode && buffer->cursor.blink_count < blink_cursor_blinks) {
+                double currentTime = getTime();
+                double interval = buffer->cursor.visible ? blink_cursor_interval : blink_cursor_delay;
+                
+                if (currentTime - buffer->cursor.last_blink >= interval) {
+                    buffer->cursor.visible = !buffer->cursor.visible;
+                    buffer->cursor.last_blink = currentTime;
+                    if (buffer->cursor.visible) {
+                        buffer->cursor.blink_count++;
+                    }
+                }
+                
+                if (buffer->cursor.visible) {
+                    quad2D((vec2){cursor_x, cursor_y},
+                           (vec2){cursor_width, cursor_height}, cursor_color);
+                }
+            } else {
+                quad2D((vec2){cursor_x, cursor_y},
+                       (vec2){cursor_width, cursor_height}, cursor_color);
+            }
+        } else {
+            // Draw hollow cursor for non-selected windows
+            float border_width = 1.0f;
+            
+            // Bottom border
+            quad2D((vec2){cursor_x, cursor_y + cursor_height - border_width},
+                   (vec2){cursor_width, border_width}, cursor_color);
+            
+            // Top border
+            quad2D((vec2){cursor_x, cursor_y},
+                   (vec2){cursor_width, border_width}, cursor_color);
+            
+            // Left border
+            quad2D((vec2){cursor_x, cursor_y},
+                   (vec2){border_width, cursor_height}, cursor_color);
+            
+            // Right border
+            quad2D((vec2){cursor_x + cursor_width - border_width, cursor_y},
+                   (vec2){border_width, cursor_height}, cursor_color);
+        }
+    }
 }

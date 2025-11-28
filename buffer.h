@@ -17,6 +17,7 @@ typedef struct {
 } Region;
 
 #include "textprop.h"
+#include "treesit.h"
 
 typedef struct Buffer {
     struct Buffer *next; // Next buffer in circular list
@@ -29,6 +30,7 @@ typedef struct Buffer {
     TextProp *props;    
     SCM local_var_alist; // Alist of (SYMBOL . VALUE) pairs
     KeyChordMap *keymap;  // Buffer-local keymap (can be NULL)
+    TreeSitterState *ts_state; // (NULL if not using tree-sitter)
 } Buffer;
 
 extern Buffer *all_buffers;

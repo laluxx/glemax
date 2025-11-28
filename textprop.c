@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+
 void put_text_property(Buffer *buf, size_t start, size_t end, int face_id) {
     if (!buf || start >= end) return;
     

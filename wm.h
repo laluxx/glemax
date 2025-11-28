@@ -107,6 +107,7 @@ void debug_print_windows();
 
 
 void update_window_scroll(Window *win);
+void update_window_scroll_lerp(Window *win);
 
 
 // Window related editing functions

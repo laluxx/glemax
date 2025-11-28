@@ -1,24 +1,3 @@
-;; Define functions with docstrings
-(define (my-custom-command)
-  "Insert a greeting at point"
-  (message "Hello KeyChords from Scheme!"))
-
-
-(define (my-function number)
-  "Insert the best number"
-  (message "The best number is: ~a" number))
-
-
-;; (keychord-bind-with-args "C-c f" (lambda () (load user-init-file)))
-
-;; (keymap-global-set "M-z"
-;;                (lambda ()
-;;                  "docstring"
-;;                  (message "Point: ~d" (point))))
-
-;; Bind it - documentation is automatically extracted
-(keymap-global-set "C-c i" my-custom-command)
-
 (keymap-global-set "C-x k" kill-buffer)
 (keymap-global-set "C-x <left>"  previous-buffer)
 (keymap-global-set "C-x <right>" next-buffer)
@@ -166,6 +145,13 @@ gets no input during that time.
 
 See also `blink-cursor-interval' and `blink-cursor-delay'.")
 
+
+(define crystal-point-mode #t)
+(set-var-doc! crystal-point-mode
+"if #t dynamically update the cursor color to match
+face foreground color at point.")
+
+
 (define visible-mark-mode #t)
 (set-var-doc! visible-mark-mode
 "#t if the mark should be visible.")
@@ -295,161 +281,6 @@ With prefix argument, delete them only before point."
 
 
 
-(deftheme 'kaolin-dark "A dark jade theme inspired by Sierra.vim")
-
-(custom-theme-set-faces 'kaolin-dark
-  '(default            ((t (:foreground "#e4e4e8" :background "#18181B"))))
-  '(mode-line          ((t (:foreground "#babac4" :background "#222225"))))
-  '(mode-line-active   ((t (:foreground "#babac4" :background "#222225"))))
-  '(mode-line-inactive ((t (:foreground "#545c5e" :background "#222225"))))
-  '(window-divider     ((t (                      :background "#2B2B2F"))))
-  '(fringe             ((t (:foreground "#e4e4e8" :background "#18181B"))))
-  '(cursor             ((t (                      :background "#e4e4e8"))))
-  '(visible-mark       ((t (                      :background "#968cc7"))))
-)
-
-
-(deftheme 'kaolin-bubblegum "Kaolin colorful theme with dark blue background")
-
-(custom-theme-set-faces 'kaolin-bubblegum
-  '(default            ((t (:foreground "#D4D4D6" :background "#14171E"))))
-  '(mode-line          ((t (:foreground "#bebec4" :background "#191D26"))))
-  '(mode-line-active   ((t (:foreground "#bebec4" :background "#191D26"))))
-  '(mode-line-inactive ((t (:foreground "#454459" :background "#191D26"))))
-  '(window-divider     ((t (                      :background "#202430"))))
-  '(fringe             ((t (:foreground "#e6e6e8" :background "#14171e"))))
-  '(cursor             ((t (                      :background "#D6A0D1"))))
-  '(visible-mark       ((t (                      :background "#41b0f3"))))
-)
-
-
-(deftheme 'kaolin-ocean "Dark blue kaolin theme")
-
-(custom-theme-set-faces 'kaolin-ocean
-  '(default            ((t (:foreground "#E6E6E8" :background "#1A1A25"))))
-  '(mode-line          ((t (:foreground "#bebec4" :background "#252534"))))
-  '(mode-line-active   ((t (:foreground "#bebec4" :background "#252534"))))
-  '(mode-line-inactive ((t (:foreground "#545c5e" :background "#252534"))))
-  '(window-divider     ((t (                      :background "#2f2f43"))))
-  '(fringe             ((t (:foreground "#e6e6e8" :background "#1a1a25"))))
-  '(cursor             ((t (                      :background "#F2F2F2"))))
-  '(visible-mark       ((t (                      :background "#738FD7"))))
-)
-
-
-(deftheme 'kaolin-temple "The terrestrial sphere imbues my spirit")
-
-(custom-theme-set-faces 'kaolin-temple
-  '(default            ((t (:foreground "#EEDCC1" :background "#2B2B2F"))))
-  '(mode-line          ((t (:foreground "#bebec4" :background "#303035"))))
-  '(mode-line-active   ((t (:foreground "#bebec4" :background "#303035"))))
-  '(mode-line-inactive ((t (:foreground "#697375" :background "#303035"))))
-  '(window-divider     ((t (                      :background "#353b3c"))))
-  '(fringe             ((t (:foreground "#EEDCC1" :background "#2B2B2F"))))
-  '(cursor             ((t (                      :background "#EEDCC1"))))
-  '(visible-mark       ((t (                      :background "#fbaed2"))))
-)
-
-
-(deftheme 'dark+ "ported from equinusocio's VSCode theme, dark+")
-
-(custom-theme-set-faces 'dark+
-  '(default            ((t (:foreground "#d4d4d4" :background "#1e1e1e"))))
-  '(mode-line          ((t (:foreground "#f4f4f4" :background "#68217A"))))
-  '(mode-line-active   ((t (:foreground "#f4f4f4" :background "#68217A"))))
-  '(mode-line-inactive ((t (:foreground "#339CDB" :background "#1d1d1d"))))
-  '(window-divider     ((t (                      :background "#252526"))))
-  '(fringe             ((t (:foreground "#4b474c" :background "#1e1e1e"))))
-  '(cursor             ((t (                      :background "#237AD3"))))
-  '(visible-mark       ((t (                      :background "#a9a9a9"))))
-)
-
-
-(deftheme 'dark-one "inspired by Atom One Dark")
-
-(custom-theme-set-faces 'dark-one
-  '(default            ((t (:foreground "#BBC2CF" :background "#282C34"))))
-  '(mode-line          ((t (:foreground "#bbc2cf" :background "#1d2026"))))
-  '(mode-line-active   ((t (:foreground "#bbc2cf" :background "#1d2026"))))
-  '(mode-line-inactive ((t (:foreground "#5B6268" :background "#21242b"))))
-  '(window-divider     ((t (                      :background "#191b20"))))
-  '(fringe             ((t (:foreground "#3f444a" :background "#282c34"))))
-  '(cursor             ((t (                      :background "#51AFEF"))))
-  '(visible-mark       ((t (                      :background "#c678dd"))))
-)
-
-
-(deftheme 'city-lights "inspired by Atom's City Lights theme")
-
-(custom-theme-set-faces 'city-lights
-  '(default            ((t (:foreground "#A0B3C5" :background "#1D252C"))))
-  '(mode-line          ((t (:foreground "#A0B3C5" :background "#181f25"))))
-  '(mode-line-active   ((t (:foreground "#A0B3C5" :background "#181f25"))))
-  '(mode-line-inactive ((t (:foreground "#56697A" :background "#1D252C"))))
-  '(window-divider     ((t (                      :background "#0b0e11"))))
-  '(fringe             ((t (:foreground "#384551" :background "#1D252C"))))
-  '(cursor             ((t (                      :background "#51AFEF"))))
-  '(visible-mark       ((t (                      :background ""))))
-)
-
-
-(deftheme 'molokai "inspired by Tomas Restrepo's Molokai")
-
-(custom-theme-set-faces 'molokai
-  '(default            ((t (:foreground "#D6D6D4" :background "#1C1E1F"))))
-  '(mode-line          ((t (:foreground "#d6d6d4" :background "#2d2e2e"))))
-  '(mode-line-active   ((t (:foreground "#d6d6d4" :background "#2d2e2e"))))
-  '(mode-line-inactive ((t (:foreground "#4e4e4e" :background "#171819"))))
-  '(window-divider     ((t (                      :background "#323435"))))
-  '(fringe             ((t (:foreground "#4e4e4e" :background "#1c1e1f"))))
-  '(cursor             ((t (                      :background "#FB2874"))))
-  '(visible-mark       ((t (                      :background ""))))
-)
-
-
-(deftheme 'monokai-ristretto "Port of Monokai Ristretto")
-
-(custom-theme-set-faces 'monokai-ristretto
-  '(default            ((t (:foreground "#fff1f3" :background "#2c2525"))))
-  '(mode-line          ((t (:foreground "#fff1f3" :background "#403838"))))
-  '(mode-line-active   ((t (:foreground "#fff1f3" :background "#403838"))))
-  '(mode-line-inactive ((t (:foreground "#fff1f3" :background "#2c2525"))))
-  '(window-divider     ((t (                      :background "#413a3a"))))
-  '(fringe             ((t (:foreground "#5b5353" :background "#2c2525"))))
-  '(cursor             ((t (                      :background "#fff1f3"))))
-  '(visible-mark       ((t (                      :background "#adda78"))))
-)
-
-
-(deftheme 'nord "dark variant of Nord")
-
-(custom-theme-set-faces 'nord
-  '(default            ((t (:foreground "#ECEFF4" :background "#2E3440"))))
-  '(mode-line          ((t (:foreground "#ECEFF4" :background "#292e39"))))
-  '(mode-line-active   ((t (:foreground "#ECEFF4" :background "#292e39"))))
-  '(mode-line-inactive ((t (:foreground "#9099AB" :background "#292e39"))))
-  '(window-divider     ((t (                      :background "#1c2028"))))
-  '(fringe             ((t (:foreground "#8FBCBB" :background "#2E3440"))))
-  '(cursor             ((t (                      :background "#81A1C1"))))
-  '(visible-mark       ((t (                      :background "#8FBCBB"))))
-)
-
-
-(deftheme 'modus-vivendi "Elegant, highly legible theme with a black background")
-
-
-(custom-theme-set-faces 'modus-vivendi
-  '(default            ((t (:foreground "#ffffff" :background "#000000"))))
-  '(mode-line          ((t (:foreground "#ffffff" :background "#505050"))))
-  '(mode-line-active   ((t (:foreground "#ffffff" :background "#505050"))))
-  '(mode-line-inactive ((t (:foreground "#969696" :background "#2d2d2d"))))
-  '(window-divider     ((t (                      :background "#646464"))))
-  '(fringe             ((t (:foreground "#ffffff" :background "#1e1e1e"))))
-  '(cursor             ((t (                      :background "#ffffff"))))
-  '(visible-mark       ((t (                      :background "#feacd0"))))
-)
-
-
 (deftheme 'test-theme "test theme that only sets red foreground")
 
 (custom-theme-set-faces 'test-theme
@@ -496,9 +327,9 @@ With prefix argument, delete them only before point."
 When truncating is off, long lines are folded.")
 
 
-;; TODO Make draw_buffer respect this
 (define (toggle-truncate-lines)
-  "Toggle truncating of long lines for the current buffer."
+  "Toggle truncating of long lines for the current buffer.
+When truncating is off, long lines are folded."
   (let ((current-val (buffer-local-value 'truncate-lines (current-buffer))))
     (setq 'truncate-lines (not current-val))
     (message "Truncate long lines ~a" 
@@ -507,37 +338,19 @@ When truncating is off, long lines are folded.")
 (keymap-global-set "C-x x t" toggle-truncate-lines)
 
 
+(defvar-local lerp-scroll #f
+  "Non-false means lerp when scrolling.")
+
+(define (toggle-lerp-scroll)
+  "Toggle lerping of scroll for the current buffer."
+  (let ((current-val (buffer-local-value 'lerp-scroll (current-buffer))))
+    (setq 'lerp-scroll (not current-val))
+    (message "Lerp scroll ~a" 
+             (if (not current-val) "enabled" "disabled"))))
+
+(keymap-global-set "C-x x l" toggle-lerp-scroll)
 
 
-
-(define-syntax define-derived-mode
-  (syntax-rules ()
-    ((_ mode parent-mode name docstring . body)
-     (define (mode)
-       docstring
-       (kill-all-local-variables)
-       (when parent-mode (parent-mode))
-       (setq 'major-mode 'mode)
-       (setq 'mode-name name)
-       . body))))
-
-
-(define lisp-mode-map (make-sparse-keymap))
-
-(define (lisp-test-1)
-  (message "Lisp mode binding 1"))
-
-(define (lisp-test-2)
-  (message "Lisp mode binding 2"))
-
-(define-key lisp-mode-map "C-j" lisp-test-1)
-(define-key lisp-mode-map "C-k" lisp-test-2)
-
-(define-derived-mode lisp-mode #f "Lisp"
-  "Major mode for editing Lisp code."
-  (use-local-map lisp-mode-map)
-  (setq-local 'tab-width 2)
-  (message "Lisp mode enabled"))
 
 
 
@@ -549,6 +362,7 @@ When truncating is off, long lines are folded.")
 (define (text-test-2)
   (message "Text mode binding 2"))
 
+;; TODO OBSIDIAN Those keybinds make C-c p not work anymore
 (define-key text-mode-map "C-c 1" text-test-1)
 (define-key text-mode-map "C-c 2" text-test-2)
 
@@ -558,3 +372,20 @@ When truncating is off, long lines are folded.")
   (setq-local 'fill-column 80)
   (message "Text mode enabled"))
 
+
+
+
+(define (test-faces interval-length)
+  "Apply error and warning faces alternately across the entire buffer.
+INTERVAL-LENGTH specifies how many characters each face segment should be."
+  
+  (let ((buffer-size (buffer-size)))
+    (let loop ((start-pos 0)
+               (use-error? #t))
+      (when (< start-pos buffer-size)
+        (let ((end-pos (min (+ start-pos interval-length) buffer-size)))
+          (put-text-property start-pos 
+                           end-pos 
+                           'face 
+                           (if use-error? 'error 'warning))
+          (loop end-pos (not use-error?)))))))

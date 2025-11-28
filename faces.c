@@ -45,7 +45,7 @@ static struct {
     {"font-lock-function-call-face",        FACE_FONT_LOCK_FUNCTION_CALL},             
     {"font-lock-function-name-face",        FACE_FONT_LOCK_FUNCTION_NAME},             
     {"font-lock-keyword-face",              FACE_FONT_LOCK_KEYWORD},                   
-    {"font-lock-misc-punctuation-face",     FACE_FONT_LOCK_MISC_PUNCTUATION_FACE},     
+    {"font-lock-misc-punctuation-face",     FACE_FONT_LOCK_MISC_PUNCTUATION},     
     {"font-lock-negation-char-face",        FACE_FONT_LOCK_NEGATION_CHAR},             
     {"font-lock-number-face",               FACE_FONT_LOCK_NUMBER},                    
     {"font-lock-operator-face",             FACE_FONT_LOCK_OPERATOR},                  
@@ -99,22 +99,22 @@ Font *fontconfig_load_font(const char *family, int size, bool bold, bool italic)
 Font *get_font_variant(bool bold, bool italic) {
     if (bold && italic) {
         if (!cached_font_bold_italic) {
-            cached_font_bold_italic = fontconfig_load_font("Adwaita Mono", 44, true, true);
+            cached_font_bold_italic = fontconfig_load_font("Adwaita Mono", 42, true, true);
         }
         return cached_font_bold_italic;
     } else if (bold) {
         if (!cached_font_bold) {
-            cached_font_bold = fontconfig_load_font("Adwaita Mono", 44, true, false);
+            cached_font_bold = fontconfig_load_font("Adwaita Mono", 42, true, false);
         }
         return cached_font_bold;
     } else if (italic) {
         if (!cached_font_italic) {
-            cached_font_italic = fontconfig_load_font("Adwaita Mono", 44, false, true);
+            cached_font_italic = fontconfig_load_font("Adwaita Mono", 42, false, true);
         }
         return cached_font_italic;
     } else {
         if (!cached_font_regular) {
-            cached_font_regular = fontconfig_load_font("Adwaita Mono", 44, false, false);
+            cached_font_regular = fontconfig_load_font("Adwaita Mono", 42, false, false);
         }
         return cached_font_regular;
     }
@@ -253,6 +253,8 @@ void init_faces(void) {
             case FACE_CURSOR:
                 face->bg = parse_color("black");
                 face->bg_set = true;
+                face->fg = parse_color("white");
+                face->fg_set = true;
                 break;
             case FACE_VISIBLE_MARK:
                 face->bg = parse_color("grey80");
@@ -330,7 +332,7 @@ void init_faces(void) {
                 face->fg = parse_color("purple");
                 face->fg_set = true;
                 break;
-            case FACE_FONT_LOCK_MISC_PUNCTUATION_FACE:
+            case FACE_FONT_LOCK_MISC_PUNCTUATION:
                 face->inherit_from = FACE_FONT_LOCK_PUNCTUATION;
                 break;
             case FACE_FONT_LOCK_NEGATION_CHAR:

@@ -1,6 +1,6 @@
 # Glemax: Emacs Reimplemented on Modern Hardware
 
-<img src="assets/uwu.png" width="200" align="right" />
+<img src="etc/uwu.png" width="200" align="right" />
 
 Glemax is a faithful, function-by-function reimplementation of GNU Emacs, built from scratch in C with a Vulkan rendering engine. This is not an Emacs-inspired editor, it is Emacs itself, rebuilt on a foundation designed for modern hardware.
 
@@ -63,7 +63,7 @@ Documentation strings work:
   "Insert the current Unix timestamp at point."
   (insert (number->string (current-time))))
 
-(keychord-bind "C-c t" insert-timestamp)
+(keymap-global-set "C-c t" insert-timestamp)
 ```
 
 Variables work as expected:
@@ -126,6 +126,13 @@ Glemax has a proper text properties implementation. Apply faces to specific regi
 
 ;; Remove properties from a region
 (remove-text-properties 10 50 'face)
+
+;; Put a face on the entire buffer
+(put-text-property (point-min) (buffer-size) 'face 'error)
+
+;; Reset it back to default
+(put-text-property (point-min) (buffer-size) 'face 'default)
+
 ```
 
 Text properties automatically adjust when you insert or delete text, maintaining correct highlighting as the buffer changes. The implementation handles all edge cases: splitting properties, merging adjacent properties, and efficient updates during editing.
@@ -262,24 +269,24 @@ This works right now:
 
 ```scheme
 ;; Editing
-(keychord-bind "C-n" next-line)
-(keychord-bind "C-p" previous-line)
-(keychord-bind "C-f" forward-char)
-(keychord-bind "C-b" backward-char)
-(keychord-bind "M-f" forward-word)
-(keychord-bind "M-b" backward-word)
+(keymap-global-set "C-n" next-line)
+(keymap-global-set "C-p" previous-line)
+(keymap-global-set "C-f" forward-char)
+(keymap-global-set "C-b" backward-char)
+(keymap-global-set "M-f" forward-word)
+(keymap-global-set "M-b" backward-word)
 
 ;; Killing
-(keychord-bind "C-k" kill-line)
-(keychord-bind "C-w" kill-region)
-(keychord-bind "M-d" kill-word)
-(keychord-bind "C-y" yank)
+(keymap-global-set "C-k" kill-line)
+(keymap-global-set "C-w" kill-region)
+(keymap-global-set "M-d" kill-word)
+(keymap-global-set "C-y" yank)
 
 ;; Windows
-(keychord-bind "C-x 2" split-window-below)
-(keychord-bind "C-x 3" split-window-right)
-(keychord-bind "C-x 0" delete-window)
-(keychord-bind "C-x o" other-window)
+(keymap-global-set "C-x 2" split-window-below)
+(keymap-global-set "C-x 3" split-window-right)
+(keymap-global-set "C-x 0" delete-window)
+(keymap-global-set "C-x o" other-window)
 
 ;; Custom commands
 (define (mark-whole-buffer)
@@ -287,10 +294,10 @@ This works right now:
   (set-mark (buffer-size))
   (beginning-of-buffer))
 
-(keychord-bind "C-x h" mark-whole-buffer)
+(keymap-global-set "C-x h" mark-whole-buffer)
 
 ;; Commands with arguments
-(keychord-bind "C-T" (lambda () (transpose-chars -1)))
+(keymap-global-set "C-T" (lambda () (transpose-chars -1)))
 
 ;; Helper functions
 (define (bob?) (= (point) 0))
@@ -310,7 +317,7 @@ This works right now:
                   (or (= ch 32) (= ch 9))))
       (delete-char))))
 
-(keychord-bind "M-\\" delete-horizontal-space)
+(keymap-global-set "M-\\" delete-horizontal-space)
 
 ;; Variables
 (define blink-cursor-mode #t)

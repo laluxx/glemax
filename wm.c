@@ -24,7 +24,6 @@ Window* window_create(Window *parent, Buffer *buffer) {
     win->is_minibuffer = false;
    
     win->point = 0;
-    
     return win;
 }
 
@@ -687,6 +686,8 @@ static void draw_modeline(Window *win) {
            color);
 }
 
+
+
 void update_window_scroll(Window *win) {
     if (win->is_minibuffer) return;  // Don't scroll minibuffer
     
@@ -694,19 +695,26 @@ void update_window_scroll(Window *win) {
     Font *font = face_cache->faces[FACE_DEFAULT]->font;
     float line_height = font->ascent + font->descent;
     
+    // Get truncate-lines buffer-local variable
+    SCM truncate_lines_sym = scm_from_utf8_symbol("truncate-lines");
+    SCM truncate_lines_val = buffer_local_value(truncate_lines_sym, buffer);
+    bool truncate_lines = scm_is_true(truncate_lines_val);
+    
     // Account for modeline at bottom (1 line high)
     float modeline_height = line_height;
     float usable_height = win->height - modeline_height;
+    float usable_width = win->width - 2 * fringe_width;
     
-    // Calculate cursor's line number TODO CACHE it
+    // Calculate cursor's line number and x position
     size_t cursor_line = 0;
+    float cursor_x = 0;
     rope_iter_t iter;
     rope_iter_init(&iter, buffer->rope, 0);
     
     uint32_t ch;
     size_t i = 0;
     float x = 0;
-    float max_x = win->width - 2 * fringe_width;
+    float max_x = usable_width;
     
     while (i < win->point && rope_iter_next_char(&iter, &ch)) {
         if (ch == '\n') {
@@ -714,28 +722,36 @@ void update_window_scroll(Window *win) {
             x = 0;
         } else {
             float char_width = character_width(font, ch);
-            if (x + char_width > max_x) {
-                cursor_line++;
-                x = 0;
-            }
             
-            Character *char_info = font_get_character(font, ch);
-            if (char_info) {
-                x += char_info->ax;
+            if (truncate_lines) {
+                // With truncate-lines, lines don't wrap
+                Character *char_info = font_get_character(font, ch);
+                if (char_info) {
+                    x += char_info->ax;
+                }
+            } else {
+                // Without truncate-lines, handle wrapping
+                if (x + char_width > max_x) {
+                    cursor_line++;
+                    x = 0;
+                }
+                
+                Character *char_info = font_get_character(font, ch);
+                if (char_info) {
+                    x += char_info->ax;
+                }
             }
         }
         i++;
     }
     
+    cursor_x = x;
     rope_iter_destroy(&iter);
     
-    // Calculate cursor position in buffer coordinates
+    // Vertical scrolling
     float cursor_top_y = cursor_line * line_height;
     float cursor_bottom_y = cursor_top_y + line_height;
     
-    // Calculate window boundaries in buffer coordinates
-    // Window top in buffer coords = scrolly + usable_height
-    // Window bottom in buffer coords = scrolly
     float window_top_buffer = win->scrolly + usable_height;
     float window_bottom_buffer = win->scrolly;
     
@@ -762,7 +778,113 @@ void update_window_scroll(Window *win) {
         // Snap to line boundary for clean alignment
         win->scrolly = floorf(win->scrolly / line_height) * line_height;
     }
+    
+    // Horizontal scrolling (only when truncate-lines is true)
+    if (truncate_lines) {
+        float window_left = win->scrollx;
+        float window_right = win->scrollx + usable_width;
+        
+        // Check if cursor is left of visible area
+        if (cursor_x < window_left) {
+            // Cursor is to the left - scroll to center it
+            float half_window_width = usable_width / 2.0f;
+            win->scrollx = cursor_x - half_window_width;
+            
+            // Don't scroll below 0
+            if (win->scrollx < 0) win->scrollx = 0;
+        }
+        // Check if cursor is right of visible area
+        else if (cursor_x > window_right) {
+            // Cursor is to the right - scroll to center it
+            float half_window_width = usable_width / 2.0f;
+            win->scrollx = cursor_x - half_window_width;
+        }
+    } else {
+        // When not truncating, reset horizontal scroll
+        win->scrollx = 0;
+    }
 }
+
+
+// NOTE This is not called every frame, It’s called in the after_keychord_hook
+// TODO When we scroll vertically we might want
+// to cache top line number of the first visible line
+/* void update_window_scroll(Window *win) { */
+/*     if (win->is_minibuffer) return;  // Don't scroll minibuffer */
+    
+/*     Buffer *buffer = win->buffer; */
+/*     Font *font = face_cache->faces[FACE_DEFAULT]->font; */
+/*     float line_height = font->ascent + font->descent; */
+    
+/*     // Account for modeline at bottom (1 line high) */
+/*     float modeline_height = line_height; */
+/*     float usable_height = win->height - modeline_height; */
+    
+/*     // Calculate cursor's line number TODO CACHE it */
+/*     size_t cursor_line = 0; */
+/*     rope_iter_t iter; */
+/*     rope_iter_init(&iter, buffer->rope, 0); */
+    
+/*     uint32_t ch; */
+/*     size_t i = 0; */
+/*     float x = 0; */
+/*     float max_x = win->width - 2 * fringe_width; */
+    
+/*     while (i < win->point && rope_iter_next_char(&iter, &ch)) { */
+/*         if (ch == '\n') { */
+/*             cursor_line++; */
+/*             x = 0; */
+/*         } else { */
+/*             float char_width = character_width(font, ch); */
+/*             if (x + char_width > max_x) { */
+/*                 cursor_line++; */
+/*                 x = 0; */
+/*             } */
+            
+/*             Character *char_info = font_get_character(font, ch); */
+/*             if (char_info) { */
+/*                 x += char_info->ax; */
+/*             } */
+/*         } */
+/*         i++; */
+/*     } */
+    
+/*     rope_iter_destroy(&iter); */
+    
+/*     // Calculate cursor position in buffer coordinates */
+/*     float cursor_top_y = cursor_line * line_height; */
+/*     float cursor_bottom_y = cursor_top_y + line_height; */
+    
+/*     // Calculate window boundaries in buffer coordinates */
+/*     // Window top in buffer coords = scrolly + usable_height */
+/*     // Window bottom in buffer coords = scrolly */
+/*     float window_top_buffer = win->scrolly + usable_height; */
+/*     float window_bottom_buffer = win->scrolly; */
+    
+/*     // Check if cursor is above visible area (needs scroll up) */
+/*     if (cursor_top_y < window_bottom_buffer) { */
+/*         // Cursor is above the window - center it */
+/*         float visible_lines = usable_height / line_height; */
+/*         float half_window_lines = visible_lines / 2.0f; */
+/*         win->scrolly = cursor_top_y - (half_window_lines * line_height); */
+        
+/*         // Don't scroll below 0 */
+/*         if (win->scrolly < 0) win->scrolly = 0; */
+        
+/*         // Snap to line boundary for clean alignment */
+/*         win->scrolly = floorf(win->scrolly / line_height) * line_height; */
+/*     } */
+/*     // Check if cursor is below visible area (needs scroll down) */
+/*     else if (cursor_bottom_y > window_top_buffer) { */
+/*         // Cursor is below the window - center it */
+/*         float visible_lines = usable_height / line_height; */
+/*         float half_window_lines = visible_lines / 2.0f; */
+/*         win->scrolly = cursor_top_y - (half_window_lines * line_height); */
+        
+/*         // Snap to line boundary for clean alignment */
+/*         win->scrolly = floorf(win->scrolly / line_height) * line_height; */
+/*     } */
+/* } */
 
 static void draw_window(Window *win) {
     if (!win) return;
@@ -865,7 +987,7 @@ void wm_draw() {
     wm.root->height = frame_height - wm.root->y;
     
     /* wm_recalculate_layout(); */
-    
+   
     // Draw all windows
     draw_window(wm.root);
     draw_window_dividers();

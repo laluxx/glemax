@@ -11,6 +11,7 @@
 #include "edit.h"
 #include "textprop.h"
 #include "theme.h"
+#include "treesit.h"
 #include "wm.h"
 
 
@@ -393,6 +394,8 @@ static SCM scm_deactivate_mark(void) {
 }
 
 
+// NOTE This is our way to do (interactive) so later M-x will have access
+// to all commands registered trough this macro
 #define DEFINE_SCM_COMMAND(scm_name, c_func, doc_string)      \
     static SCM scm_name(SCM arg) {                            \
         if (!SCM_UNBNDP(arg)) {                               \
@@ -1589,19 +1592,66 @@ static void setup_user_init_file(void) {
     scm_c_define("user-init-file", SCM_BOOL_F);
 }
 
+// Add this near the top with other global variables
+static SCM load_path = SCM_UNDEFINED;
+
+
+// Helper function to search for file in load-path
+static char* find_file_in_load_path(const char *filename) {
+    // If filename is absolute or starts with ./ or ../, use it directly
+    if (filename[0] == '/' || 
+        (filename[0] == '.' && filename[1] == '/') ||
+        (filename[0] == '.' && filename[1] == '.' && filename[2] == '/')) {
+        if (file_exists(filename)) {
+            return strdup(filename);
+        }
+        return NULL;
+    }
+    
+    // Search in load-path
+    SCM path_list = load_path;
+    while (scm_is_pair(path_list)) {
+        SCM path_scm = scm_car(path_list);
+        
+        if (scm_is_string(path_scm)) {
+            char *dir = scm_to_locale_string(path_scm);
+            
+            // Construct full path
+            size_t full_path_len = strlen(dir) + strlen(filename) + 2; // +2 for '/' and '\0'
+            char *full_path = malloc(full_path_len);
+            snprintf(full_path, full_path_len, "%s/%s", dir, filename);
+            
+            free(dir);
+            
+            if (file_exists(full_path)) {
+                return full_path;
+            }
+            
+            free(full_path);
+        }
+        
+        path_list = scm_cdr(path_list);
+    }
+    
+    return NULL;
+}
+
 static SCM scm_load(SCM filename) {
     if (!scm_is_string(filename)) {
         scm_wrong_type_arg("load", 1, filename);
     }
     
-    char *path = scm_to_locale_string(filename);
+    char *filename_str = scm_to_locale_string(filename);
+    char *path = find_file_in_load_path(filename_str);
     
-    if (!file_exists(path)) {
+    if (!path) {
         char msg[1024];
-        snprintf(msg, sizeof(msg), "Cannot open load file: %s", path);
-        free(path);
+        snprintf(msg, sizeof(msg), "Cannot open load file: %s", filename_str);
+        free(filename_str);
         scm_misc_error("load", msg, SCM_EOL);
     }
+    
+    free(filename_str);
     
     // Use scm_c_primitive_load
     SCM result = scm_c_primitive_load(path);
@@ -1609,6 +1659,191 @@ static SCM scm_load(SCM filename) {
     
     return result;
 }
+
+// Helper to add a path to load-path
+static void add_to_load_path(const char *path) {
+    if (access(path, F_OK) == 0) {  // Check if directory exists
+        SCM path_scm = scm_from_locale_string(path);
+        load_path = scm_cons(path_scm, load_path);
+    }
+}
+
+// Setup load paths
+static void setup_load_paths(void) {
+    // Initialize load-path as empty list
+    load_path = SCM_EOL;
+    
+    // Add paths in reverse priority order (last added = highest priority)
+    
+    // System installation paths
+    add_to_load_path("/usr/local/share/glemax/lisp");
+    add_to_load_path("/usr/local/share/glemax/etc/themes");
+    
+    // Development paths (higher priority)
+    add_to_load_path("./etc/themes");
+    add_to_load_path("./lisp");
+    
+    // User's home directory (highest priority)
+    const char *home = getenv("HOME");
+    if (home) {
+        char user_lisp_path[1024];
+        snprintf(user_lisp_path, sizeof(user_lisp_path), "%s/.glemax/lisp", home);
+        add_to_load_path(user_lisp_path);
+        
+        snprintf(user_lisp_path, sizeof(user_lisp_path), "%s/.glemax/themes", home);
+        add_to_load_path(user_lisp_path);
+    }
+    
+    // Protect from garbage collection
+    scm_gc_protect_object(load_path);
+    
+    // Make it available to Scheme code
+    scm_c_define("load-path", load_path);
+}
+
+#include <dirent.h>
+
+// Helper function to check if a string ends with a suffix
+static bool str_ends_with(const char *str, const char *suffix) {
+    size_t str_len = strlen(str);
+    size_t suffix_len = strlen(suffix);
+    
+    if (suffix_len > str_len) {
+        return false;
+    }
+    
+    return strcmp(str + str_len - suffix_len, suffix) == 0;
+}
+
+// Load all .scm files from a directory
+/* static void load_directory(const char *dir_path) { */
+/*     DIR *dir = opendir(dir_path); */
+/*     if (!dir) { */
+/*         return;  // Directory doesn't exist or can't be opened */
+/*     } */
+    
+/*     struct dirent *entry; */
+/*     while ((entry = readdir(dir)) != NULL) { */
+/*         // Skip . and .. and non-.scm files */
+/*         if (strcmp(entry->d_name, ".") == 0 ||  */
+/*             strcmp(entry->d_name, "..") == 0 || */
+/*             !str_ends_with(entry->d_name, ".scm")) { */
+/*             continue; */
+/*         } */
+        
+/*         // Construct full path */
+/*         size_t full_path_len = strlen(dir_path) + strlen(entry->d_name) + 2; */
+/*         char *full_path = malloc(full_path_len); */
+/*         snprintf(full_path, full_path_len, "%s/%s", dir_path, entry->d_name); */
+        
+/*         // Check if it's a regular file */
+/*         if (file_exists(full_path)) { */
+/*             // Load the file, catching any errors */
+/*             char load_expr[2048]; */
+/*             snprintf(load_expr, sizeof(load_expr), */
+/*                 "(catch #t" */
+/*                 "  (lambda () (primitive-load \"%s\"))" */
+/*                 "  (lambda (key . args)" */
+/*                 "    (let ((port (open-output-string)))" */
+/*                 "      (display \"Error loading %s: \" port)" */
+/*                 "      (display key port)" */
+/*                 "      (when (and (pair? args) (pair? (cdr args)))" */
+/*                 "        (display \" - \" port)" */
+/*                 "        (display (cadr args) port))" */
+/*                 "      (message \"~a\" (get-output-string port)))))", */
+/*                 full_path, entry->d_name); */
+            
+/*             scm_c_eval_string(load_expr); */
+/*         } */
+        
+/*         free(full_path); */
+/*     } */
+    
+/*     closedir(dir); */
+/* } */
+
+static void load_directory(const char *dir_path) {
+    DIR *dir = opendir(dir_path);
+    if (!dir) {
+        return;  // Directory doesn't exist or can't be opened
+    }
+    
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        // Skip . and .. and non-.scm files
+        if (strcmp(entry->d_name, ".") == 0 || 
+            strcmp(entry->d_name, "..") == 0 ||
+            !str_ends_with(entry->d_name, ".scm")) {
+            continue;
+        }
+        
+        // Construct full path
+        size_t full_path_len = strlen(dir_path) + strlen(entry->d_name) + 2;
+        char *full_path = malloc(full_path_len);
+        snprintf(full_path, full_path_len, "%s/%s", dir_path, entry->d_name);
+        
+        // Check if it's a regular file
+        if (file_exists(full_path)) {
+            // Load the file, catching any errors
+            char load_expr[2048];
+            snprintf(load_expr, sizeof(load_expr),
+                "(catch #t"
+                "  (lambda () (primitive-load \"%s\"))"
+                "  (lambda (key . args)"
+                "    (message \"Error loading %s: ~~s~~@?\" key"
+                "      (if (and (pair? args) (pair? (cdr args)))"
+                "          (cadr args)"
+                "          \"\") "
+                "      (if (and (pair? args) (pair? (cdr args)) (pair? (cddr args)))"
+                "          (caddr args)"
+                "          '()))))",
+                full_path, entry->d_name);
+            
+            scm_c_eval_string(load_expr);
+        }
+        
+        free(full_path);
+    }
+    
+    closedir(dir);
+}
+
+// Preload all default themes
+static void preload_themes(void) {
+    load_directory("./etc/themes");
+}
+
+// Preload all default major modes
+static void preload_lisp(void) {
+    load_directory("./lisp");
+}
+
+// Preload all default major modes
+static void preload_progmodes(void) {
+    load_directory("./lisp/progmodes");
+}
+
+// Scheme wrapper for load-directory
+static SCM scm_load_directory(SCM dirname) {
+    if (!scm_is_string(dirname)) {
+        scm_wrong_type_arg("load-directory", 1, dirname);
+    }
+    
+    char *dir_path = scm_to_locale_string(dirname);
+    
+    if (access(dir_path, F_OK) != 0) {
+        char msg[1024];
+        snprintf(msg, sizeof(msg), "Directory not found: %s", dir_path);
+        free(dir_path);
+        scm_misc_error("load-directory", msg, SCM_EOL);
+    }
+    
+    load_directory(dir_path);
+    free(dir_path);
+    
+    return SCM_UNSPECIFIED;
+}
+
 
 // TODO use this to register all other commands with doc
 #define REGISTER_COMMAND(scheme_name, scm_func)                                \
@@ -1628,6 +1863,8 @@ static SCM scm_load(SCM filename) {
 
 
 void lisp_init(void) {
+
+    setup_load_paths();
 
     // Initialize buffer foreign object type
     SCM name = scm_from_utf8_symbol("buffer");
@@ -1663,6 +1900,9 @@ void lisp_init(void) {
 
     init_buffer_locals();
     
+
+    init_treesit_bindings();
+
 
     // Keymap functions
     scm_c_define_gsubr("make-sparse-keymap",            0, 0, 0, scm_make_sparse_keymap);
@@ -1846,6 +2086,13 @@ void lisp_init(void) {
     
     // Message
     scm_c_define_gsubr("message",                        1, 0, 1, scm_message);    
+
+
+
+    // NOTE Preload everything BEFORE loading user init file
+    preload_themes();
+    preload_lisp();
+    preload_progmodes();
 
     // NOTE Eval init.scm after defining subroutine
 

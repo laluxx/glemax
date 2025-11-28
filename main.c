@@ -19,45 +19,119 @@ uint32_t sh = 1080;
 /* Font *jetbrains; */
 /* Font *lilex; */
 
-void text_callback(unsigned int codepoint) {
-    bool electric_pair_mode = scm_get_bool("electric-pair-mode", false);
-    
-    // Check if this is an opening pair character
-    uint32_t closing_char = 0;
-    bool should_pair = false;
-    
-    if (electric_pair_mode && codepoint < 128) {
-        switch (codepoint) {
-            case '(': closing_char = ')'; should_pair = true; break;
-            case '[': closing_char = ']'; should_pair = true; break;
-            case '{': closing_char = '}'; should_pair = true; break;
-            case '<': closing_char = '>'; should_pair = true; break;
-            case '"': closing_char = '"'; should_pair = true; break;
-            case '\'': closing_char = '\''; should_pair = true; break;
-            case '`': closing_char = '`'; should_pair = true; break;
-        }
-    }
-    
-    if (should_pair) {
-        // Insert both characters as a single string
-        char pair[3] = {(char)codepoint, (char)closing_char, 0};
-        
-        if (current_buffer->pt < current_buffer->region.mark) current_buffer->region.mark += 2;
-        current_buffer->rope = rope_insert_chars(current_buffer->rope, current_buffer->pt, pair, 2);
-        adjust_all_window_points_after_modification(current_buffer->pt, 2);
-        set_point(current_buffer->pt + 1);  // Move to between the pair
-        update_goal_column();
-    } else {
-        // No pair, just insert normally
-        insert(codepoint);
-    }
-}
+
+
 
 /* void text_callback(unsigned int codepoint) { */
-/*     /\* if (codepoint >= 32 && codepoint < 127) {  // Printable ASCII *\/ */
+/*     bool electric_pair_mode = scm_get_bool("electric-pair-mode", false); */
+    
+/*     uint32_t closing_char = 0; */
+/*     bool should_pair = false; */
+    
+/*     if (electric_pair_mode && codepoint < 128) { */
+/*         switch (codepoint) { */
+/*             case '(': closing_char = ')'; should_pair = true; break; */
+/*             case '[': closing_char = ']'; should_pair = true; break; */
+/*             case '{': closing_char = '}'; should_pair = true; break; */
+/*             case '<': closing_char = '>'; should_pair = true; break; */
+/*             case '"': closing_char = '"'; should_pair = true; break; */
+/*             case '\'': closing_char = '\''; should_pair = true; break; */
+/*             case '`': closing_char = '`'; should_pair = true; break; */
+/*         } */
+/*     } */
+    
+/*     if (should_pair) { */
+/*         char pair[3] = {(char)codepoint, (char)closing_char, '\0'}; */
+/*         size_t insert_pos = current_buffer->pt; */
+        
+/*         // Capture tree-sitter state BEFORE modification */
+/*         size_t start_byte = 0; */
+/*         TSPoint start_point = {0, 0}; */
+/*         bool has_treesit = current_buffer->ts_state && current_buffer->ts_state->tree; */
+        
+/*         if (has_treesit) { */
+/*             start_byte = rope_char_to_byte(current_buffer->rope, insert_pos); */
+/*             start_point = treesit_char_to_point(current_buffer, insert_pos); */
+/*         } */
+        
+/*         // Update region mark */
+/*         if (current_buffer->region.active && current_buffer->region.mark > insert_pos) { */
+/*             current_buffer->region.mark += 2; */
+/*         } */
+        
+/*         // Insert 2 ASCII characters (2 bytes) */
+/*         current_buffer->rope = rope_insert_chars(current_buffer->rope, insert_pos, pair, 2); */
+        
+/*         // Update tree-sitter */
+/*         if (has_treesit) { */
+/*             // CRITICAL: new_end_byte = start_byte + 2 (not char position!) */
+/*             size_t new_end_byte = start_byte + 2;  // 2 ASCII bytes */
+/*             TSPoint new_end_point = treesit_char_to_point(current_buffer, insert_pos + 2); */
+            
+/*             treesit_update_tree( */
+/*                 current_buffer, */
+/*                 start_byte, */
+/*                 start_byte, */
+/*                 new_end_byte, */
+/*                 start_point, */
+/*                 start_point, */
+/*                 new_end_point */
+/*             ); */
+            
+/*             treesit_reparse_if_needed(current_buffer); */
+/*             treesit_apply_highlights(current_buffer); */
+/*         } */
+        
+/*         adjust_text_properties(current_buffer, insert_pos, 2); */
+/*         adjust_all_window_points_after_modification(insert_pos, 2); */
+/*         set_point(current_buffer->pt + 1); */
+/*         update_goal_column(); */
+/*         reset_cursor_blink(current_buffer); */
+/*     } else { */
 /*         insert(codepoint); */
-/*     /\* } *\/ */
+/*     } */
 /* } */
+
+
+/* void text_callback(unsigned int codepoint) { */
+/*     bool electric_pair_mode = scm_get_bool("electric-pair-mode", false); */
+    
+/*     // Check if this is an opening pair character */
+/*     uint32_t closing_char = 0; */
+/*     bool should_pair = false; */
+    
+/*     if (electric_pair_mode && codepoint < 128) { */
+/*         switch (codepoint) { */
+/*             case '(': closing_char = ')'; should_pair = true; break; */
+/*             case '[': closing_char = ']'; should_pair = true; break; */
+/*             case '{': closing_char = '}'; should_pair = true; break; */
+/*             case '<': closing_char = '>'; should_pair = true; break; */
+/*             case '"': closing_char = '"'; should_pair = true; break; */
+/*             case '\'': closing_char = '\''; should_pair = true; break; */
+/*             case '`': closing_char = '`'; should_pair = true; break; */
+/*         } */
+/*     } */
+    
+/*     if (should_pair) { */
+/*         // Insert both characters as a single string */
+/*         char pair[3] = {(char)codepoint, (char)closing_char, 0}; */
+        
+/*         if (current_buffer->pt < current_buffer->region.mark) current_buffer->region.mark += 2; */
+/*         current_buffer->rope = rope_insert_chars(current_buffer->rope, current_buffer->pt, pair, 2); */
+/*         adjust_all_window_points_after_modification(current_buffer->pt, 2); */
+/*         set_point(current_buffer->pt + 1);  // Move to between the pair */
+/*         update_goal_column(); */
+/*     } else { */
+/*         // No pair, just insert normally */
+/*         insert(codepoint); */
+/*     } */
+/* } */
+
+void text_callback(unsigned int codepoint) {
+    /* if (codepoint >= 32 && codepoint < 127) {  // Printable ASCII */
+        insert(codepoint);
+    /* } */
+}
 
 
 bool is_vertical_motion(SCM proc) {
