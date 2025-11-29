@@ -150,9 +150,10 @@ void switch_to_buffer(Buffer *buf) {
     current_buffer = buf;
     
     // Update keymap stack
-    keymap_stack_clear();
+    // TODO keymap_stack_clear();
     if (buf->keymap) {
-        keymap_stack_push(buf->keymap);
+	//TODO
+        //keymap_stack_push(buf->keymap);
     }
     
     // Update selected window to point to new buffer
@@ -602,7 +603,7 @@ void use_local_map(KeyChordMap *local_map, Buffer *buf) {
     // If this is the current buffer, clear stack FIRST
     // This ensures no references to the old keymap exist in the stack
     if (buf == current_buffer) {
-        keymap_stack_clear();
+        //TODO keymap_stack_clear();
     }
     
     // DON'T free the old keymap here!
@@ -612,7 +613,7 @@ void use_local_map(KeyChordMap *local_map, Buffer *buf) {
     
     // Push the new keymap to stack if this is the current buffer
     if (buf == current_buffer && local_map) {
-        keymap_stack_push(local_map);
+        // TODO keymap_stack_push(local_map);
     }
 }
 

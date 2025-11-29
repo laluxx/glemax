@@ -65,9 +65,9 @@ void free_themes(void) {
     
     scm_gc_unprotect_object(theme_cache->enabled_themes);
     
-    Theme *theme = theme_cache->themes;
+    EditorTheme *theme = theme_cache->themes;
     while (theme) {
-        Theme *next = theme->next;
+        EditorTheme *next = theme->next;
         
         // Free face specs
         FaceSpec *spec = theme->face_specs;
@@ -93,10 +93,10 @@ void free_themes(void) {
     }
 }
 
-Theme *get_theme(const char *name) {
+EditorTheme *get_theme(const char *name) {
     if (!theme_cache || !name) return NULL;
     
-    Theme *theme = theme_cache->themes;
+    EditorTheme *theme = theme_cache->themes;
     while (theme) {
         if (strcmp(theme->name, name) == 0) {
             return theme;
@@ -111,7 +111,7 @@ void register_theme(const char *name, const char *description) {
     if (!theme_cache) init_themes();
     
     // Check if theme already exists
-    Theme *existing = get_theme(name);
+    EditorTheme *existing = get_theme(name);
     if (existing) {
         // Clear existing face specs
         FaceSpec *spec = existing->face_specs;
@@ -129,7 +129,7 @@ void register_theme(const char *name, const char *description) {
     }
     
     // Create new theme
-    Theme *theme = calloc(1, sizeof(Theme));
+    EditorTheme *theme = calloc(1, sizeof(EditorTheme));
     theme->name = strdup(name);
     theme->description = description ? strdup(description) : NULL;
     theme->face_specs = NULL;
@@ -172,7 +172,7 @@ static void reapply_all_themes(void) {
         SCM theme_name_scm = scm_car(reversed);
         char *theme_name = scm_to_locale_string(theme_name_scm);
         
-        Theme *theme = get_theme(theme_name);
+        EditorTheme *theme = get_theme(theme_name);
         if (theme) {
             FaceSpec *spec = theme->face_specs;
             while (spec) {
@@ -221,7 +221,7 @@ void load_theme(const char *name, bool no_confirm, bool no_enable) {
     
     if (!theme_cache) init_themes();
     
-    Theme *theme = get_theme(name);
+    EditorTheme *theme = get_theme(name);
     if (!theme) {
         fprintf(stderr, "Unknown theme: %s\n", name);
         return;
@@ -357,7 +357,7 @@ static SCM scm_custom_theme_set_faces(SCM theme_name, SCM rest) {
     
     char *name = scm_to_c_string(theme_name);
     
-    Theme *theme = get_theme(name);
+    EditorTheme *theme = get_theme(name);
     if (!theme) {
         register_theme(name, NULL);
         theme = get_theme(name);
@@ -584,7 +584,7 @@ static SCM scm_custom_available_themes(void) {
     if (!theme_cache) return SCM_EOL;
     
     SCM result = SCM_EOL;
-    Theme *theme = theme_cache->themes;
+    EditorTheme *theme = theme_cache->themes;
     
     while (theme) {
         SCM name = scm_from_locale_symbol(theme->name);

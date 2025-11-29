@@ -6,7 +6,9 @@
 typedef struct Buffer Buffer;
 typedef struct TSParser TSParser;
 typedef struct TSTree TSTree;
-typedef struct TSNode TSNode;
+
+// CONFLICT WITH TYPE FROM tree_sitter/api.h
+//typedef struct TSNode TSNode;
 typedef struct TSQuery TSQuery;
 typedef struct TSQueryCursor TSQueryCursor;
 
