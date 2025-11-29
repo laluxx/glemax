@@ -367,6 +367,12 @@ Commands have docstrings in C. Variables can have documentation. Eventually `C-h
 
 ## Build and Run
 
+Dependencies for installing on Ubuntu/Debian:
+```bash
+sudo apt install gcc-14 libtree-sitter-dev guile-3.0-dev libfreetype6-dev libglfw3-dev libcglm-dev
+# You need to build with gcc-14
+```
+
 First clone build and install the obsidian engine library
 ```bash
 git clone https://github.com/laluxx/obsidian

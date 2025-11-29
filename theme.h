@@ -18,15 +18,15 @@ typedef struct FaceSpec {
 } FaceSpec;
 
 // A theme is a collection of face specifications
-typedef struct Theme {
+typedef struct EditorTheme {
     char *name;
     char *description;
     FaceSpec *face_specs;
-    struct Theme *next;
-} Theme;
+    struct EditorTheme *next;
+} EditorTheme;
 
 typedef struct {
-    Theme *themes;
+    EditorTheme *themes;
     SCM enabled_themes;  // List of currently enabled theme names
     Color base_bg;       // Background from default face of active theme
     Color base_fg;       // Foreground from default face of active theme
@@ -37,7 +37,7 @@ extern ThemeCache *theme_cache;
 void init_themes(void);
 void free_themes(void);
 
-Theme *get_theme(const char *name);
+EditorTheme *get_theme(const char *name);
 void register_theme(const char *name, const char *description);
 void load_theme(const char *name, bool no_confirm, bool no_enable);
 void enable_theme(const char *name);
