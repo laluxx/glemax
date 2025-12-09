@@ -34,7 +34,7 @@
   '(font-lock-keyword-face                    ((t (:foreground "#51afef"))))
   '(font-lock-misc-punctuation-face           ((t (:inherit font-lock-punctuation-face))))
   '(font-lock-negation-char-face              ((t (:foreground "#51afef"))))
-  '(font-lock-number-face                     ((t (:foreground "#da8548"))))
+  '(font-lock-number-face                     ((t (:foreground "#BBC2CF"))))
   ;; '(font-lock-operator-face                   ((t (:foreground ""))))
   '(font-lock-preprocessor-face               ((t (:foreground "#51afef"))))
   '(font-lock-property-name-face              ((t (:inherit font-lock-variable-name-face))))

@@ -1,6 +1,7 @@
 #pragma once
 #include "rope.h"
 #include <obsidian/obsidian.h>
+#include <sys/types.h>
 
 typedef struct {
     float x;
@@ -12,7 +13,8 @@ typedef struct {
 } Cursor;
 
 typedef struct {
-    size_t mark;
+    /* size_t mark; */
+    int mark;
     bool active;
 } Region;
 
@@ -106,7 +108,6 @@ void backward_kill_word();
 #include "wm.h"
 typedef struct Window Window;
 
-void execute_extended_command();
 void keyboard_quit();
 
 bool is_pair(uint32_t left, uint32_t right);

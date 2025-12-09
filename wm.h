@@ -51,12 +51,15 @@ typedef struct {
     float  root_width, root_height;
 } WindowConfiguration;
 
+
+// TODO Minibuffer struct inside WindowManager
 typedef struct {
     Window *root;    
     Window *selected;
     Window *minibuffer_window;
     Window *previous_window;   // NOTE Only tracked for the modeline we might want to change name
     bool minibuffer_active;
+    size_t minibuffer_message_start;
     int window_count;
     WindowConfiguration saved_config;
 } WindowManager;
@@ -125,3 +128,9 @@ void scroll_other_window_down();
 void move_to_window_line();
 extern int move_to_window_line_positions;
 void move_to_window_line_top_bottom();
+
+
+WindowConfiguration save_window_configuration();
+Window* restore_window_recursive(WindowSnapshot *snapshots, int index, Window *parent);
+void restore_window_configuration(WindowConfiguration *config);
+void free_window_configuration(WindowConfiguration *config);

@@ -296,7 +296,7 @@
               (message "Failed to set highlight query")))
         (message "Failed to create tree-sitter parser"))))
 
-(define-derived-mode zig-mode #f "Zig"
+(define-derived-mode zig-mode prog-mode "Zig"
   "A major mode for the Zig programming language."
   (use-local-map zig-mode-map)
   (setq-local 'tab-width 4)

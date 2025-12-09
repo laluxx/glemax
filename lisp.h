@@ -19,3 +19,4 @@ bool is_scm_proc(SCM proc, const char *name);
 bool scm_get_bool(const char *name, bool default_value);
 size_t scm_get_size_t(const char *name, size_t default_value);
 float scm_get_float(const char *name, float default_value);
+char* scm_get_string(const char *name, const char *default_value);

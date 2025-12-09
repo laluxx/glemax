@@ -61,6 +61,8 @@ static struct {
     {"font-lock-variable-name-face",        FACE_FONT_LOCK_VARIABLE_NAME},             
     {"font-lock-variable-use-face",         FACE_FONT_LOCK_VARIABLE_USE},              
     {"font-lock-warning-face",              FACE_FONT_LOCK_WARNING},                   
+
+    {"minibuffer-prompt",                   FACE_MINIBUFFER_PROMPT},                   
     {NULL, -1}
 };
 
@@ -99,22 +101,22 @@ Font *fontconfig_load_font(const char *family, int size, bool bold, bool italic)
 Font *get_font_variant(bool bold, bool italic) {
     if (bold && italic) {
         if (!cached_font_bold_italic) {
-            cached_font_bold_italic = fontconfig_load_font("Adwaita Mono", 42, true, true);
+            cached_font_bold_italic = fontconfig_load_font("Adwaita Mono", 22, true, true);
         }
         return cached_font_bold_italic;
     } else if (bold) {
         if (!cached_font_bold) {
-            cached_font_bold = fontconfig_load_font("Adwaita Mono", 42, true, false);
+            cached_font_bold = fontconfig_load_font("Adwaita Mono", 22, true, false);
         }
         return cached_font_bold;
     } else if (italic) {
         if (!cached_font_italic) {
-            cached_font_italic = fontconfig_load_font("Adwaita Mono", 42, false, true);
+            cached_font_italic = fontconfig_load_font("Adwaita Mono", 22, false, true);
         }
         return cached_font_italic;
     } else {
         if (!cached_font_regular) {
-            cached_font_regular = fontconfig_load_font("Adwaita Mono", 42, false, false);
+            cached_font_regular = fontconfig_load_font("Adwaita Mono", 22, false, false);
         }
         return cached_font_regular;
     }
@@ -384,6 +386,11 @@ void init_faces(void) {
                 break;
             case FACE_FONT_LOCK_WARNING:
                 face->inherit_from = FACE_ERROR;
+                break;
+
+            case FACE_MINIBUFFER_PROMPT:
+                face->fg = parse_color("medium blue");
+                face->fg_set = true;
                 break;
             
             

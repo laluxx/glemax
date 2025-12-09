@@ -222,7 +222,7 @@ static void save_window_recursive(Window *win, WindowSnapshot *snapshots, int *c
     }
 }
 
-static WindowConfiguration save_window_configuration() {
+WindowConfiguration save_window_configuration() {
     WindowConfiguration config = {0};
     
     // Allocate space for maximum possible windows (should be enough)
@@ -241,7 +241,7 @@ static WindowConfiguration save_window_configuration() {
     return config;
 }
 
-static Window* restore_window_recursive(WindowSnapshot *snapshots, int index, Window *parent) {
+Window* restore_window_recursive(WindowSnapshot *snapshots, int index, Window *parent) {
     if (index < 0) return NULL;
     
     WindowSnapshot *snap = &snapshots[index];
@@ -264,8 +264,7 @@ static Window* restore_window_recursive(WindowSnapshot *snapshots, int index, Wi
     return win;
 }
 
-
-static void restore_window_configuration(WindowConfiguration *config) {
+void restore_window_configuration(WindowConfiguration *config) {
     if (!config->windows) return;
     
     // Destroy current window tree
@@ -307,77 +306,12 @@ static void restore_window_configuration(WindowConfiguration *config) {
     wm_recalculate_layout();
 }
 
-static void free_window_configuration(WindowConfiguration *config) {
+void free_window_configuration(WindowConfiguration *config) {
     if (config->windows) {
         free(config->windows);
         config->windows = NULL;
     }
     config->count = 0;
-}
-
-void activate_minibuffer() {
-    if (wm.minibuffer_active) return;
-    
-    wm.minibuffer_active = true;
-    
-    // Save window configuration before switching
-    if (wm.saved_config.windows) free_window_configuration(&wm.saved_config);
-    wm.saved_config = save_window_configuration();
-    
-    // Store the current window (for minibuffer highlight)
-    wm.previous_window = wm.selected;
-    
-    // Switch to minibuffer
-    wm.selected->is_selected = false;
-    wm.minibuffer_window->is_selected = true;
-    wm.selected = wm.minibuffer_window;
-    current_buffer = wm.minibuffer_window->buffer;
-    current_buffer->pt = wm.minibuffer_window->point;
-}
-
-
-void go_inside_minibuffer() {
-    if (wm.minibuffer_active) return;
-    
-    wm.minibuffer_active = true;
-    
-    // Save window configuration before switching
-    if (wm.saved_config.windows) free_window_configuration(&wm.saved_config);
-    wm.saved_config = save_window_configuration();
-    
-    // Store the current window (for minibuffer highlight)
-    wm.previous_window = wm.selected;
-    
-    // Switch to minibuffer
-    wm.selected->is_selected = false;
-    wm.minibuffer_window->is_selected = true;
-    wm.selected = wm.minibuffer_window;
-    current_buffer = wm.minibuffer_window->buffer;
-    current_buffer->pt = wm.minibuffer_window->point;
-}
-
-
-void deactivate_minibuffer() {
-    if (!wm.minibuffer_active) return;
-    wm.minibuffer_active = false;
-    
-    // Clear minibuffer content
-    if (wm.minibuffer_window->buffer) {
-        size_t len = rope_char_length(wm.minibuffer_window->buffer->rope);
-        if (len > 0) {
-            wm.minibuffer_window->buffer->rope = rope_delete_chars(
-                wm.minibuffer_window->buffer->rope, 0, len);
-        }
-        wm.minibuffer_window->point = 0;
-    }
-    
-    wm.minibuffer_window->is_selected = false;
-    
-    /* // Restore saved window configuration */
-    restore_window_configuration(&wm.saved_config);
-    free_window_configuration(&wm.saved_config);
-    
-    wm.previous_window = NULL;
 }
 
 static void recalculate_window_geometry(Window *win) {
@@ -705,7 +639,7 @@ void update_window_scroll(Window *win) {
     float usable_height = win->height - modeline_height;
     float usable_width = win->width - 2 * fringe_width;
     
-    // Calculate cursor's line number and x position
+    // Calculate cursor's line number and x position TODO Cache it
     size_t cursor_line = 0;
     float cursor_x = 0;
     rope_iter_t iter;
@@ -805,87 +739,6 @@ void update_window_scroll(Window *win) {
     }
 }
 
-
-// NOTE This is not called every frame, It’s called in the after_keychord_hook
-// TODO When we scroll vertically we might want
-// to cache top line number of the first visible line
-/* void update_window_scroll(Window *win) { */
-/*     if (win->is_minibuffer) return;  // Don't scroll minibuffer */
-    
-/*     Buffer *buffer = win->buffer; */
-/*     Font *font = face_cache->faces[FACE_DEFAULT]->font; */
-/*     float line_height = font->ascent + font->descent; */
-    
-/*     // Account for modeline at bottom (1 line high) */
-/*     float modeline_height = line_height; */
-/*     float usable_height = win->height - modeline_height; */
-    
-/*     // Calculate cursor's line number TODO CACHE it */
-/*     size_t cursor_line = 0; */
-/*     rope_iter_t iter; */
-/*     rope_iter_init(&iter, buffer->rope, 0); */
-    
-/*     uint32_t ch; */
-/*     size_t i = 0; */
-/*     float x = 0; */
-/*     float max_x = win->width - 2 * fringe_width; */
-    
-/*     while (i < win->point && rope_iter_next_char(&iter, &ch)) { */
-/*         if (ch == '\n') { */
-/*             cursor_line++; */
-/*             x = 0; */
-/*         } else { */
-/*             float char_width = character_width(font, ch); */
-/*             if (x + char_width > max_x) { */
-/*                 cursor_line++; */
-/*                 x = 0; */
-/*             } */
-            
-/*             Character *char_info = font_get_character(font, ch); */
-/*             if (char_info) { */
-/*                 x += char_info->ax; */
-/*             } */
-/*         } */
-/*         i++; */
-/*     } */
-    
-/*     rope_iter_destroy(&iter); */
-    
-/*     // Calculate cursor position in buffer coordinates */
-/*     float cursor_top_y = cursor_line * line_height; */
-/*     float cursor_bottom_y = cursor_top_y + line_height; */
-    
-/*     // Calculate window boundaries in buffer coordinates */
-/*     // Window top in buffer coords = scrolly + usable_height */
-/*     // Window bottom in buffer coords = scrolly */
-/*     float window_top_buffer = win->scrolly + usable_height; */
-/*     float window_bottom_buffer = win->scrolly; */
-    
-/*     // Check if cursor is above visible area (needs scroll up) */
-/*     if (cursor_top_y < window_bottom_buffer) { */
-/*         // Cursor is above the window - center it */
-/*         float visible_lines = usable_height / line_height; */
-/*         float half_window_lines = visible_lines / 2.0f; */
-/*         win->scrolly = cursor_top_y - (half_window_lines * line_height); */
-        
-/*         // Don't scroll below 0 */
-/*         if (win->scrolly < 0) win->scrolly = 0; */
-        
-/*         // Snap to line boundary for clean alignment */
-/*         win->scrolly = floorf(win->scrolly / line_height) * line_height; */
-/*     } */
-/*     // Check if cursor is below visible area (needs scroll down) */
-/*     else if (cursor_bottom_y > window_top_buffer) { */
-/*         // Cursor is below the window - center it */
-/*         float visible_lines = usable_height / line_height; */
-/*         float half_window_lines = visible_lines / 2.0f; */
-/*         win->scrolly = cursor_top_y - (half_window_lines * line_height); */
-        
-/*         // Snap to line boundary for clean alignment */
-/*         win->scrolly = floorf(win->scrolly / line_height) * line_height; */
-/*     } */
-/* } */
-
 static void draw_window(Window *win) {
     if (!win) return;
     
@@ -959,6 +812,7 @@ static size_t count_buffer_lines(Buffer *buf) {
     return line_count;
 }
 
+// TODO Count line wraps!
 static float calculate_minibuffer_height() {
     if (!wm.minibuffer_window || !wm.minibuffer_window->buffer) return 0.0f;
     

@@ -4,6 +4,7 @@
 #include <ctype.h>
 
 
+
 void insert(uint32_t codepoint) {
     char utf8[5] = {0};
     size_t len = 0;
@@ -32,6 +33,13 @@ void insert(uint32_t codepoint) {
     if (len == 0) return;
     
     size_t insert_pos = current_buffer->pt;
+    
+    // Check if we're trying to insert at a read-only position
+    SCM readonly = get_text_property(current_buffer, insert_pos, scm_from_locale_symbol("read-only"));
+    if (scm_is_true(readonly)) {
+        message("Text is read-only");
+        return;
+    }
     
     // Check if tree-sitter is active
     bool has_treesit = current_buffer->ts_state && current_buffer->ts_state->tree;
@@ -67,7 +75,7 @@ void insert(uint32_t codepoint) {
     }
     
     // Update region mark
-    if (current_buffer->region.mark > insert_pos) {
+    if (current_buffer->region.mark >= 0 && (size_t)current_buffer->region.mark > insert_pos) {
         current_buffer->region.mark++;
     }
     
@@ -108,7 +116,13 @@ void insert(uint32_t codepoint) {
     reset_cursor_blink(current_buffer);
 }
 
-size_t delete(size_t pos, size_t count) {
+
+#include <setjmp.h>
+
+jmp_buf delete_readonly;
+jmp_buf kill_readonly;
+
+size_t delete_impl(size_t pos, size_t count) {
     if (count == 0) {
         size_t text_len = rope_char_length(current_buffer->rope);
         if (pos == 0) {
@@ -137,6 +151,12 @@ size_t delete(size_t pos, size_t count) {
     
     size_t delete_end = pos + count;
     
+    // Check for read-only text in the deletion range
+    if (is_range_readonly(current_buffer, pos, delete_end)) {
+        message("Text is read-only");
+        longjmp(delete_readonly, 1);
+    }
+    
     // Check if tree-sitter is active
     bool has_treesit = current_buffer->ts_state && current_buffer->ts_state->tree;
     
@@ -154,10 +174,12 @@ size_t delete(size_t pos, size_t count) {
     }
     
     // Update region mark
-    if (current_buffer->region.mark >= delete_end) {
-        current_buffer->region.mark -= count;
-    } else if (current_buffer->region.mark > pos) {
-        current_buffer->region.mark = pos;
+    if (current_buffer->region.mark >= 0) {
+        if ((size_t)current_buffer->region.mark >= delete_end) {
+            current_buffer->region.mark -= count;
+        } else if ((size_t)current_buffer->region.mark > pos) {
+            current_buffer->region.mark = pos;
+        }
     }
     
     // Perform the deletion
@@ -165,7 +187,7 @@ size_t delete(size_t pos, size_t count) {
     
     // Update tree-sitter if active
     if (has_treesit) {
-        size_t new_end_byte = start_byte;  // Collapsed to start after deletion
+        size_t new_end_byte = start_byte;
         TSPoint new_end_point = start_point;
         
         treesit_update_tree(
@@ -192,6 +214,20 @@ size_t delete(size_t pos, size_t count) {
     
     return pos;
 }
+
+// Macro that sets up setjmp and calls delete_impl
+// If longjmp occurs, it returns from the calling function
+// NOTE This is so when we try to delete readonly text
+// we don’t move the cursor if we didn’t delete the text
+#define delete(pos, count)                      \
+    do {                                        \
+        if (setjmp(delete_readonly) != 0) {     \
+            return;                             \
+        }                                       \
+        delete_impl((pos), (count));            \
+    } while (0)
+
+
 
 bool is_pair(uint32_t left, uint32_t right) {
     return (left == '(' && right == ')') ||
@@ -326,26 +362,129 @@ void backward_char() {
     move_point(-arg);
 }
 
-size_t line_beginning_position() {
+
+// Helper: Check if position has a field property
+static bool has_field_property(size_t pos) {
+    if (!current_buffer) return false;
+    SCM field = get_text_property(current_buffer, pos, scm_from_locale_symbol("field"));
+    return !scm_is_false(field);
+}
+
+// Check if two positions have different field values
+static bool different_fields(size_t pos1, size_t pos2) {
+    SCM field1 = get_text_property_field(current_buffer, pos1);
+    SCM field2 = get_text_property_field(current_buffer, pos2);
+    
+    // Both have no field - same field
+    if (scm_is_false(field1) && scm_is_false(field2)) {
+        return false;
+    }
+    
+    // One has field, other doesn't - different fields
+    if (scm_is_false(field1) || scm_is_false(field2)) {
+        return true;
+    }
+    
+    // Both have fields - compare values
+    return scm_is_false(scm_equal_p(field1, field2));
+}
+
+// Constrain target position to not cross field boundaries
+static size_t constrain_to_field(size_t target_pos, size_t original_pos) {
+    if (target_pos == original_pos) {
+        return target_pos;
+    }
+    
+    size_t text_len = rope_char_length(current_buffer->rope);
+    bool moving_backward = target_pos < original_pos;
+    
+    if (moving_backward) {
+        // Scan from target to original, stop at first field boundary
+        for (size_t pos = target_pos; pos < original_pos; pos++) {
+            if (different_fields(pos, pos + 1)) {
+                // Found boundary - return position after it
+                return pos + 1;
+            }
+        }
+    } else {
+        // Moving forward - scan from original to target
+        for (size_t pos = original_pos; pos < target_pos && pos < text_len; pos++) {
+            if (different_fields(pos, pos + 1)) {
+                // Found boundary - return position before it
+                return pos + 1;
+            }
+        }
+    }
+    
+    return target_pos;
+}
+
+size_t line_beginning_position(int n) {
+    size_t text_len = rope_char_length(current_buffer->rope);
     size_t pos = current_buffer->pt;
     
-    // Scan backwards to find newline or start of buffer
-    while (pos > 0) {
-        uint32_t ch = rope_char_at(current_buffer->rope, pos - 1);
-        if (ch == '\n') break;
+    if (n > 0) {
+        // Move forward n-1 lines, then to beginning of that line
+        for (int i = 0; i < n - 1; i++) {
+            while (pos < text_len && rope_char_at(current_buffer->rope, pos) != '\n') {
+                pos++;
+            }
+            if (pos >= text_len) break;
+            pos++; // Move past newline
+        }
+    } else if (n < 0) {
+        // Move backward |n|+1 lines, then to beginning of that line
+        int lines = abs(n) + 1;
+        for (int i = 0; i < lines; i++) {
+            // Go to beginning of current line
+            while (pos > 0 && rope_char_at(current_buffer->rope, pos - 1) != '\n') {
+                pos--;
+            }
+            if (pos == 0) break;
+            if (i < lines - 1) {
+                pos--; // Move before newline to continue to previous line
+            }
+        }
+    }
+    
+    // Now find beginning of the line we're on
+    while (pos > 0 && rope_char_at(current_buffer->rope, pos - 1) != '\n') {
         pos--;
     }
     
     return pos;
 }
 
-size_t line_end_position() {
-    size_t text_len = rope_char_length(current_buffer->rope); // O(1) - uses cached value!
+size_t line_end_position(int n) {
+    size_t text_len = rope_char_length(current_buffer->rope);
     size_t pos = current_buffer->pt;
     
-    while (pos < text_len) {
-        uint32_t ch = rope_char_at(current_buffer->rope, pos);
-        if (ch == '\n') break;
+    if (n > 0) {
+        // Move forward n-1 lines, then to end of that line
+        for (int i = 0; i < n - 1; i++) {
+            while (pos < text_len && rope_char_at(current_buffer->rope, pos) != '\n') {
+                pos++;
+            }
+            if (pos >= text_len) break;
+            pos++; // Move past newline
+        }
+    } else if (n < 0) {
+        // Move backward |n|+1 lines, then to end of that line
+        int lines = abs(n) + 1;
+        for (int i = 0; i < lines; i++) {
+            // Go to beginning of current line
+            while (pos > 0 && rope_char_at(current_buffer->rope, pos - 1) != '\n') {
+                pos--;
+            }
+            if (pos == 0) break;
+            if (i < lines - 1) {
+                pos--; // Move before newline to continue to previous line
+            }
+        }
+    }
+    
+    // Now find end of the line we're on
+    while (pos < text_len && rope_char_at(current_buffer->rope, pos) != '\n') {
         pos++;
     }
     
@@ -353,7 +492,7 @@ size_t line_end_position() {
 }
 
 size_t current_column() {
-    size_t line_start = line_beginning_position();
+    size_t line_start = line_beginning_position(1);
     return current_buffer->pt - line_start;
 }
 
@@ -442,14 +581,26 @@ void previous_line() {
     next_line();
 }
 
-// TODO support ARG
-void end_of_line() {
-    set_point(line_end_position());
+void beginning_of_line() {
+    int arg = get_prefix_arg();
+    if (arg == 0) return;
+    
+    size_t orig = current_buffer->pt;
+    size_t target = line_beginning_position(arg);
+    
+    // Constrain to field boundaries (only for beginning-of-line)
+    target = constrain_to_field(target, orig);
+    
+    set_point(target);
 }
 
-// TODO support ARG
-void beginning_of_line() {
-    set_point(line_beginning_position());
+void end_of_line() {
+    int arg = get_prefix_arg();
+    if (arg == 0) return;
+    
+    // end-of-line doesn't respect field property
+    size_t target = line_end_position(arg);
+    set_point(target);
 }
 
 // TODO Support ARG
@@ -479,8 +630,8 @@ void delete_blank_lines() {
     size_t text_len = rope_char_length(current_buffer->rope);
     if (text_len == 0) return;
     
-    size_t line_start = line_beginning_position();
-    size_t line_end = line_end_position();
+    size_t line_start = line_beginning_position(1);
+    size_t line_end = line_end_position(1);
     bool current_blank = is_line_blank(current_buffer, line_start, line_end);
     
     // Case 1: On nonblank line - delete following blank lines
@@ -603,12 +754,12 @@ void delete_indentation() {
         set_point(start);
         
         // Find the start of the first line in region
-        size_t first_line_start = line_beginning_position();
+        size_t first_line_start = line_beginning_position(1);
         
         // Find the end of the last line in region
         size_t saved_pt = current_buffer->pt;
         set_point(end);
-        size_t last_line_end = line_end_position();
+        size_t last_line_end = line_end_position(1);
         set_point(saved_pt);
         
         // Move to beginning of first line
@@ -616,7 +767,7 @@ void delete_indentation() {
         
         // Keep joining lines until we've covered the region
         while (current_buffer->pt < last_line_end) {
-            size_t line_end = line_end_position();
+            size_t line_end = line_end_position(1);
             size_t text_len = rope_char_length(current_buffer->rope);
             
             // If at end of buffer, stop
@@ -693,7 +844,7 @@ void delete_indentation() {
     
     if (has_prefix && arg > 0) {
         // With prefix arg: join current line to FOLLOWING line
-        size_t line_end = line_end_position();
+        size_t line_end = line_end_position(1);
         size_t text_len = rope_char_length(current_buffer->rope);
         
         // Check if we're at last line
@@ -723,7 +874,7 @@ void delete_indentation() {
         set_point(line_end);
     } else {
         // No prefix arg: join current line to PREVIOUS line
-        size_t line_start = line_beginning_position();
+        size_t line_start = line_beginning_position(1);
         
         // Check if we're at first line
         if (line_start == 0) {
@@ -731,7 +882,7 @@ void delete_indentation() {
         }
         
         // Check if current line is empty (only whitespace)
-        size_t line_end = line_end_position();
+        size_t line_end = line_end_position(1);
         next_line_was_empty = true;
         for (size_t check_pos = line_start; check_pos < line_end; check_pos++) {
             uint32_t ch = rope_char_at(current_buffer->rope, check_pos);
@@ -830,6 +981,10 @@ void deactivate_mark() {
 }
 
 void exchange_point_and_mark() {
+    if (current_buffer->region.mark < 0) {
+        message("No mark set in this buffer");
+        return;
+    }
     size_t temp = current_buffer->pt;
     set_point(current_buffer->region.mark);
     current_buffer->region.mark = temp;
@@ -847,6 +1002,10 @@ void region_bounds(size_t *start, size_t *end) {
 }
 
 void delete_region() {
+    if (current_buffer->region.mark < 0) {
+        message("The mark is not set now, so there is no region");
+        return;
+    }
     size_t start, end;
     region_bounds(&start, &end);
     
@@ -862,7 +1021,9 @@ void delete_region() {
     current_buffer->region.active = false;
 }
 
-void rkill(size_t start, size_t end, bool prepend) {
+
+// The actual rkill implementation
+void rkill_impl(size_t start, size_t end, bool prepend) {
     if (start >= end) return;
     
     size_t length = end - start;
@@ -894,8 +1055,24 @@ void rkill(size_t start, size_t end, bool prepend) {
     }
     
     free(new_text);
-    delete(start, length);
+    
+    // When delete hits read-only, it will longjmp to delete_readonly
+    // which is set up in the delete macro below
+    if (setjmp(delete_readonly) != 0) {
+        // Delete failed, propagate up to kill_readonly
+        longjmp(kill_readonly, 1);
+    }
+    delete_impl(start, length);
 }
+
+// Macro that sets up setjmp for kill operations
+#define rkill(start, end, prepend) \
+    do { \
+        if (setjmp(kill_readonly) != 0) { \
+            return; \
+        } \
+        rkill_impl((start), (end), (prepend)); \
+    } while (0)
 
 
 void kill_line() {
@@ -904,7 +1081,7 @@ void kill_line() {
     int arg = get_prefix_arg();
     if (arg == 0) {
         // Kill backwards from point to beginning of line
-        size_t line_start = line_beginning_position();
+        size_t line_start = line_beginning_position(1);
         size_t start = line_start;
         size_t end = current_buffer->pt;
         
@@ -917,7 +1094,7 @@ void kill_line() {
     
     if (arg == 1) {
         // No prefix arg: default behavior
-        size_t line_end = line_end_position();
+        size_t line_end = line_end_position(1);
         size_t start = current_buffer->pt;
         size_t end;
         
@@ -942,7 +1119,7 @@ void kill_line() {
         bool kill_whole_line = scm_get_bool("kill-whole-line", false);
 
         // Special case: kill_whole_line and at beginning of line
-        if (kill_whole_line && current_buffer->pt == line_beginning_position()) {
+        if (kill_whole_line && current_buffer->pt == line_beginning_position(1)) {
             end = line_end;
             if (end < text_len && rope_char_at(current_buffer->rope, end) == '\n') {
                 end++;
@@ -1025,6 +1202,9 @@ void kill_line() {
 }
 
 void kill_region() {
+    if (current_buffer->region.mark < 0) {
+        message("The mark is not set now, so there is no region");
+    }
     size_t start, end;
     region_bounds(&start, &end);
     
@@ -1474,8 +1654,6 @@ void upcase_word() {
         set_point(original_point);
     }
 }
-
-
 
 
 /// PARAGRAPHS
@@ -2337,4 +2515,234 @@ void kill_sexp() {
     set_mark_command();
     forward_sexp();
     kill_region();
+}
+
+/// DEFUN
+
+// Helper to check if a node is a function definition
+static bool is_function_definition(TSNode node) {
+    const char *type = ts_node_type(node);
+    return strcmp(type, "function_definition") == 0;
+}
+
+// Find the innermost function definition containing point
+static TSNode find_containing_function(TSNode root, size_t byte_pos) {
+    TSNode result = {0};
+    
+    uint32_t child_count = ts_node_child_count(root);
+    for (uint32_t i = 0; i < child_count; i++) {
+        TSNode child = ts_node_child(root, i);
+        
+        uint32_t start_byte = ts_node_start_byte(child);
+        uint32_t end_byte = ts_node_end_byte(child);
+        
+        // Skip nodes that don't contain point
+        if (byte_pos < start_byte || byte_pos > end_byte) {
+            continue;
+        }
+        
+        // If this is a function definition, it's a candidate
+        if (is_function_definition(child)) {
+            result = child;
+        }
+        
+        // Recurse to find innermost function
+        TSNode nested = find_containing_function(child, byte_pos);
+        if (!ts_node_is_null(nested)) {
+            result = nested;
+        }
+    }
+    
+    return result;
+}
+
+// Find the next function definition after byte_pos
+static TSNode find_next_function(TSNode root, size_t byte_pos) {
+    uint32_t child_count = ts_node_child_count(root);
+    
+    for (uint32_t i = 0; i < child_count; i++) {
+        TSNode child = ts_node_child(root, i);
+        uint32_t start_byte = ts_node_start_byte(child);
+        
+        if (start_byte > byte_pos) {
+            if (is_function_definition(child)) {
+                return child;
+            }
+            
+            TSNode nested = find_next_function(child, byte_pos);
+            if (!ts_node_is_null(nested)) {
+                return nested;
+            }
+        } else {
+            TSNode nested = find_next_function(child, byte_pos);
+            if (!ts_node_is_null(nested)) {
+                return nested;
+            }
+        }
+    }
+    
+    TSNode null_node = {0};
+    return null_node;
+}
+
+// Find the previous function definition before byte_pos
+static TSNode find_prev_function(TSNode root, size_t byte_pos) {
+    TSNode result = {0};
+    uint32_t child_count = ts_node_child_count(root);
+    
+    for (uint32_t i = 0; i < child_count; i++) {
+        TSNode child = ts_node_child(root, i);
+        uint32_t start_byte = ts_node_start_byte(child);
+        
+        if (start_byte < byte_pos) {
+            if (is_function_definition(child)) {
+                result = child;
+            }
+            
+            TSNode nested = find_prev_function(child, byte_pos);
+            if (!ts_node_is_null(nested)) {
+                result = nested;
+            }
+        }
+    }
+    
+    return result;
+}
+
+void beginning_of_defun() {
+    int arg = get_prefix_arg();
+    if (arg == 0) return;
+    
+    if (!current_buffer->ts_state || !current_buffer->ts_state->tree) {
+        message("Tree-sitter not available");
+        return;
+    }
+    
+    TSNode root = ts_tree_root_node(current_buffer->ts_state->tree);
+    size_t byte_pos = treesit_point_to_byte(current_buffer, current_buffer->pt);
+    int count = abs(arg);
+    
+    if (arg > 0) {
+        // Move backward to previous function definitions
+        for (int i = 0; i < count; i++) {
+            TSNode current_func = find_containing_function(root, byte_pos);
+            
+            if (!ts_node_is_null(current_func)) {
+                uint32_t func_start = ts_node_start_byte(current_func);
+                
+                if (byte_pos > func_start) {
+                    byte_pos = func_start;
+                    continue;
+                }
+            }
+            
+            TSNode prev_func = find_prev_function(root, byte_pos);
+            if (ts_node_is_null(prev_func)) {
+                set_point(0);
+                return;
+            }
+            
+            byte_pos = ts_node_start_byte(prev_func);
+        }
+        
+        size_t char_pos = treesit_byte_to_point(current_buffer, byte_pos);
+        set_point(char_pos);
+        
+    } else {
+        // Move forward to next function definitions
+        for (int i = 0; i < count; i++) {
+            TSNode next_func = find_next_function(root, byte_pos);
+            if (ts_node_is_null(next_func)) {
+                size_t text_len = rope_char_length(current_buffer->rope);
+                set_point(text_len);
+                return;
+            }
+            
+            byte_pos = ts_node_start_byte(next_func);
+        }
+        
+        size_t char_pos = treesit_byte_to_point(current_buffer, byte_pos);
+        set_point(char_pos);
+    }
+}
+
+void end_of_defun() {
+    int arg = get_prefix_arg();
+    if (arg == 0) return;
+    
+    if (!current_buffer->ts_state || !current_buffer->ts_state->tree) {
+        message("Tree-sitter not available");
+        return;
+    }
+    
+    TSNode root = ts_tree_root_node(current_buffer->ts_state->tree);
+    size_t byte_pos = treesit_point_to_byte(current_buffer, current_buffer->pt);
+    int count = abs(arg);
+    
+    if (arg > 0) {
+        // Move forward to end of function definitions
+        for (int i = 0; i < count; i++) {
+            TSNode current_func = find_containing_function(root, byte_pos);
+            
+            if (!ts_node_is_null(current_func)) {
+                uint32_t func_end = ts_node_end_byte(current_func);
+                
+                if (byte_pos < func_end) {
+                    byte_pos = func_end;
+                    continue;
+                }
+            }
+            
+            TSNode next_func = find_next_function(root, byte_pos);
+            if (ts_node_is_null(next_func)) {
+                size_t text_len = rope_char_length(current_buffer->rope);
+                set_point(text_len);
+                return;
+            }
+            
+            byte_pos = ts_node_end_byte(next_func);
+        }
+        
+        size_t char_pos = treesit_byte_to_point(current_buffer, byte_pos);
+        // Save current position
+        size_t saved_pt = current_buffer->pt;
+        // Temporarily move point to the end of function
+        current_buffer->pt = char_pos;
+        // Get end of line from that position
+        size_t line_end = line_end_position(1);
+        // Move to start of next line
+        if (line_end < rope_char_length(current_buffer->rope)) {
+            char_pos = line_end + 1;
+        }
+        // Restore original point and set to new position
+        current_buffer->pt = saved_pt;
+        set_point(char_pos);
+        
+    } else {
+        // Move backward to end of previous function definitions
+        for (int i = 0; i < count; i++) {
+            TSNode prev_func = find_prev_function(root, byte_pos);
+            if (ts_node_is_null(prev_func)) {
+                set_point(0);
+                return;
+            }
+            
+            byte_pos = ts_node_end_byte(prev_func);
+        }
+        
+        size_t char_pos = treesit_byte_to_point(current_buffer, byte_pos);
+        // Save current position
+        size_t saved_pt = current_buffer->pt;
+        // Temporarily move point to the end of function
+        current_buffer->pt = char_pos;
+        // Get end of line from that position
+        size_t line_end = line_end_position(1);
+        // Move to start of next line
+        if (line_end < rope_char_length(current_buffer->rope)) {
+            char_pos = line_end + 1;
+        }
+        // Restore original point and set to new position
+        current_buffer->pt = saved_pt;
+        set_point(char_pos);
+    }
 }

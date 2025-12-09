@@ -8,6 +8,7 @@
 #include "wm.h"
 #include "lisp.h"
 #include "edit.h"
+#include "minibuf.h"
 
 #define ROPE_IMPLEMENTATION
 #include "rope.h"
@@ -129,7 +130,8 @@ uint32_t sh = 1080;
 
 void text_callback(unsigned int codepoint) {
     /* if (codepoint >= 32 && codepoint < 127) {  // Printable ASCII */
-        insert(codepoint);
+    clear_minibuffer();
+    insert(codepoint);
     /* } */
 }
 
@@ -146,20 +148,10 @@ bool is_argument_function(SCM proc) {
 }
 
 
-
 void before_keychord_hook(const char *notation, KeyChordBinding *binding) {
-    // Clear minibuffer on any key press
-    if (!wm.minibuffer_active && binding->action.c_action != go_inside_minibuffer) {
-        Buffer *minibuf = wm.minibuffer_window->buffer;
-        if (minibuf) {
-            size_t len = rope_char_length(minibuf->rope);
-            if (len > 0) {
-                minibuf->rope = rope_delete_chars(minibuf->rope, 0, len);
-                wm.minibuffer_window->point = 0;
-            }
-        }
-    }
+    clear_minibuffer();
 }
+
 
 void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
     reset_cursor_blink(current_buffer);
@@ -296,11 +288,7 @@ static void inner_main (void *data, int argc, char **argv) {
     
     keychord_bind(&keymap, "M--",           previousTheme,            "Previous theme",           PRESS | REPEAT);
     keychord_bind(&keymap, "M-=",           nextTheme,                "Next theme",               PRESS | REPEAT);
-    keychord_bind(&keymap, "C-M-j",         go_inside_minibuffer,     "Go inside minibuffer",     PRESS | REPEAT);
 
-    /* load_gltf("./assets/puta.glb", &scene); */
-    /* load_gltf("./assets/floppy.glb", &scene); */
-    
     while (!windowShouldClose()) {
         beginFrame();
         
@@ -315,10 +303,6 @@ static void inner_main (void *data, int argc, char **argv) {
     
     wm_cleanup();
     buffer_destroy(scratch_buffer);
-    /* destroy_font(jetbrains); */
-    /* destroy_font(lilex); */
-    
-    
     cleanup(&context);
 }
 

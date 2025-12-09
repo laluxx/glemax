@@ -1,4 +1,5 @@
 #pragma once
+
 #include <tree_sitter/api.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -34,7 +35,6 @@ typedef struct {
     int face_id;
 } TSCaptureFaceMapping;
 
-// Initialize tree-sitter subsystem
 void init_treesit(void);
 void cleanup_treesit(void);
 

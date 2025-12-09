@@ -1,7 +1,5 @@
 ;;; derived.scm --- allow inheritance of major modes
-
 ;;; Commentary:
-
 ;; Glemax is already, in a sense, object oriented -- each object
 ;; (buffer) belongs to a class (major mode), and that class defines
 ;; the relationship between messages (input events) and methods
@@ -21,14 +19,45 @@
 ;; bindings of its parent, and will, in fact, run its parent first
 ;; every time it is called.
 
+;; Symbol property storage for mode relationships
+(define mode-plist (make-hash-table))
+
+(define (put symbol prop value)
+  "Store VALUE in SYMBOL's property list under indicator PROP."
+  (let ((plist (hash-ref mode-plist symbol '())))
+    (hash-set! mode-plist symbol (acons prop value plist))))
+
+(define (get symbol prop)
+  "Return the value of SYMBOL's PROP property."
+  (let ((plist (hash-ref mode-plist symbol '())))
+    (assq-ref plist prop)))
+
+(define (derived-mode? . modes)
+  "Return #t if the current major mode is derived from one of MODES.
+MODES should be a list of symbols or a single mode symbol instead of a list.
+This examines the parent modes set by `define-derived-mode' and also
+TODO additional ones set by `derived-mode-add-parents'."
+  (let loop ((current major-mode))
+    (cond
+     ((memq current modes) #t)
+     ((not current) #f)
+     (else
+      (let ((parent (get current 'derived-mode-parent)))
+        (if parent
+            (loop parent)
+            #f))))))
 
 (define-syntax define-derived-mode
   (syntax-rules ()
     ((_ mode parent-mode name docstring . body)
-     (define (mode)
-       docstring
-       (kill-all-local-variables)
-       (when parent-mode (parent-mode))
-       (setq 'major-mode 'mode)
-       (setq 'mode-name name)
-       . body))))
+     (begin
+       ;; Store the parent mode relationship
+       (put 'mode 'derived-mode-parent 'parent-mode)
+       
+       (define (mode)
+         docstring
+         (kill-all-local-variables)
+         (when parent-mode (parent-mode))
+         (setq 'major-mode 'mode)
+         (setq 'mode-name name)
+         . body)))))

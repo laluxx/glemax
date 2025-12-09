@@ -11,8 +11,9 @@ void newline();
 void open_line();
 void split_line();
 
-size_t line_beginning_position();
-size_t line_end_position();
+size_t line_beginning_position(int n);
+size_t line_end_position(int n);
+
 size_t current_column();
 void update_goal_column();
 
@@ -78,3 +79,7 @@ size_t scan_sexps(Buffer *buffer, size_t from, int count);
 void forward_sexp();
 void backward_sexp();
 void kill_sexp();
+
+/// DEFUN
+void beginning_of_defun();
+void end_of_defun();

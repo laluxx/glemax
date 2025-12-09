@@ -13,6 +13,7 @@
 #include "theme.h"
 #include "treesit.h"
 #include "wm.h"
+#include "minibuf.h"
 
 
 // Error handler that captures error message with full details
@@ -93,7 +94,17 @@ static SCM safe_eval_string(const char *str, bool *had_error) {
 // Helper to convert SCM to string for display
 static char* scm_to_display_string(SCM obj) {
     SCM str_port = scm_open_output_string();
-    scm_write(obj, str_port);  // Changed from scm_display to scm_write
+    
+    if (scm_is_string(obj)) {
+        // For strings, add quotes manually but display the content
+        scm_display(scm_from_locale_string("\""), str_port);
+        scm_display(obj, str_port);
+        scm_display(scm_from_locale_string("\""), str_port);
+    } else {
+        // For other types, use write to get proper representation
+        scm_write(obj, str_port);
+    }
+    
     SCM str_scm = scm_get_output_string(str_port);
     scm_close_port(str_port);
     
@@ -101,6 +112,30 @@ static char* scm_to_display_string(SCM obj) {
     return result;
 }
 
+
+// Centralized function to display evaluation results
+// Respects eval-display-prompt and eval-prompt variables
+static void display_eval_result(SCM result, bool had_error) {
+    if (had_error) {
+        char *error_str = scm_to_locale_string(result);
+        message("%s", error_str);
+        free(error_str);
+    } else {
+        char *result_str = scm_to_display_string(result);
+        
+        bool display_prompt = scm_get_bool("eval-display-prompt", true);
+        
+        if (display_prompt) {
+            char *prompt = scm_get_string("eval-prompt", "=> ");
+            message("%s%s", prompt, result_str);
+            free(prompt);
+        } else {
+            message("%s", result_str);
+        }
+        
+        free(result_str);
+    }
+}
 
 // Find the start of the last S-expression before point
 static size_t find_sexp_start(Buffer *buf, size_t from_pos) {
@@ -200,7 +235,6 @@ void eval_last_sexp() {
         return;
     }
     
-    // Find the start of the s-expression
     size_t start = find_sexp_start(buf, point);
     
     if (start >= point) {
@@ -208,7 +242,6 @@ void eval_last_sexp() {
         return;
     }
     
-    // Extract the expression
     size_t len = point - start;
     char *expr = malloc(len + 1);
     if (!expr) {
@@ -221,22 +254,9 @@ void eval_last_sexp() {
     }
     expr[len] = '\0';
     
-    // Evaluate with error handling
     bool had_error = false;
     SCM result = safe_eval_string(expr, &had_error);
-    
-    if (had_error) {
-        // Display error message
-        char *error_str = scm_to_locale_string(result);
-        message("%s", error_str);
-        free(error_str);
-    } else {
-        // ALWAYS display result, even if it's #<unspecified>
-        // Removed the check: if (!scm_is_eq(result, SCM_UNSPECIFIED))
-        char *result_str = scm_to_display_string(result);
-        message("=> %s", result_str);  // Added "=> " prefix like Emacs
-        free(result_str);
-    }
+    display_eval_result(result, had_error);
     
     free(expr);
 }
@@ -252,7 +272,6 @@ void eval_region() {
         return;
     }
     
-    // Extract the region text
     size_t len = end - start;
     char *code = malloc(len + 1);
     if (!code) {
@@ -265,20 +284,9 @@ void eval_region() {
     }
     code[len] = '\0';
     
-    // Evaluate with error handling
     bool had_error = false;
     SCM result = safe_eval_string(code, &had_error);
-    
-    if (had_error) {
-        char *error_str = scm_to_locale_string(result);
-        message("%s", error_str);
-        free(error_str);
-    } else {
-        // ALWAYS display result
-        char *result_str = scm_to_display_string(result);
-        message("=> %s", result_str);
-        free(result_str);
-    }
+    display_eval_result(result, had_error);
     
     free(code);
 }
@@ -292,7 +300,6 @@ void eval_buffer() {
         return;
     }
     
-    // Extract entire buffer
     char *code = malloc(len + 1);
     if (!code) {
         message("Memory allocation failed");
@@ -304,24 +311,12 @@ void eval_buffer() {
     }
     code[len] = '\0';
     
-    // Evaluate with error handling
     bool had_error = false;
     SCM result = safe_eval_string(code, &had_error);
-    
-    if (had_error) {
-        char *error_str = scm_to_locale_string(result);
-        message("%s", error_str);
-        free(error_str);
-    } else {
-        // ALWAYS display result
-        char *result_str = scm_to_display_string(result);
-        message("=> %s", result_str);
-        free(result_str);
-    }
+    display_eval_result(result, had_error);
     
     free(code);
 }
-
 
 // Helper to get procedure name as string
 const char* scm_proc_name(SCM proc) {
@@ -416,16 +411,94 @@ DEFINE_SCM_COMMAND(my_scm_newline, newline,
 "\n"
 "TODO If `electric-indent-mode' is enabled, this indents the final new line\n"
 "that it adds, and reindents the preceding line.  To just insert\n"
-"a newline, use \\[electric-indent-just-newline].\n");
+"a newline, use \\[electric-indent-just-newline].");
 
-DEFINE_SCM_COMMAND(scm_open_line,                      open_line,                      NULL);
-DEFINE_SCM_COMMAND(scm_split_line,                     split_line,                     NULL);
-DEFINE_SCM_COMMAND(scm_kill_line,                      kill_line,                      NULL);
-DEFINE_SCM_COMMAND(scm_kill_word,                      kill_word,                      NULL);
-DEFINE_SCM_COMMAND(scm_backward_kill_word,             backward_kill_word,             NULL);
-DEFINE_SCM_COMMAND(scm_kill_region,                    kill_region,                    NULL);
-DEFINE_SCM_COMMAND(scm_yank,                           yank,                           NULL);
-DEFINE_SCM_COMMAND(scm_set_mark_command,               set_mark_command,               NULL);// REMOVEME
+DEFINE_SCM_COMMAND(scm_open_line, open_line,
+"Insert a newline and leave point before it.\n"
+"TODO If there is a fill prefix and/or a `left-margin', insert them on\n"
+"the new line if the line would have been blank.\n"
+"With arg N, insert N newlines.");
+
+
+DEFINE_SCM_COMMAND(scm_split_line, split_line,
+"Split current line, moving portion beyond point vertically down.\n"
+"TODO If the current line starts with `fill-prefix', insert it on the new\n"
+"line as well.  With prefix ARG, don't insert `fill-prefix' on new line.\n"
+"\n"
+"TODO When called from Lisp code, ARG may be a prefix string to copy.");
+
+DEFINE_SCM_COMMAND(scm_kill_line, kill_line,  
+"Kill the rest of the current line; if no nonblanks there, kill thru newline.\n"
+"With prefix argument ARG, kill that many lines from point.\n"
+"Negative arguments kill lines backward.\n"
+"With zero argument, kills the text before point on the current line.\n"
+"\n"
+"When calling from a program, a number counts as a prefix arg.\n"
+"\n"
+"To kill a whole line, when point is not at the beginning, type \\\n"
+"\\[move-beginning-of-line] \\[kill-line] \\[kill-line].\n"
+"\n"
+"If option `kill-whole-line' is #t, then this command kills the whole line\n"
+"including its terminating newline, when used at the beginning of a line\n"
+"with no argument.  As a consequence, you can always kill a whole line\n"
+"by typing \\[move-beginning-of-line] \\[kill-line].\n"
+"\n"
+"If you want to append the killed line to the last killed text,\n"
+"use \\[append-next-kill] before \\[kill-line].\n"
+"\n"
+"TODO If the buffer is read-only, Glemax will beep and refrain from deleting\n"
+"the line, but put the line in the kill ring anyway.  This means that\n"
+"you can use this command to copy text from a read-only buffer.\n"
+"\(If the variable `kill-read-only-ok' is #t, then this won't\n"
+"even beep.\n");
+
+DEFINE_SCM_COMMAND(scm_kill_word, kill_word,
+"Kill characters forward until encountering the end of a word.\n"
+"With argument ARG, do this that many times.");
+
+DEFINE_SCM_COMMAND(scm_backward_kill_word, backward_kill_word,
+"Kill characters backward until encountering the beginning of a word."
+"With argument ARG, do this that many times.");
+
+DEFINE_SCM_COMMAND(scm_kill_region, kill_region,
+"Kill (\"cut\") text between point and mark.\n"
+"This deletes the text from the buffer and saves it in the kill ring.\n"
+"The command \\[yank] can retrieve it from there.\n"
+"\(If you want to save the region without killing it, use \\[kill-ring-save].)\n"
+"\n"
+"TODO If you want to append the killed region to the last killed text,\n"
+"use \\[append-next-kill] before \\[kill-region].\n"
+"\n"
+"TODO Any command that calls this function is a \"kill command\".\n"
+"If the previous command was also a kill command,\n"
+"the text killed this time appends to the text killed last time\n"
+"to make one entry in the kill ring.\n"
+"\n"
+"TODO If the buffer is read-only, Glemax will beep and refrain from deleting\n"
+"the text, but put the text in the kill ring anyway.  This means that\n"
+"you can use the killing commands to copy text from a read-only buffer.");
+
+DEFINE_SCM_COMMAND(scm_yank, yank,
+"Reinsert (\"paste\") the last stretch of killed text.\n"
+"More precisely, reinsert the most recent kill, which is the stretch of\n"
+"text most recently killed OR yanked, as returned by `current-kill' (which\n"
+"see).  Put point at the end, and set mark at the beginning without\n"
+"activating it. With just \\[universal-argument] as argument, put point\n"
+"at beginning, and mark at end.\n"
+"TODO With argument N, reinsert the Nth most recent kill.\n"
+"\n"
+"TODO This command honors the `yank-handled-properties' and\n"
+"`yank-excluded-properties' variables, and the `yank-handler' text\n"
+"property, as described below.\n"
+"\n"
+"Properties listed in `yank-handled-properties' are processed,\n"
+"then those listed in `yank-excluded-properties' are discarded.");
+
+
+
+// TODO Add Docstring for all those commands...
+
+DEFINE_SCM_COMMAND(scm_set_mark_command,               set_mark_command,               NULL);
 DEFINE_SCM_COMMAND(scm_delete_indentation,             delete_indentation,             NULL);
 DEFINE_SCM_COMMAND(scm_delete_char,                    delete_char,                    NULL);
 DEFINE_SCM_COMMAND(scm_delete_backward_char,           delete_backward_char,           NULL);
@@ -469,6 +542,9 @@ DEFINE_SCM_COMMAND(scm_move_to_window_line_top_bottom, move_to_window_line_top_b
 DEFINE_SCM_COMMAND(scm_next_buffer,                    next_buffer,                    NULL);
 DEFINE_SCM_COMMAND(scm_previous_buffer,                previous_buffer,                NULL);
 
+DEFINE_SCM_COMMAND(scm_beginning_of_defun,             beginning_of_defun,             NULL);
+DEFINE_SCM_COMMAND(scm_end_of_defun,                   end_of_defun,                   NULL);
+
 
 
 // Query functions
@@ -496,13 +572,39 @@ static SCM scm_current_column(void) {
     return scm_from_size_t(current_column());
 }
 
-static SCM scm_line_beginning_position(void) {
-    return scm_from_size_t(line_beginning_position());
+static SCM scm_line_beginning_position(SCM n_scm) {
+    int n = 1;  // Default to 1
+    
+    if (!SCM_UNBNDP(n_scm)) {
+        if (!scm_is_integer(n_scm)) {
+            scm_wrong_type_arg("line-beginning-position", 1, n_scm);
+        }
+        n = scm_to_int(n_scm);
+    }
+    
+    return scm_from_size_t(line_beginning_position(n));
 }
 
-static SCM scm_line_end_position(void) {
-    return scm_from_size_t(line_end_position());
+static SCM scm_line_end_position(SCM n_scm) {
+    int n = 1;  // Default to 1
+    
+    if (!SCM_UNBNDP(n_scm)) {
+        if (!scm_is_integer(n_scm)) {
+            scm_wrong_type_arg("line-end-position", 1, n_scm);
+        }
+        n = scm_to_int(n_scm);
+    }
+    
+    return scm_from_size_t(line_end_position(n));
 }
+
+/* static SCM scm_line_beginning_position(void) { */
+/*     return scm_from_size_t(line_beginning_position()); */
+/* } */
+
+/* static SCM scm_line_end_position(void) { */
+/*     return scm_from_size_t(line_end_position()); */
+/* } */
 
 
 // arg
@@ -524,6 +626,11 @@ static SCM scm_digit_argument(void) {
 
 static SCM scm_execute_extended_command(void) {
     execute_extended_command();
+    return SCM_UNSPECIFIED;
+}
+
+static SCM scm_eval_expression(void) {
+    eval_expression();
     return SCM_UNSPECIFIED;
 }
 
@@ -611,6 +718,7 @@ static SCM scm_char_before(SCM pos) {
     return scm_from_uint32(rope_char_at(buf->rope, p - 1));
 }
 
+
 static SCM scm_message(SCM fmt, SCM rest) {
     if (SCM_UNBNDP(fmt)) {
         return SCM_UNSPECIFIED;
@@ -689,6 +797,17 @@ float scm_get_float(const char *name, float default_value) {
     return default_value;
 }
 
+char* scm_get_string(const char *name, const char *default_value) {
+    SCM var = scm_c_lookup(name);
+    if (scm_is_false(var)) {
+        return default_value ? strdup(default_value) : NULL;
+    }
+    SCM val = scm_variable_ref(var);
+    if (scm_is_string(val)) {
+        return scm_to_locale_string(val);
+    }
+    return default_value ? strdup(default_value) : NULL;
+}
 
 // Get documentation from a Scheme procedure
 static char* get_scheme_proc_documentation(SCM proc) {
@@ -1716,52 +1835,6 @@ static bool str_ends_with(const char *str, const char *suffix) {
 }
 
 // Load all .scm files from a directory
-/* static void load_directory(const char *dir_path) { */
-/*     DIR *dir = opendir(dir_path); */
-/*     if (!dir) { */
-/*         return;  // Directory doesn't exist or can't be opened */
-/*     } */
-    
-/*     struct dirent *entry; */
-/*     while ((entry = readdir(dir)) != NULL) { */
-/*         // Skip . and .. and non-.scm files */
-/*         if (strcmp(entry->d_name, ".") == 0 ||  */
-/*             strcmp(entry->d_name, "..") == 0 || */
-/*             !str_ends_with(entry->d_name, ".scm")) { */
-/*             continue; */
-/*         } */
-        
-/*         // Construct full path */
-/*         size_t full_path_len = strlen(dir_path) + strlen(entry->d_name) + 2; */
-/*         char *full_path = malloc(full_path_len); */
-/*         snprintf(full_path, full_path_len, "%s/%s", dir_path, entry->d_name); */
-        
-/*         // Check if it's a regular file */
-/*         if (file_exists(full_path)) { */
-/*             // Load the file, catching any errors */
-/*             char load_expr[2048]; */
-/*             snprintf(load_expr, sizeof(load_expr), */
-/*                 "(catch #t" */
-/*                 "  (lambda () (primitive-load \"%s\"))" */
-/*                 "  (lambda (key . args)" */
-/*                 "    (let ((port (open-output-string)))" */
-/*                 "      (display \"Error loading %s: \" port)" */
-/*                 "      (display key port)" */
-/*                 "      (when (and (pair? args) (pair? (cdr args)))" */
-/*                 "        (display \" - \" port)" */
-/*                 "        (display (cadr args) port))" */
-/*                 "      (message \"~a\" (get-output-string port)))))", */
-/*                 full_path, entry->d_name); */
-            
-/*             scm_c_eval_string(load_expr); */
-/*         } */
-        
-/*         free(full_path); */
-/*     } */
-    
-/*     closedir(dir); */
-/* } */
-
 static void load_directory(const char *dir_path) {
     DIR *dir = opendir(dir_path);
     if (!dir) {
@@ -1952,6 +2025,7 @@ void lisp_init(void) {
     scm_c_define_gsubr("negative-argument",              0, 0, 0, scm_negative_argument);
     scm_c_define_gsubr("digit-argument",                 0, 0, 0, scm_digit_argument);
     scm_c_define_gsubr("execute-extended-command",       0, 0, 0, scm_execute_extended_command);
+    scm_c_define_gsubr("eval-expression",                0, 0, 0, scm_eval_expression);
     scm_c_define_gsubr("keyboard-quit",                  0, 0, 0, scm_keyboard_quit);
 
     // Buffer
@@ -2015,9 +2089,15 @@ void lisp_init(void) {
     scm_c_define_gsubr("delete-indentation",             0, 1, 0, scm_delete_indentation);
     scm_c_define_gsubr("back-to-indentation",            0, 0, 0, scm_back_to_indentation);
 
-    REGISTER_COMMAND("newline", my_scm_newline);
-    scm_c_define_gsubr("open-line",                      0, 1, 0, scm_open_line);
-    scm_c_define_gsubr("split-line",                     0, 1, 0, scm_split_line);
+
+    REGISTER_COMMAND("newline",            my_scm_newline);
+    REGISTER_COMMAND("beginning-of-defun", scm_beginning_of_defun);
+    REGISTER_COMMAND("end-of-defun",       scm_end_of_defun);
+    REGISTER_COMMAND("open-line",          scm_open_line);
+    REGISTER_COMMAND("split-line",         scm_split_line);
+
+    /* scm_c_define_gsubr("open-line",                      0, 1, 0, scm_open_line); */
+    /* scm_c_define_gsubr("split-line",                     0, 1, 0, scm_split_line); */
     scm_c_define_gsubr("capitalize-word",                0, 1, 0, scm_capitalize_word);
     scm_c_define_gsubr("downcase-word",                  0, 1, 0, scm_downcase_word);
     scm_c_define_gsubr("upcase-word",                    0, 1, 0, scm_upcase_word);
@@ -2039,11 +2119,14 @@ void lisp_init(void) {
 
     
     // Kill/yank
-    scm_c_define_gsubr("kill-line",                      0, 1, 0, scm_kill_line);
-    scm_c_define_gsubr("kill-word",                      0, 1, 0, scm_kill_word);
+    REGISTER_COMMAND("kill-line",   scm_kill_line);
+    REGISTER_COMMAND("kill-word",   scm_kill_word);
+    REGISTER_COMMAND("kill-region", scm_kill_region);
+    REGISTER_COMMAND("yank",        scm_yank);
+
     scm_c_define_gsubr("backward-kill-word",             0, 1, 0, scm_backward_kill_word);
-    scm_c_define_gsubr("kill-region",                    0, 1, 0, scm_kill_region);
-    scm_c_define_gsubr("yank",                           0, 1, 0, scm_yank);
+    /* scm_c_define_gsubr("kill-region",                    0, 1, 0, scm_kill_region); */
+    /* scm_c_define_gsubr("yank",                           0, 1, 0, scm_yank); */
     
     // Region
     scm_c_define_gsubr("set-mark-command",               0, 1, 0, scm_set_mark_command);
@@ -2076,8 +2159,8 @@ void lisp_init(void) {
     scm_c_define_gsubr("mark-active?",                   0, 0, 0, scm_mark_active_p);
     scm_c_define_gsubr("buffer-size",                    0, 0, 0, scm_buffer_size);
     scm_c_define_gsubr("current-column",                 0, 0, 0, scm_current_column);
-    scm_c_define_gsubr("line-beginning-position",        0, 0, 0, scm_line_beginning_position);
-    scm_c_define_gsubr("line-end-position",              0, 0, 0, scm_line_end_position);
+    scm_c_define_gsubr("line-beginning-position",        0, 1, 0, scm_line_beginning_position);
+    scm_c_define_gsubr("line-end-position",              0, 1, 0, scm_line_end_position);
     
     // Buffer content
     scm_c_define_gsubr("buffer-substring",               2, 0, 0, scm_buffer_substring);

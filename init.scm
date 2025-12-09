@@ -61,6 +61,8 @@
 (keymap-global-set "C-8" digit-argument)
 (keymap-global-set "C-9" digit-argument)
 (keymap-global-set "M-x" execute-extended-command)
+(keymap-global-set "M-:" eval-expression)
+
 (keymap-global-set "C-g" keyboard-quit)
 (keymap-global-set "C-x C-e" eval-last-sexp)
 (keymap-global-set "C-x C-b" eval-buffer)
@@ -92,6 +94,11 @@
 (keymap-global-set "C-M-f" forward-sexp)
 (keymap-global-set "C-M-b" backward-sexp)
 (keymap-global-set "C-M-k" kill-sexp)
+
+(keymap-global-set "C-M-e" end-of-defun)
+(keymap-global-set "C-M-a" beginning-of-defun)
+
+(keymap-global-set "C-M-d" treesit-debug-tree)
 
 
 
@@ -133,6 +140,14 @@
 Return the documentation property associated with `var'."
   (object-property var 'documentation))
 
+
+(define eval-display-prompt #t)
+(set-var-doc! eval-display-prompt
+"If #t display `eval-prompt' before evaluation output.")
+
+(define eval-prompt "=> ")
+(set-var-doc! eval-prompt
+"String to display before evaluation results when `eval-display-prompt' is #t.")
 
 
 (define blink-cursor-mode #t)
@@ -290,7 +305,7 @@ With prefix argument, delete them only before point."
 
 
 
-(load-theme 'dark-one)
+(load-theme 'modus-vivendi)
 
 
 
