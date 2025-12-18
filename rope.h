@@ -176,7 +176,6 @@ typedef struct rope_node {
 } rope_node_t;
 
 
-
 struct rope {
     rope_node_t *root;
     size_t byte_len;

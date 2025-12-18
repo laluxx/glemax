@@ -13,7 +13,6 @@ typedef struct {
 } Cursor;
 
 typedef struct {
-    /* size_t mark; */
     int mark;
     bool active;
 } Region;
@@ -33,6 +32,8 @@ typedef struct Buffer {
     SCM local_var_alist; // Alist of (SYMBOL . VALUE) pairs
     KeyChordMap *keymap;  // Buffer-local keymap (can be NULL)
     TreeSitterState *ts_state; // (NULL if not using tree-sitter)
+    bool read_only; // true if buffer is read-only
+    bool modified;
 } Buffer;
 
 extern Buffer *all_buffers;

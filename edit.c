@@ -4,6 +4,9 @@
 #include <ctype.h>
 
 
+void read_only_mode() {
+    current_buffer->read_only = !current_buffer->read_only;
+}
 
 void insert(uint32_t codepoint) {
     char utf8[5] = {0};
@@ -31,6 +34,11 @@ void insert(uint32_t codepoint) {
     }
     
     if (len == 0) return;
+
+    if (current_buffer->read_only) {
+        message("Buffer is read-only: #<buffer %s>", current_buffer->name);
+        return; 
+    }
     
     size_t insert_pos = current_buffer->pt;
     
@@ -114,6 +122,7 @@ void insert(uint32_t codepoint) {
     set_point(current_buffer->pt + 1);
     update_goal_column();
     reset_cursor_blink(current_buffer);
+    current_buffer->modified = true;
 }
 
 
@@ -123,6 +132,11 @@ jmp_buf delete_readonly;
 jmp_buf kill_readonly;
 
 size_t delete_impl(size_t pos, size_t count) {
+    if (current_buffer->read_only) {
+        message("Buffer is read-only: #<buffer %s>", current_buffer->name);
+        longjmp(delete_readonly, 1);
+    }
+
     if (count == 0) {
         size_t text_len = rope_char_length(current_buffer->rope);
         if (pos == 0) {
@@ -148,7 +162,7 @@ size_t delete_impl(size_t pos, size_t count) {
         message("End of buffer");
         return pos;
     }
-    
+   
     size_t delete_end = pos + count;
     
     // Check for read-only text in the deletion range
@@ -211,7 +225,7 @@ size_t delete_impl(size_t pos, size_t count) {
     
     adjust_all_window_points_after_modification(pos, -(int)count);
     reset_cursor_blink(current_buffer);
-    
+    current_buffer->modified = true;
     return pos;
 }
 
@@ -288,6 +302,11 @@ void delete_backward_char() {
         delete(current_buffer->pt, count);
     }
 }
+
+void save_buffer() {
+    current_buffer->modified = false;
+}
+
 
 void delete_char() {
     int arg = get_prefix_arg();
@@ -1021,8 +1040,6 @@ void delete_region() {
     current_buffer->region.active = false;
 }
 
-
-// The actual rkill implementation
 void rkill_impl(size_t start, size_t end, bool prepend) {
     if (start >= end) return;
     

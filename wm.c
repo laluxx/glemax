@@ -241,6 +241,10 @@ WindowConfiguration save_window_configuration() {
     return config;
 }
 
+
+
+
+
 Window* restore_window_recursive(WindowSnapshot *snapshots, int index, Window *parent) {
     if (index < 0) return NULL;
     
@@ -263,6 +267,10 @@ Window* restore_window_recursive(WindowSnapshot *snapshots, int index, Window *p
     
     return win;
 }
+
+
+
+
 
 void restore_window_configuration(WindowConfiguration *config) {
     if (!config->windows) return;
@@ -359,6 +367,7 @@ static void recalculate_window_geometry(Window *win) {
 void wm_recalculate_layout() {
     if (wm.root) {
         recalculate_window_geometry(wm.root);
+        /* printf("Recalculated layout\n"); */
     }
 }
 
@@ -599,11 +608,12 @@ void shrink_window() {
 #include "faces.h"
 
 
+#include "modeline.h"
+
 static void draw_modeline(Window *win) {
     if (!win) return;
     
     Font *font = face_cache->faces[FACE_DEFAULT]->font;
-
     float line_height = font->ascent + font->descent;
     float modeline_height = line_height;
     float modeline_y = win->y;
@@ -612,15 +622,28 @@ static void draw_modeline(Window *win) {
     bool is_active = win->is_selected || 
                     (wm.minibuffer_active && win == wm.previous_window);
 
-    Color color = is_active ? face_cache->faces[FACE_MODE_LINE_ACTIVE]->bg :
+    Color bg_color = is_active ? face_cache->faces[FACE_MODE_LINE_ACTIVE]->bg :
         face_cache->faces[FACE_MODE_LINE_INACTIVE]->bg;
     
+    Color fg_color = is_active ? face_cache->faces[FACE_MODE_LINE_ACTIVE]->fg :
+        face_cache->faces[FACE_MODE_LINE_INACTIVE]->fg;
+    
+    // Draw background
     quad2D((vec2){win->x, modeline_y},
            (vec2){win->width, modeline_height},
-           color);
+           bg_color);
+    
+    // Get formatted mode-line text
+    char *mode_line_text = format_mode_line(win);
+    
+    // Draw mode-line text
+    float text_x = win->x + fringe_width;
+    float text_y = modeline_y + font->descent * 2;
+    
+    text(font, mode_line_text, text_x, text_y, fg_color);
+    
+    free_mode_line_string(mode_line_text);
 }
-
-
 
 void update_window_scroll(Window *win) {
     if (win->is_minibuffer) return;  // Don't scroll minibuffer
@@ -739,6 +762,22 @@ void update_window_scroll(Window *win) {
     }
 }
 
+void update_windows_scroll() {
+    Window *leaves[256];
+    int count = 0;
+    collect_leaf_windows(wm.root, leaves, &count);
+    
+    // Update all leaf windows
+    for (int i = 0; i < count; i++) {
+        update_window_scroll(leaves[i]);
+    }
+    
+    // Also update minibuffer if active
+    /* if (wm.minibuffer_active && wm.minibuffer_window) { */
+    /*     update_window_scroll(wm.minibuffer_window); */
+    /* } */
+}
+
 static void draw_window(Window *win) {
     if (!win) return;
     
@@ -812,35 +851,79 @@ static size_t count_buffer_lines(Buffer *buf) {
     return line_count;
 }
 
-// TODO Count line wraps!
-static float calculate_minibuffer_height() {
+// Count actual visual lines including wraps
+float calculate_minibuffer_height() {
     if (!wm.minibuffer_window || !wm.minibuffer_window->buffer) return 0.0f;
     
+    Buffer *buf = wm.minibuffer_window->buffer;
     Font *font = face_cache->faces[FACE_DEFAULT]->font;
-    size_t line_count = count_buffer_lines(wm.minibuffer_window->buffer);
     float line_height = font->ascent + font->descent;
     
-    return line_height * line_count;
+    // Calculate usable width for text (excluding fringes)
+    float usable_width = wm.minibuffer_window->width - 2 * fringe_width;
+    
+    size_t text_len = rope_char_length(buf->rope);
+    if (text_len == 0) return line_height;  // Empty buffer = 1 line
+    
+    size_t visual_line_count = 1;  // At least one line
+    float x = 0;
+    
+    rope_iter_t iter;
+    rope_iter_init(&iter, buf->rope, 0);
+    
+    uint32_t ch;
+    while (rope_iter_next_char(&iter, &ch)) {
+        if (ch == '\n') {
+            visual_line_count++;
+            x = 0;
+        } else {
+            float char_width = character_width(font, ch);
+            
+            // Check if character would exceed line width
+            if (x + char_width > usable_width) {
+                visual_line_count++;
+                x = 0;
+            }
+            
+            Character *char_info = font_get_character(font, ch);
+            if (char_info) {
+                x += char_info->ax;
+            }
+        }
+    }
+    
+    rope_iter_destroy(&iter);
+    
+    return line_height * visual_line_count;
 }
+
+// TODO When minibuffer window height changes we should onliy
+// change the height of windows that touch the bottom of the frame
+// and we should limit the minibuffer height to ‘max-mini-window-height’
+
 
 void wm_draw() {
     // Calculate minibuffer height dynamically each frame
     float minibuffer_height = calculate_minibuffer_height();
+    
+    // Check if minibuffer height changed
+    static float prev_minibuffer_height = 0;
+    bool minibuffer_height_changed = (minibuffer_height != prev_minibuffer_height);
+    prev_minibuffer_height = minibuffer_height;
+    
     wm.minibuffer_window->height = minibuffer_height;
     
-    // Get the full frame height (stored during init or window resize)
-    // We need to know the total available height
-    static float frame_height = 0;
-    if (frame_height == 0) {
-        // First time: calculate from root's initial setup
-        frame_height = wm.root->y + wm.root->height;
-    }
+    // Use current screen height, not cached value
+    float frame_height = context.swapChainExtent.height;
     
     // Adjust root window to account for minibuffer
     wm.root->y = wm.minibuffer_window->y + minibuffer_height;
     wm.root->height = frame_height - wm.root->y;
     
-    /* wm_recalculate_layout(); */
+    // If minibuffer height changed and we have splits, recalculate layout
+    if (minibuffer_height_changed && !is_leaf_window(wm.root)) {
+        wm_recalculate_layout();
+    }
    
     // Draw all windows
     draw_window(wm.root);
@@ -849,7 +932,6 @@ void wm_draw() {
     // Draw minibuffer
     draw_window(wm.minibuffer_window);
 }
-
 
 /// Window related editing functions
 

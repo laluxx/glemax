@@ -17,7 +17,9 @@ size_t line_end_position(int n);
 size_t current_column();
 void update_goal_column();
 
+void read_only_mode();
 
+void save_buffer();
 void forward_char();
 void backward_char();
 void next_line();

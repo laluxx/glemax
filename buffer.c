@@ -52,7 +52,9 @@ Buffer* buffer_create(const char *name) {
     scm_gc_protect_object(buffer->local_var_alist);
 
     // Initialize keymap as NULL (will use global keymap)
-    buffer->keymap = NULL;    
+    buffer->keymap = NULL;
+    buffer->read_only = false;
+    buffer->modified = false;
 
 
     // Add to circular buffer list

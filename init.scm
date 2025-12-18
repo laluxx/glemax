@@ -99,6 +99,10 @@
 (keymap-global-set "C-M-a" beginning-of-defun)
 
 (keymap-global-set "C-M-d" treesit-debug-tree)
+(keymap-global-set "C-x C-q" read-only-mode)
+(keymap-global-set "C-x C-s" save-buffer)
+
+
 
 
 
@@ -171,6 +175,39 @@ face foreground color at point.")
 (set-var-doc! visible-mark-mode
 "#t if the mark should be visible.")
 
+
+
+(define make-pointer-invisible #t)
+(set-var-doc! make-pointer-invisible
+"If #t, make mouse pointer invisible while typing.
+The pointer becomes visible again when the mouse is moved.
+
+TODO When using this, you might also want to disable highlighting of
+clickable text.  See `mouse-highlight'.")
+
+
+(define make-pointer-invisible-on-keychords #f)
+(set-var-doc! make-pointer-invisible-on-keychords
+"If #t, make mouse pointer invisible on any keychord invocation.
+The pointer becomes visible again when the mouse is moved.
+
+Unlike `make-pointer-invisible', which only hides during typing,
+this hides the pointer on all keychords.
+
+TODO When using this, you might also want to disable highlighting of
+clickable text.  See `mouse-highlight'.")
+
+
+
+(define pointer-visible #t)
+(set-var-doc! make-pointer-invisible
+"If #t, the mouse pointer is currently visible.")
+
+
+
+
+
+
 (define blink-cursor-blinks 10)
 (set-var-doc! blink-cursor-blinks
 "How many times to blink before using a solid cursor.
@@ -184,6 +221,27 @@ Use 0 or negative value to blink forever.")
 (set-var-doc! blink-cursor-delay
 "Seconds of idle time before the first blink of the cursor.
 TODO Values smaller than 0.2 sec are treated as 0.2 sec.")
+
+
+;; C-x k BUG
+
+
+;; TODO Support this!
+(define inhibit-cursor-blink-on-frame-resize #t)
+(set-var-doc! inhibit-cursor-blink-on-frame-resize
+"When #t, disable cursor blinking while the frame is being resized.
+This has only effect if `blink-cursor-mode' is #t.")
+
+
+;; TODO Support this!
+(define max-mini-window-height 0.25)
+(set-var-doc! max-mini-window-height
+"Maximum height for resizing mini-windows (the minibuffer and the echo area).
+
+If a float, it specifies the maximum height in units of the
+mini-window frame's height.
+If an integer, it specifies the maximum height in units of the
+mini-window frame's default font's height.")
 
 
 
@@ -366,6 +424,9 @@ When truncating is off, long lines are folded."
 (keymap-global-set "C-x x l" toggle-lerp-scroll)
 
 
+
+(defvar-local mode-line-format " -:%+%*-  %b       %p   L%l"
+  "TODO.")
 
 
 

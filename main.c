@@ -1,8 +1,11 @@
 #include <libguile.h>
 #include <cglm/types.h>
+#include <obsidian/context.h>
 #include <obsidian/font.h>
+#include <obsidian/input.h>
 #include <obsidian/obsidian.h>
 #include <obsidian/renderer.h>
+#include <obsidian/window.h>
 #include "buffer.h"
 #include "faces.h"
 #include "wm.h"
@@ -14,14 +17,8 @@
 #include "rope.h"
 
 
-uint32_t sw = 1920;
-uint32_t sh = 1080;
-
-/* Font *jetbrains; */
-/* Font *lilex; */
-
-
-
+uint32_t sw = 500;
+uint32_t sh = 500;
 
 /* void text_callback(unsigned int codepoint) { */
 /*     bool electric_pair_mode = scm_get_bool("electric-pair-mode", false); */
@@ -128,42 +125,58 @@ uint32_t sh = 1080;
 /*     } */
 /* } */
 
+
+
+
 void text_callback(unsigned int codepoint) {
     /* if (codepoint >= 32 && codepoint < 127) {  // Printable ASCII */
     clear_minibuffer();
     insert(codepoint);
     /* } */
+
+    // Only hide if the feature is enabled and pointer is currently visible
+    if (scm_get_bool("make-pointer-invisible", true) && 
+        scm_get_bool("pointer-visible", true)) {
+        hideCursor();
+        scm_c_define("pointer-visible", SCM_BOOL_F);
+    }
 }
 
 
 bool is_vertical_motion(SCM proc) {
     return is_scm_proc(proc, "next-line") ||
-           is_scm_proc(proc, "previous-line");
+        is_scm_proc(proc, "previous-line");
 }
 
 bool is_argument_function(SCM proc) {
     return is_scm_proc(proc, "universal-argument") ||
-           is_scm_proc(proc, "negative-argument") ||
-           is_scm_proc(proc, "digit-argument");
+        is_scm_proc(proc, "negative-argument") ||
+        is_scm_proc(proc, "digit-argument");
 }
 
 
 void before_keychord_hook(const char *notation, KeyChordBinding *binding) {
     clear_minibuffer();
+    if (scm_get_bool("make-pointer-invisible-on-keychords", true) && 
+        scm_get_bool("pointer-visible", true)) {
+        hideCursor();
+        scm_c_define("pointer-visible", SCM_BOOL_F);
+    }
+
 }
 
 
 void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
     reset_cursor_blink(current_buffer);
-    update_window_scroll(wm.selected);
+    update_windows_scroll();
     int arg = get_prefix_arg();
-
-
-
+    
+    
+    
     if (!is_scm_proc(binding->action.scheme_proc, "recenter-top-bottom") &&
         !is_scm_proc(binding->action.scheme_proc, "move-to-window-line-top-bottom"))
         recenter_positions = 0;
-
+    
     // Handle digit argument
     if (is_scm_proc(binding->action.scheme_proc, "digit-argument")) {
         argument_manually_set = true;
@@ -178,7 +191,7 @@ void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
             arg = 0;
             set_prefix_arg(arg);
         }
-
+        
         // If the last command wasn't a digit or negative argument, reset completely
         else if (!is_scm_proc(last_command, "digit-argument") && 
                  !is_scm_proc(last_command, "negative-argument")) {
@@ -186,8 +199,8 @@ void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
             set_prefix_arg(arg);
             was_negative = false;
         }
-
-
+        
+        
         if (was_negative) arg = -arg;  // Make it positive temporarily
         set_prefix_arg(arg);
         
@@ -216,7 +229,7 @@ void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
         // Restore the sign
         if (was_negative) arg = -arg;
         set_prefix_arg(arg);
-
+        
         // Display the current arg value
         char msg[32];
         snprintf(msg, sizeof(msg), "C-u %d", arg);
@@ -258,10 +271,51 @@ double lastX = WIDTH / 2.0f, lastY = HEIGHT / 2.0f;
 void cursor_pos_callback(double xpos, double ypos) {
     double xoffset = xpos - lastX;
     double yoffset = lastY - ypos;
+    // Only show if pointer is currently hidden
+    if (!scm_get_bool("pointer-visible", true)) {
+        showCursor();
+        scm_c_define("pointer-visible", SCM_BOOL_T);
+    }
 }
 
+
+void window_resize_callback(int width, int height) {
+    sw = width;
+    sh = height;
+    
+    // Calculate minibuffer height to properly size root window
+    float minibuffer_height = calculate_minibuffer_height();
+    
+    wm.root->x = 0;
+    wm.root->y = minibuffer_height;
+    wm.root->width = width;
+    wm.root->height = height - minibuffer_height;
+    
+    wm.minibuffer_window->width = width;
+    wm.minibuffer_window->height = minibuffer_height;
+    
+    // Only recalculate if there are splits
+    if (!is_leaf_window(wm.root)) {
+        wm_recalculate_layout();
+    }
+    
+    /* printf("Width: %i, Height: %i\n", width, height); */
+}
+
+
 static void inner_main (void *data, int argc, char **argv) {
-    initWindow(sw, sh, "Kink");
+    initWindow(sw, sh, "Glemax");
+
+    
+    registerKeyCallback(key_callback);
+    registerTextCallback(text_callback);
+    registerMouseButtonCallback(mouse_button_callback);
+    registerCursorPosCallback(cursor_pos_callback);
+    registerWindowResizeCallback(window_resize_callback);
+    
+    register_after_keychord_hook(after_keychord_hook);
+    register_before_keychord_hook(before_keychord_hook);
+
     
     Buffer *scratch_buffer = buffer_create("*scratch*");
     Buffer *minibuf = buffer_create("minibuf");
@@ -269,37 +323,32 @@ static void inner_main (void *data, int argc, char **argv) {
     
     sh = context.swapChainExtent.height; // TODO move into
     sw = context.swapChainExtent.width;  // Resize callback
+    printf("sw: %u, sh: %u\n", sw, sh);
     wm_init(scratch_buffer, minibuf, 0, 0, sw, sh);
-
-
+    
     init_faces();
     lisp_init(); // IMPORTANT After initializing the windowManager
+    
 
     
     
-    registerKeyCallback(key_callback);
-    registerTextCallback(text_callback);
-    registerMouseButtonCallback(mouse_button_callback);
-    registerCursorPosCallback(cursor_pos_callback);
-    
-    register_after_keychord_hook(after_keychord_hook);
-    register_before_keychord_hook(before_keychord_hook);
-    
-    
-    keychord_bind(&keymap, "M--",           previousTheme,            "Previous theme",           PRESS | REPEAT);
-    keychord_bind(&keymap, "M-=",           nextTheme,                "Next theme",               PRESS | REPEAT);
-
     while (!windowShouldClose()) {
         beginFrame();
         
         clear_background(face_cache->faces[FACE_DEFAULT]->bg);
         
         fps(face_cache->faces[FACE_DEFAULT]->font, sw - 400, 200, RED);
-
+        
         wm_draw();
-       
+        
         endFrame();
-    }
+   }
+
+
+
+
+
+
     
     wm_cleanup();
     buffer_destroy(scratch_buffer);
@@ -309,5 +358,5 @@ static void inner_main (void *data, int argc, char **argv) {
 
 int main(int argc, char **argv) {
     scm_boot_guile (argc, argv, inner_main, 0);
-    return 0; // never reached
+    return 0;
 }

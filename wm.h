@@ -94,6 +94,9 @@ int count_windows();
 Window* get_selected_window();
 Buffer* get_selected_buffer();
 
+
+float calculate_minibuffer_height();
+
 // Layout and rendering
 void wm_recalculate_layout();
 void wm_draw();
@@ -110,6 +113,7 @@ void debug_print_windows();
 
 
 void update_window_scroll(Window *win);
+void update_windows_scroll();
 void update_window_scroll_lerp(Window *win);
 
 

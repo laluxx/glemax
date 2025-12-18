@@ -23,6 +23,9 @@ void activate_minibuffer() {
     current_buffer->pt = wm.minibuffer_window->point;
 }
 
+
+
+
 void deactivate_minibuffer() {
     if (!wm.minibuffer_active) return;
     wm.minibuffer_active = false;

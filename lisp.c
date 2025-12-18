@@ -1,6 +1,7 @@
 #include <libguile.h>
 #include <obsidian/input.h>
 #include <obsidian/theme.h>
+#include <obsidian/window.h>
 #include <stdbool.h>
 #include "lisp.h"
 #include "faces.h"
@@ -494,9 +495,13 @@ DEFINE_SCM_COMMAND(scm_yank, yank,
 "Properties listed in `yank-handled-properties' are processed,\n"
 "then those listed in `yank-excluded-properties' are discarded.");
 
+DEFINE_SCM_COMMAND(scm_read_only_mode, read_only_mode,
+"Change whether the current buffer is read-only.");
 
 
 // TODO Add Docstring for all those commands...
+
+DEFINE_SCM_COMMAND(scm_save_buffer,                    save_buffer,                    NULL);
 
 DEFINE_SCM_COMMAND(scm_set_mark_command,               set_mark_command,               NULL);
 DEFINE_SCM_COMMAND(scm_delete_indentation,             delete_indentation,             NULL);
@@ -598,15 +603,6 @@ static SCM scm_line_end_position(SCM n_scm) {
     return scm_from_size_t(line_end_position(n));
 }
 
-/* static SCM scm_line_beginning_position(void) { */
-/*     return scm_from_size_t(line_beginning_position()); */
-/* } */
-
-/* static SCM scm_line_end_position(void) { */
-/*     return scm_from_size_t(line_end_position()); */
-/* } */
-
-
 // arg
 
 static SCM scm_universal_argument(void) {
@@ -655,6 +651,20 @@ static SCM scm_eval_region(void) {
     eval_region();
     return SCM_UNSPECIFIED;
 }
+
+
+static SCM scm_hide_cursor(void) {
+    hideCursor();
+    scm_c_define("pointer-visible", SCM_BOOL_F);
+    return SCM_UNSPECIFIED;
+}
+
+static SCM scm_show_cursor(void) {
+    showCursor();
+    scm_c_define("pointer-visible", SCM_BOOL_T);
+    return SCM_UNSPECIFIED;
+}
+
 
 
 // Buffer content access
@@ -1977,6 +1987,9 @@ void lisp_init(void) {
     init_treesit_bindings();
 
 
+    scm_c_define_gsubr("show-cursor",                   0, 0, 0, scm_show_cursor);
+    scm_c_define_gsubr("hide-cursor",                   0, 0, 0, scm_hide_cursor);
+
     // Keymap functions
     scm_c_define_gsubr("make-sparse-keymap",            0, 0, 0, scm_make_sparse_keymap);
     scm_c_define_gsubr("use-local-map",                 1, 0, 0, scm_use_local_map);
@@ -2089,6 +2102,9 @@ void lisp_init(void) {
     scm_c_define_gsubr("delete-indentation",             0, 1, 0, scm_delete_indentation);
     scm_c_define_gsubr("back-to-indentation",            0, 0, 0, scm_back_to_indentation);
 
+
+    REGISTER_COMMAND("read-only-mode",     scm_read_only_mode);
+    REGISTER_COMMAND("save-buffer",        scm_save_buffer);
 
     REGISTER_COMMAND("newline",            my_scm_newline);
     REGISTER_COMMAND("beginning-of-defun", scm_beginning_of_defun);
