@@ -116,6 +116,6 @@
 (define-derived-mode scheme-mode prog-mode "Scheme"
   "Major mode for editing Scheme code."
   (use-local-map scheme-mode-map)
-  (setq-local 'tab-width 2)
+  (setq-local tab-width 2)
   ;; Initialize tree-sitter if available
   (scheme-mode-setup-treesitter))

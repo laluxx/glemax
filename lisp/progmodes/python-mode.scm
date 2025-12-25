@@ -179,6 +179,6 @@
 (define-derived-mode python-mode prog-mode "Python"
   "Major mode for editing Python code."
   (use-local-map python-mode-map)
-  (setq-local 'tab-width 2)
+  (setq-local tab-width 2)
   ;; Initialize tree-sitter if available
   (python-mode-setup-treesitter))

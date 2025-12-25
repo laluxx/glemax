@@ -58,6 +58,6 @@
 (define-derived-mode json-mode prog-mode "Json"
   "Major mode for editing Json."
   (use-local-map json-mode-map)
-  (setq-local 'tab-width 4)
+  (setq-local tab-width 4)
   ;; Initialize tree-sitter if available
   (json-mode-setup-treesitter))

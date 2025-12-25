@@ -1,5 +1,8 @@
 ;;; derived.scm --- allow inheritance of major modes
+
+
 ;;; Commentary:
+
 ;; Glemax is already, in a sense, object oriented -- each object
 ;; (buffer) belongs to a class (major mode), and that class defines
 ;; the relationship between messages (input events) and methods
@@ -18,6 +21,8 @@
 ;; major mode, with its own keymap.  The new mode will inherit the key
 ;; bindings of its parent, and will, in fact, run its parent first
 ;; every time it is called.
+
+;;; Code:
 
 ;; Symbol property storage for mode relationships
 (define mode-plist (make-hash-table))
@@ -58,6 +63,6 @@ TODO additional ones set by `derived-mode-add-parents'."
          docstring
          (kill-all-local-variables)
          (when parent-mode (parent-mode))
-         (setq 'major-mode 'mode)
-         (setq 'mode-name name)
+         (setq major-mode 'mode)
+         (setq mode-name name)
          . body)))))

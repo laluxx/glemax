@@ -4,11 +4,14 @@
 #include <cglm/types.h>
 #include <stdbool.h>
 
+
 typedef enum {
     SPLIT_NONE,       // Leaf window (no split)
     SPLIT_VERTICAL,   // Split left/right
     SPLIT_HORIZONTAL  // Split top/bottom
 } SplitType;
+
+#define MIN_WINDOW_SIZE 100.0f // TODO Emacs actually keep this in col
 
 // Forward declaration
 typedef struct Window Window;
@@ -64,20 +67,23 @@ typedef struct {
     WindowConfiguration saved_config;
 } WindowManager;
 
-extern WindowManager wm;
 
-extern size_t fringe_width;
+void wm_init(WindowManager *wm, Buffer *initial_buffer, Buffer *minibuffer,
+	     float x, float y, float width, float height);
 
-void wm_init(Buffer *initial_buffer, Buffer *minibuffer, float x, float y,
-             float width, float height);
-
-void wm_cleanup();
+void wm_cleanup(WindowManager *wm);
 
 void split_window_below();
 void split_window_right();
+bool window_try_horizontal_split(Window *win);
+bool window_try_vertical_split(Window *win);
+Window* split_window_sensibly();
+Window* display_buffer(Buffer *buffer);
+
+
+
 void delete_window();
 void delete_other_windows();
-
 void other_window();
 Window* next_window(Window *current);
 Window* previous_window(Window *current);
@@ -99,7 +105,7 @@ float calculate_minibuffer_height();
 
 // Layout and rendering
 void wm_recalculate_layout();
-void wm_draw();
+void wm_draw(WindowManager *wm);
 
 void balance_windows();
 void enlarge_window();
@@ -114,6 +120,7 @@ void debug_print_windows();
 
 void update_window_scroll(Window *win);
 void update_windows_scroll();
+
 void update_window_scroll_lerp(Window *win);
 
 
@@ -125,6 +132,7 @@ void recenter_top_bottom();
 
 
 void scroll_up_command();
+
 void scroll_down_command();
 void scroll_other_window();
 void scroll_other_window_down();
@@ -138,3 +146,10 @@ WindowConfiguration save_window_configuration();
 Window* restore_window_recursive(WindowSnapshot *snapshots, int index, Window *parent);
 void restore_window_configuration(WindowConfiguration *config);
 void free_window_configuration(WindowConfiguration *config);
+void recalculate_window_geometry(Window *win);
+
+
+/// SCM
+
+SCM scm_window_min_pixel_height(SCM window_obj);
+SCM scm_window_min_pixel_width(SCM window_obj);

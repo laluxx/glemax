@@ -69,14 +69,9 @@
 (keymap-global-set "C-x C-r" eval-region)
 (keymap-global-set "C-t" transpose-chars)
 (keymap-global-set "M-t" transpose-words)
-;; Well.. We need to get arguments right.
-;; ..ooor do some maro magic but it would be bad
-;; NOTE That this is what actually happens under the hood, maybe it’s bad..
-;; (keymap-global-set "C-T" (lambda () (set! prefix-arg -1) (transpose-chars)))
-;; (keymap-global-set "M-T" (lambda () (set! prefix-arg -1) (transpose-words)))
-;; We did it!
 (keymap-global-set "C-T" (lambda () (transpose-chars -1)))
 (keymap-global-set "M-T" (lambda () (transpose-words -1)))
+
 
 (keymap-global-set "C-M-n" forward-list)
 (keymap-global-set "C-M-p" backward-list)
@@ -225,6 +220,77 @@ TODO Values smaller than 0.2 sec are treated as 0.2 sec.")
 
 ;; C-x k BUG
 
+(define split-height-threshold 40)
+(set-var-doc! split-height-threshold
+"Minimum height for splitting windows sensibly.
+If this is an integer, `split-window-sensibly' may split a window
+vertically only if it has at least this many lines.  If this is
+#f, `split-window-sensibly' is not allowed to split a window
+vertically.  If, however, a window is the only window on its
+frame, or all the other ones are dedicated,
+`split-window-sensibly' may split it vertically disregarding the
+value of this variable.")
+
+(define split-width-threshold 160)
+(set-var-doc! split-width-threshold
+"Minimum width for splitting windows sensibly.
+If this is an integer, `split-window-sensibly' may split a window
+horizontally only if it has at least this many columns.  If this
+is #f, `split-window-sensibly' is not allowed to split a window
+horizontally.")
+
+(define split-window-preferred-direction 'longest)
+(set-var-doc! split-window-preferred-direction
+"The first direction tried when Emacs needs to split a window.
+This variable controls in which order `split-window-sensibly' will try
+to split the window.  That order specially matters when both dimensions
+of the frame are long enough to be split according to
+`split-width-threshold' and `split-height-threshold'.
+If set to `vertical', `split-window-sensibly' tries to split vertically
+first and then horizontally.
+If set to `horizontal' it does the opposite.
+If set to `longest' (the default), the first direction tried depends on
+the frame shape: in landscape orientation it will be like `horizontal',
+but in portrait it will be like `vertical'.  In other words, the longest
+of the two dimension is split first.
+
+If both `split-width-threshold' and `split-height-threshold' cannot be
+satisfied, it will fallback to split vertically.
+
+See `split-window-preferred-function' for more control of the splitting
+strategy.")
+
+
+;; TODO we don’t have ‘display-buffer’ yet
+(define split-window-preferred-function 'split-window-sensibly)
+(set-var-doc! split-window-preferred-function
+"Function called by `display-buffer' routines to split a window.
+This function is called with a window as single argument and is
+supposed to split that window and return the new window.  If the
+window can (or shall) not be split, it is supposed to return nil.
+The default is to call the function `split-window-sensibly' which
+tries to split the window in a way which seems most suitable.
+You can customize the options `split-height-threshold' and/or
+`split-width-threshold' in order to have `split-window-sensibly'
+prefer either vertical or horizontal splitting.
+
+If you set this to any other function, bear in mind that the
+`display-buffer' routines may call this function two times.  The
+argument of the first call is the largest window on its frame.
+If that call fails to return a live window, the function is
+called again with the least recently used window as argument.  If
+that call fails too, `display-buffer' will use an existing window
+to display its buffer.
+
+The window selected at the time `display-buffer' was invoked is
+still selected when this function is called.  Hence you can
+compare the window argument with the value of `selected-window'
+if you intend to split the selected window instead or if you do
+not want to split the selected window.")
+
+
+
+
 
 ;; TODO Support this!
 (define inhibit-cursor-blink-on-frame-resize #t)
@@ -278,12 +344,66 @@ in effect and the mark is active, by acting on the region instead
 of their usual default part of the buffer's text.  Examples of
 such commands include `backward-delete-char`.")
 
-
 (define initial-mark-visible #f)
 (set-var-doc! initial-mark-visible
 "Non-false means display the mark at the beginning of the buffer initially.
 When non-false, the mark is shown at buffer start before it is set manually
 via `set-mark-command`.")
+
+(define window-resize-pixelwise #f)
+(set-var-doc! window-resize-pixelwise
+"#t means resize windows pixelwise.
+This currently affects the functions: `split-window', `maximize-window',
+`minimize-window', `fit-window-to-buffer' and `fit-frame-to-buffer', and
+all functions that symmetrically resize a parent window.
+
+Note that when a frame's pixel size is not a multiple of the
+frame's character size, at least one window may get resized
+pixelwise even if this option is nil.")
+
+(define window-min-width 9)
+(set-var-doc! window-min-width
+"The minimum total width, in columns, of any window.
+The value doesn't accommodate fringes if present.  A value
+less than `window-safe-min-width' is ignored.  The value of this
+variable is honored when windows are resized or split.
+
+Applications should never rebind this variable.  To resize a
+window to a width less than the one specified here, an
+application should instead call `window-resize' with a non-nil
+IGNORE argument.  In order to have `split-window' make a window
+narrower, explicitly specify the SIZE argument of that function.")
+
+;; TODO
+(define window-min-height 4)
+(set-var-doc! window-min-height
+"The minimum total height, in lines, of any window.
+The value has to accommodate one text line, a mode and header
+line, a horizontal scroll bar and a bottom divider, if present.
+A value less than `window-safe-min-height' is ignored.  The value
+of this variable is honored when windows are resized or split.
+
+Applications should never rebind this variable.  To resize a
+window to a height less than the one specified here, an
+application should instead call `window-resize' with a non-nil
+IGNORE argument.  In order to have `split-window' make a window
+shorter, explicitly specify the SIZE argument of that function.")
+
+
+
+
+(define frame-resize-pixelwise #f)
+(set-var-doc! window-resize-pixelwise
+"#t means resize frames pixelwise.
+If this option is #f, resizing a frame rounds its sizes to the frame's
+current values of `frame-char-height' and `frame-char-width'.  If this
+is #t, no rounding occurs, hence frame sizes can increase/decrease
+by one pixel.
+
+With some window managers you may have to set this to #t in order
+to set the size of a frame in pixels, to maximize frames or to make them
+fullscreen.  To resize your initial frame pixelwise, set this option to
+a #t value in your init file, non pixelwise resizing doesn't work on wayland.")
 
 
 (define prefix-arg 1)
@@ -331,6 +451,7 @@ in which case it is less."
   (mark-active?))
 
 
+;; TODO Implement this in C
 (define (delete-horizontal-space)
   "Delete all spaces and tabs around point.
 With prefix argument, delete them only before point."
@@ -349,7 +470,43 @@ With prefix argument, delete them only before point."
 (keymap-global-set "M-\\" delete-horizontal-space)
 
 
+;; Save current buffer, execute body, restore buffer
+(define-syntax save-current-buffer
+  (syntax-rules ()
+    ((save-current-buffer body ...)
+     (let ((saved-buffer (current-buffer)))
+       (dynamic-wind
+         (lambda () #f)
+         (lambda () body ...)
+         (lambda () (set-buffer saved-buffer)))))))
 
+;; Execute body with buffer temporarily current
+(define-syntax with-current-buffer
+  (syntax-rules ()
+    ((with-current-buffer buffer-or-name body ...)
+     (save-current-buffer
+       (set-buffer buffer-or-name)
+       body ...))))
+
+(define (messages-buffer)
+  "Return the \"*Messages*\" buffer.
+If it does not exist, create it and switch it to `messages-buffer-mode'."
+  (or (get-buffer "*Messages*")
+      (with-current-buffer (get-buffer-create "*Messages*")
+        ;; TODO (messages-buffer-mode)
+        (current-buffer))))
+
+(define (view-echo-area-messages)
+  "View the log of recent echo-area messages: the `*Messages*' buffer.
+The number of messages retained in that buffer is specified by
+the variable `message-log-max'."
+  (let* ((msg-buf (messages-buffer))
+         (win (display-buffer msg-buf)))
+    ;; Set the window's point to the end of the buffer
+    (set-window-point win (buffer-size msg-buf))
+    win))
+
+(keymap-global-set "C-h e" view-echo-area-messages)
 
 
 
@@ -376,25 +533,6 @@ With prefix argument, delete them only before point."
     ((_ var default-value docstring)
      (set-default! 'var default-value))))
 
-;; Define a buffer-local variable (automatically buffer-local in all buffers)
-(define-syntax defvar-local
-  (syntax-rules ()
-    ((_ var default-value)
-     (begin
-       (set-default! 'var default-value)
-       (make-variable-buffer-local 'var)))
-    ((_ var default-value docstring)
-     (begin
-       (set-default! 'var default-value)
-       (make-variable-buffer-local 'var)))))
-
-;; setq-local - set buffer-local value
-(define (setq-local symbol value)
-  (when (not (local-variable? symbol))
-    (make-local-variable symbol))
-  (set symbol value))
-
-
 (defvar-local truncate-lines #f
   "Non-nil means truncate lines in this buffer.
 When truncating is off, long lines are folded.")
@@ -404,20 +542,20 @@ When truncating is off, long lines are folded.")
   "Toggle truncating of long lines for the current buffer.
 When truncating is off, long lines are folded."
   (let ((current-val (buffer-local-value 'truncate-lines (current-buffer))))
-    (setq 'truncate-lines (not current-val))
+    (setq truncate-lines (not current-val))
     (message "Truncate long lines ~a" 
              (if (not current-val) "enabled" "disabled"))))
 
 (keymap-global-set "C-x x t" toggle-truncate-lines)
 
-
+;; TODO Support this
 (defvar-local lerp-scroll #f
   "Non-false means lerp when scrolling.")
 
 (define (toggle-lerp-scroll)
   "Toggle lerping of scroll for the current buffer."
   (let ((current-val (buffer-local-value 'lerp-scroll (current-buffer))))
-    (setq 'lerp-scroll (not current-val))
+    (setq lerp-scroll (not current-val))
     (message "Lerp scroll ~a" 
              (if (not current-val) "enabled" "disabled"))))
 
@@ -445,10 +583,8 @@ When truncating is off, long lines are folded."
 (define-derived-mode text-mode #f "Text"
   "Major mode for editing text."
   (use-local-map text-mode-map)
-  (setq-local 'fill-column 80)
+  (setq-local fill-column 80)
   (message "Text mode enabled"))
-
-
 
 
 (define (test-faces interval-length)

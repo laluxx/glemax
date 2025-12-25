@@ -185,7 +185,7 @@
 (define-derived-mode c-mode prog-mode "C"
   "Major mode for editing C code."
   (use-local-map c-mode-map)
-  (setq-local 'tab-width 4)
+  (setq-local tab-width 4)
   ;; Initialize tree-sitter if available
   (c-mode-setup-treesitter))
 

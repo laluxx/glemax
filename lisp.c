@@ -15,7 +15,7 @@
 #include "treesit.h"
 #include "wm.h"
 #include "minibuf.h"
-
+#include "frame.h"
 
 // Error handler that captures error message with full details
 static SCM error_handler(void *data, SCM key, SCM args) {
@@ -228,15 +228,13 @@ static size_t find_sexp_start(Buffer *buf, size_t from_pos) {
 }
 
 void eval_last_sexp() {
-    Buffer *buf = wm.selected->buffer;
-    
-    size_t point = buf->pt;
+    size_t point = current_buffer->pt;
     if (point == 0) {
         message("Beginning of buffer");
         return;
     }
     
-    size_t start = find_sexp_start(buf, point);
+    size_t start = find_sexp_start(current_buffer, point);
     
     if (start >= point) {
         message("No expression before point");
@@ -251,7 +249,7 @@ void eval_last_sexp() {
     }
     
     for (size_t i = 0; i < len; i++) {
-        expr[i] = (char)rope_char_at(buf->rope, start + i);
+        expr[i] = (char)rope_char_at(current_buffer->rope, start + i);
     }
     expr[len] = '\0';
     
@@ -263,8 +261,6 @@ void eval_last_sexp() {
 }
 
 void eval_region() {
-    Buffer *buf = wm.selected->buffer;
-    
     size_t start, end;
     region_bounds(&start, &end);
     
@@ -281,7 +277,7 @@ void eval_region() {
     }
     
     for (size_t i = 0; i < len; i++) {
-        code[i] = (char)rope_char_at(buf->rope, start + i);
+        code[i] = (char)rope_char_at(current_buffer->rope, start + i);
     }
     code[len] = '\0';
     
@@ -293,9 +289,7 @@ void eval_region() {
 }
 
 void eval_buffer() {
-    Buffer *buf = wm.selected->buffer;
-    
-    size_t len = rope_char_length(buf->rope);
+    size_t len = rope_char_length(current_buffer->rope);
     if (len == 0) {
         message("Empty buffer");
         return;
@@ -308,7 +302,7 @@ void eval_buffer() {
     }
     
     for (size_t i = 0; i < len; i++) {
-        code[i] = (char)rope_char_at(buf->rope, i);
+        code[i] = (char)rope_char_at(current_buffer->rope, i);
     }
     code[len] = '\0';
     
@@ -342,15 +336,122 @@ bool is_scm_proc(SCM proc, const char *name) {
 
 
 
+inline int clip_to_bounds (int lower, int num, int upper) {
+    return max (lower, min (num, upper));
+}
+
+
+
+
+
+
 /// SCHEME BINDINGS
 
 
 
 // NOT NEEDED
-static SCM scm_insert(SCM codepoint) {
-    insert(scm_to_uint32(codepoint));
+
+static SCM scm_char_or_string_p(SCM object) {
+    if (scm_is_string(object)) {
+        return SCM_BOOL_T;
+    }
+    
+    if (scm_is_integer(object)) {
+        // Check if it's a valid character codepoint (0 to 0x10FFFF)
+        // but exclude surrogate pairs (0xD800 to 0xDFFF)
+        if (scm_is_unsigned_integer(object, 0, 0x10FFFF)) {
+            uint32_t cp = scm_to_uint32(object);
+            if (cp >= 0xD800 && cp <= 0xDFFF) {
+                return SCM_BOOL_F;  // Surrogate pairs are not valid characters
+            }
+            return SCM_BOOL_T;
+        }
+    }
+    
+    return SCM_BOOL_F;
+}
+
+static SCM scm_insert(SCM rest) {
+    // Iterate through all arguments
+    while (!scm_is_null(rest)) {
+        SCM arg = scm_car(rest);
+        
+        if (scm_is_integer(arg)) {
+            // Single character (codepoint) - convert to string
+            uint32_t codepoint = scm_to_uint32(arg);
+            
+            // Validate codepoint range
+            if (codepoint >= 0x110000 || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+                scm_wrong_type_arg("insert", 0, arg);
+            }
+            
+            char utf8[5] = {0};
+            size_t len = utf8_encode(codepoint, utf8);
+            
+            if (len > 0) {
+                utf8[len] = '\0';
+                insert(utf8);
+            }
+        } else if (scm_is_string(arg)) {
+            char *text = scm_to_utf8_string(arg);
+            insert(text);
+            free(text);
+        } else {
+            scm_wrong_type_arg("insert", 0, arg);
+        }
+        
+        rest = scm_cdr(rest);
+    }
+    
     return SCM_UNSPECIFIED;
 }
+
+/* static SCM scm_insert(SCM text_or_char) { */
+/*     if (scm_is_integer(text_or_char)) { */
+/*         // Single character (codepoint) - convert to string */
+/*         uint32_t codepoint = scm_to_uint32(text_or_char); */
+/*         char utf8[5] = {0}; */
+/*         size_t len = 0; */
+        
+/*         if (codepoint < 0x80) { */
+/*             utf8[0] = (char)codepoint; */
+/*             len = 1; */
+/*         } else if (codepoint < 0x800) { */
+/*             utf8[0] = 0xC0 | (codepoint >> 6); */
+/*             utf8[1] = 0x80 | (codepoint & 0x3F); */
+/*             len = 2; */
+/*         } else if (codepoint < 0x10000) { */
+/*             utf8[0] = 0xE0 | (codepoint >> 12); */
+/*             utf8[1] = 0x80 | ((codepoint >> 6) & 0x3F); */
+/*             utf8[2] = 0x80 | (codepoint & 0x3F); */
+/*             len = 3; */
+/*         } else if (codepoint < 0x110000) { */
+/*             utf8[0] = 0xF0 | (codepoint >> 18); */
+/*             utf8[1] = 0x80 | ((codepoint >> 12) & 0x3F); */
+/*             utf8[2] = 0x80 | ((codepoint >> 6) & 0x3F); */
+/*             utf8[3] = 0x80 | (codepoint & 0x3F); */
+/*             len = 4; */
+/*         } */
+        
+/*         if (len > 0) { */
+/*             utf8[len] = '\0'; */
+/*             insert(utf8); */
+/*         } */
+/*     } else if (scm_is_string(text_or_char)) { */
+/*         char *text = scm_to_utf8_string(text_or_char); */
+/*         insert(text); */
+/*         free(text); */
+/*     } else { */
+/*         scm_wrong_type_arg("insert", 1, text_or_char); */
+/*     } */
+    
+/*     return SCM_UNSPECIFIED; */
+/* } */
+
+/* static SCM scm_insert(SCM codepoint) { */
+/*     insert(scm_to_uint32(codepoint)); */
+/*     return SCM_UNSPECIFIED; */
+/* } */
 
 static SCM scm_delete_blank_lines(void) {
     delete_blank_lines();
@@ -554,24 +655,20 @@ DEFINE_SCM_COMMAND(scm_end_of_defun,                   end_of_defun,            
 
 // Query functions
 static SCM scm_point(void) {
-    Buffer *buf = wm.selected->buffer;
-    return scm_from_size_t(buf->pt);
+    return scm_from_size_t(current_buffer->pt);
 }
 
 static SCM scm_mark(void) {
-    Buffer *buf = wm.selected->buffer;
-    return scm_from_size_t(buf->region.mark);
+    return scm_from_size_t(current_buffer->region.mark);
 }
 
 static SCM scm_mark_active_p(void) {
-    Buffer *buf = wm.selected->buffer;
-    return scm_from_bool(buf->region.active);
+    return scm_from_bool(current_buffer->region.active);
 }
 
-static SCM scm_buffer_size(void) {
-    Buffer *buf = wm.selected->buffer;
-    return scm_from_size_t(rope_char_length(buf->rope));
-}
+/* static SCM scm_buffer_size(void) { */
+/*     return scm_from_size_t(rope_char_length(current_buffer->rope)); */
+/* } */
 
 static SCM scm_current_column(void) {
     return scm_from_size_t(current_column());
@@ -675,9 +772,8 @@ static SCM scm_buffer_substring(SCM start, SCM end) {
     
     size_t start_pos = scm_to_size_t(start);
     size_t end_pos = scm_to_size_t(end);
-    Buffer *buf = wm.selected->buffer;
     
-    if (start_pos > end_pos || end_pos > rope_char_length(buf->rope)) {
+    if (start_pos > end_pos || end_pos > rope_char_length(current_buffer->rope)) {
         scm_out_of_range("buffer-substring", end);
     }
     
@@ -685,7 +781,7 @@ static SCM scm_buffer_substring(SCM start, SCM end) {
     char *str = malloc(len + 1);
     
     for (size_t i = 0; i < len; i++) {
-        str[i] = (char)rope_char_at(buf->rope, start_pos + i);
+        str[i] = (char)rope_char_at(current_buffer->rope, start_pos + i);
     }
     str[len] = '\0';
     
@@ -695,37 +791,35 @@ static SCM scm_buffer_substring(SCM start, SCM end) {
 }
 
 static SCM scm_char_after(SCM pos) {
-    Buffer *buf = wm.selected->buffer;
     size_t p;
     
     if (scm_is_integer(pos)) {
         p = scm_to_size_t(pos);
     } else {
-        p = buf->pt;
+        p = current_buffer->pt;
     }
     
-    if (p >= rope_char_length(buf->rope)) {
+    if (p >= rope_char_length(current_buffer->rope)) {
         return SCM_BOOL_F;
     }
     
-    return scm_from_uint32(rope_char_at(buf->rope, p));
+    return scm_from_uint32(rope_char_at(current_buffer->rope, p));
 }
 
 static SCM scm_char_before(SCM pos) {
-    Buffer *buf = wm.selected->buffer;
     size_t p;
     
     if (scm_is_integer(pos)) {
         p = scm_to_size_t(pos);
     } else {
-        p = buf->pt;
+        p = current_buffer->pt;
     }
     
     if (p == 0) {
         return SCM_BOOL_F;
     }
     
-    return scm_from_uint32(rope_char_at(buf->rope, p - 1));
+    return scm_from_uint32(rope_char_at(current_buffer->rope, p - 1));
 }
 
 
@@ -941,6 +1035,24 @@ static SCM buffer_p(SCM obj) {
     return scm_from_bool(SCM_IS_A_P(obj, buffer_type));
 }
 
+static SCM scm_buffer_size(SCM buffer_obj) {
+    Buffer *buf;
+    
+    if (SCM_UNBNDP(buffer_obj)) {
+        buf = current_buffer;
+    } else if (SCM_IS_A_P(buffer_obj, buffer_type)) {
+        buf = scm_to_buffer(buffer_obj);
+    } else {
+        scm_wrong_type_arg("buffer-size", 1, buffer_obj);
+    }
+    
+    if (!buf) {
+        return scm_from_size_t(0);
+    }
+    
+    return scm_from_size_t(rope_char_length(buf->rope));
+}
+
 static SCM scm_switch_to_buffer(SCM buf_or_name) {
     Buffer *buf = NULL;
     
@@ -990,7 +1102,7 @@ static SCM scm_kill_buffer(SCM name) {
     }
     
     // Don't kill minibuffer
-    if (buf == wm.minibuffer_window->buffer) {
+    if (buf == selected_frame->wm.minibuffer_window->buffer) {
         message("Cannot kill minibuffer");
         return SCM_BOOL_F;
     }
@@ -999,7 +1111,7 @@ static SCM scm_kill_buffer(SCM name) {
     int non_minibuf_count = 0;
     Buffer *temp = all_buffers;
     do {
-        if (temp != wm.minibuffer_window->buffer) {
+        if (temp != selected_frame->wm.minibuffer_window->buffer) {
             non_minibuf_count++;
         }
         temp = temp->next;
@@ -1144,6 +1256,8 @@ static SCM scm_append_to_buffer(SCM buffer_or_name, SCM text, SCM prepend_newlin
 }
 
 
+
+
 /// Buffer local variables
 
 static SCM scm_set_default(SCM symbol, SCM value) {
@@ -1184,7 +1298,10 @@ static SCM scm_set(SCM symbol, SCM newval) {
     return buffer_set(symbol, newval, current_buffer);
 }
 
-static SCM scm_setq(SCM symbol, SCM value) {
+
+
+// The actual implementation (now takes an unevaluated symbol)
+static SCM scm_setq_impl(SCM symbol, SCM value) {
     if (!scm_is_symbol(symbol)) {
         scm_wrong_type_arg("setq", 1, symbol);
     }
@@ -1195,6 +1312,12 @@ static SCM scm_setq(SCM symbol, SCM value) {
         char *c_str = scm_to_locale_string(symbol_str);
         scm_c_module_define(scm_current_module(), c_str, value);
         free(c_str);
+        
+        // Check if we're setting frame-resize-pixelwise
+        if (strcmp(c_str, "frame-resize-pixelwise") == 0 && selected_frame) {
+            update_frame_resize_mode(selected_frame);
+        }
+        
         return value;
     }
     
@@ -1205,7 +1328,6 @@ static SCM scm_setq(SCM symbol, SCM value) {
     
     // Check if variable is marked as automatically buffer-local
     if (is_automatically_buffer_local(symbol)) {
-        // Make it local first, then set it
         if (!local_variable_p(symbol, current_buffer)) {
             SCM def_val = default_value(symbol);
             buffer_set(symbol, def_val, current_buffer);
@@ -1217,9 +1339,101 @@ static SCM scm_setq(SCM symbol, SCM value) {
     SCM symbol_str = scm_symbol_to_string(symbol);
     char *c_str = scm_to_locale_string(symbol_str);
     scm_c_module_define(scm_current_module(), c_str, value);
+    
+    // Check if we're setting frame-resize-pixelwise
+    if (strcmp(c_str, "frame-resize-pixelwise") == 0 && selected_frame) {
+        update_frame_resize_mode(selected_frame);
+    }
+    
     free(c_str);
     return value;
 }
+
+/* static SCM scm_setq_impl(SCM symbol, SCM value) { */
+/*     if (!scm_is_symbol(symbol)) { */
+/*         scm_wrong_type_arg("setq", 1, symbol); */
+/*     } */
+    
+/*     if (!current_buffer) { */
+/*         // No current buffer, set globally */
+/*         SCM symbol_str = scm_symbol_to_string(symbol); */
+/*         char *c_str = scm_to_locale_string(symbol_str); */
+/*         scm_c_module_define(scm_current_module(), c_str, value); */
+/*         free(c_str); */
+/*         return value; */
+/*     } */
+    
+/*     // Check if variable is already buffer-local in current buffer */
+/*     if (local_variable_p(symbol, current_buffer)) { */
+/*         return buffer_set(symbol, value, current_buffer); */
+/*     } */
+    
+/*     // Check if variable is marked as automatically buffer-local */
+/*     if (is_automatically_buffer_local(symbol)) { */
+/*         if (!local_variable_p(symbol, current_buffer)) { */
+/*             SCM def_val = default_value(symbol); */
+/*             buffer_set(symbol, def_val, current_buffer); */
+/*         } */
+/*         return buffer_set(symbol, value, current_buffer); */
+/*     } */
+    
+/*     // Not buffer-local, set globally */
+/*     SCM symbol_str = scm_symbol_to_string(symbol); */
+/*     char *c_str = scm_to_locale_string(symbol_str); */
+/*     scm_c_module_define(scm_current_module(), c_str, value); */
+/*     free(c_str); */
+/*     return value; */
+/* } */
+
+// Register as a macro/syntax, not a regular procedure
+void init_setq() {
+    // Define the macro in Scheme that calls our C implementation
+    scm_c_eval_string(
+        "(define-syntax setq "
+        "  (syntax-rules () "
+        "    ((setq var val) "
+        "     (setq-impl 'var val))))"
+    );
+    
+    // Register the implementation function
+}
+
+/* static SCM scm_setq(SCM symbol, SCM value) { */
+/*     if (!scm_is_symbol(symbol)) { */
+/*         scm_wrong_type_arg("setq", 1, symbol); */
+/*     } */
+    
+/*     if (!current_buffer) { */
+/*         // No current buffer, set globally */
+/*         SCM symbol_str = scm_symbol_to_string(symbol); */
+/*         char *c_str = scm_to_locale_string(symbol_str); */
+/*         scm_c_module_define(scm_current_module(), c_str, value); */
+/*         free(c_str); */
+/*         return value; */
+/*     } */
+    
+/*     // Check if variable is already buffer-local in current buffer */
+/*     if (local_variable_p(symbol, current_buffer)) { */
+/*         return buffer_set(symbol, value, current_buffer); */
+/*     } */
+    
+/*     // Check if variable is marked as automatically buffer-local */
+/*     if (is_automatically_buffer_local(symbol)) { */
+/*         // Make it local first, then set it */
+/*         if (!local_variable_p(symbol, current_buffer)) { */
+/*             SCM def_val = default_value(symbol); */
+/*             buffer_set(symbol, def_val, current_buffer); */
+/*         } */
+/*         return buffer_set(symbol, value, current_buffer); */
+/*     } */
+    
+/*     // Not buffer-local, set globally */
+/*     SCM symbol_str = scm_symbol_to_string(symbol); */
+/*     char *c_str = scm_to_locale_string(symbol_str); */
+/*     scm_c_module_define(scm_current_module(), c_str, value); */
+/*     free(c_str); */
+/*     return value; */
+/* } */
 
 static SCM scm_local_variable_p(SCM symbol, SCM buffer_obj) {
     if (!scm_is_symbol(symbol)) {
@@ -1333,7 +1547,7 @@ static SCM window_object_cache;  // Hash table: Window* -> SCM
 // That's needed because every call to make_window_object()
 // creates a new Scheme foreign object, even if it wraps the same underlying C Window* pointer.
 
-static SCM get_or_make_window_object(Window *win) {
+SCM get_or_make_window_object(Window *win) {
     if (!win) return SCM_BOOL_F;
     
     // Use pointer as key (convert to integer)
@@ -1360,18 +1574,18 @@ static SCM window_p(SCM obj) {
 }
 
 static SCM scm_selected_window(void) {
-    return get_or_make_window_object(wm.selected);
+    return get_or_make_window_object(selected_frame->wm.selected);
 }
 
 static SCM scm_minibuffer_window(void) {
-    return get_or_make_window_object(wm.minibuffer_window);
+    return get_or_make_window_object(selected_frame->wm.minibuffer_window);
 }
 
 static SCM scm_window_buffer(SCM window_obj) {
     Window *win;
     
     if (SCM_UNBNDP(window_obj)) {
-        win = wm.selected;
+        win = selected_frame->wm.selected;
     } else {
         if (!scm_is_true(window_p(window_obj))) {
             scm_wrong_type_arg("window-buffer", 1, window_obj);
@@ -1387,7 +1601,7 @@ static SCM scm_window_point(SCM window_obj) {
     
     if (SCM_UNBNDP(window_obj)) {
         // No argument provided - use selected window
-        win = wm.selected;
+        win = selected_frame->wm.selected;
     } else {
         if (!scm_is_true(window_p(window_obj))) {
             scm_wrong_type_arg("window-point", 1, window_obj);
@@ -1410,7 +1624,7 @@ static SCM scm_set_window_point(SCM window_obj, SCM pos_scm) {
     win->point = scm_to_size_t(pos_scm);
     
     // If this is the selected window, update buffer's point too
-    if (win == wm.selected && win->buffer) {
+    if (win == selected_frame->wm.selected && win->buffer) {
         win->buffer->pt = win->point;
     }
     
@@ -1420,7 +1634,7 @@ static SCM scm_set_window_point(SCM window_obj, SCM pos_scm) {
 static SCM scm_window_list(void) {
     Window *leaves[256];
     int count = 0;
-    collect_leaf_windows(wm.root, leaves, &count);
+    collect_leaf_windows(selected_frame->wm.root, leaves, &count);
     
     SCM result = SCM_EOL;
     for (int i = count - 1; i >= 0; i--) {
@@ -1428,21 +1642,19 @@ static SCM scm_window_list(void) {
     }
     
     // Add minibuffer if active
-    if (wm.minibuffer_active) {
+    if (selected_frame->wm.minibuffer_active) {
         result = scm_append(scm_list_2(result, 
-                           scm_list_1(get_or_make_window_object(wm.minibuffer_window))));
+                           scm_list_1(get_or_make_window_object(selected_frame->wm.minibuffer_window))));
     }
     
     return result;
 }
 
-///
-
 static SCM scm_next_window(SCM window_obj, SCM minibuf_scm) {
     Window *win;
     
     if (SCM_UNBNDP(window_obj)) {
-        win = wm.selected;
+        win = selected_frame->wm.selected;
     } else {
         if (!scm_is_true(window_p(window_obj))) {
             scm_wrong_type_arg("next-window", 1, window_obj);
@@ -1460,7 +1672,7 @@ static SCM scm_previous_window(SCM window_obj, SCM minibuf_scm) {
     Window *win;
     
     if (SCM_UNBNDP(window_obj)) {
-        win = wm.selected;
+        win = selected_frame->wm.selected;
     } else {
         if (!scm_is_true(window_p(window_obj))) {
             scm_wrong_type_arg("previous-window", 1, window_obj);
@@ -1479,17 +1691,17 @@ static SCM scm_select_window(SCM window_obj) {
     
     Window *win = scm_to_window(window_obj);
     
-    if (win == wm.selected) {
+    if (win == selected_frame->wm.selected) {
         return SCM_UNSPECIFIED;
     }
     
     // Save current window's point
-    wm.selected->point = current_buffer->pt;
+    selected_frame->wm.selected->point = current_buffer->pt;
     
     // Switch selection
-    wm.selected->is_selected = false;
+    selected_frame->wm.selected->is_selected = false;
     win->is_selected = true;
-    wm.selected = win;
+    selected_frame->wm.selected = win;
     
     // Update buffer and point
     current_buffer = win->buffer;
@@ -1502,7 +1714,7 @@ static SCM scm_window_pixel_width(SCM window_obj) {
     Window *win;
     
     if (SCM_UNBNDP(window_obj)) {
-        win = wm.selected;
+        win = selected_frame->wm.selected;
     } else {
         if (!scm_is_true(window_p(window_obj))) {
             scm_wrong_type_arg("window-width", 1, window_obj);
@@ -1517,7 +1729,7 @@ static SCM scm_window_pixel_height(SCM window_obj) {
     Window *win;
     
     if (SCM_UNBNDP(window_obj)) {
-        win = wm.selected;
+        win = selected_frame->wm.selected;
     } else {
         if (!scm_is_true(window_p(window_obj))) {
             scm_wrong_type_arg("window-height", 1, window_obj);
@@ -1528,11 +1740,12 @@ static SCM scm_window_pixel_height(SCM window_obj) {
     return scm_from_double(win->height);
 }
 
+
 static SCM scm_minibuffer_window_p(SCM window_obj) {
     Window *win;
     
     if (SCM_UNBNDP(window_obj)) {
-        win = wm.selected;
+        win = selected_frame->wm.selected;
     } else {
         if (!scm_is_true(window_p(window_obj))) {
             scm_wrong_type_arg("window-minibuffer-p", 1, window_obj);
@@ -1566,12 +1779,128 @@ static SCM scm_set_window_buffer(SCM window_obj, SCM buffer_obj) {
     win->buffer = buf;
     
     // If this is the selected window, update current_buffer
-    if (win == wm.selected) {
+    if (win == selected_frame->wm.selected) {
         current_buffer = buf;
         current_buffer->pt = win->point;
     }
     
     return SCM_UNSPECIFIED;
+}
+
+
+static SCM scm_window_try_horizontal_split(SCM window_obj) {
+    Window *win;
+    
+    if (SCM_UNBNDP(window_obj)) {
+        win = selected_frame->wm.selected;
+    } else {
+        if (!scm_is_true(window_p(window_obj))) {
+            scm_wrong_type_arg("window-try-horizontal-split", 1, window_obj);
+        }
+        win = scm_to_window(window_obj);
+    }
+    
+    // Temporarily set selected window if different
+    Window *original_selected = selected_frame->wm.selected;
+    selected_frame->wm.selected = win;
+    
+    bool success = window_try_horizontal_split(win);
+    
+    Window *new_window = NULL;
+    if (success) {
+        new_window = selected_frame->wm.selected;  // The newly selected window
+    }
+    
+    // Restore original selection
+    selected_frame->wm.selected = original_selected;
+    
+    if (new_window) {
+        return get_or_make_window_object(new_window);
+    } else {
+        return SCM_BOOL_F;
+    }
+}
+
+static SCM scm_window_try_vertical_split(SCM window_obj) {
+    Window *win;
+    
+    if (SCM_UNBNDP(window_obj)) {
+        win = selected_frame->wm.selected;
+    } else {
+        if (!scm_is_true(window_p(window_obj))) {
+            scm_wrong_type_arg("window-try-vertical-split", 1, window_obj);
+        }
+        win = scm_to_window(window_obj);
+    }
+    
+    // Temporarily set selected window if different
+    Window *original_selected = selected_frame->wm.selected;
+    selected_frame->wm.selected = win;
+    
+    bool success = window_try_vertical_split(win);
+    
+    Window *new_window = NULL;
+    if (success) {
+        new_window = selected_frame->wm.selected;  // The newly selected window
+    }
+    
+    // Restore original selection
+    selected_frame->wm.selected = original_selected;
+    
+    if (new_window) {
+        return get_or_make_window_object(new_window);
+    } else {
+        return SCM_BOOL_F;
+    }
+}
+
+static SCM scm_split_window_sensibly(SCM codepoint) {
+    Window *new_window = split_window_sensibly();
+    
+    if (new_window) {
+        return get_or_make_window_object(new_window);
+    } else {
+        return SCM_BOOL_F;  // Return #f if split failed
+    }
+}
+
+static SCM scm_display_buffer(SCM buffer_or_name, SCM action, SCM frame) {
+    Buffer *buffer = NULL;
+    
+    // Handle BUFFER-OR-NAME
+    if (SCM_IS_A_P(buffer_or_name, buffer_type)) {
+        buffer = scm_to_buffer(buffer_or_name);
+    } else if (scm_is_string(buffer_or_name)) {
+        char *buffer_name = scm_to_locale_string(buffer_or_name);
+        buffer = get_buffer(buffer_name);
+        free(buffer_name);
+        
+        if (!buffer) {
+            scm_misc_error("display-buffer", "No buffer named ~S", 
+                          scm_list_1(buffer_or_name));
+        }
+    } else {
+        scm_wrong_type_arg("display-buffer", 1, buffer_or_name);
+    }
+    
+    Window *window = display_buffer(buffer);
+    
+    if (window) {
+        return get_or_make_window_object(window);
+    }
+    
+    return SCM_BOOL_F;
+}
+
+static SCM scm_goto_char(SCM position) {
+    if (!scm_is_integer(position)) {
+        scm_wrong_type_arg("goto-char", 1, position);
+    }
+    
+    size_t pos = scm_to_size_t(position);
+    size_t result = goto_char(pos);
+    
+    return scm_from_size_t(result);
 }
 
 
@@ -1856,6 +2185,7 @@ static void load_directory(const char *dir_path) {
         // Skip . and .. and non-.scm files
         if (strcmp(entry->d_name, ".") == 0 || 
             strcmp(entry->d_name, "..") == 0 ||
+            strcmp(entry->d_name, "subr.scm") == 0 ||  // Skip subr.scm
             !str_ends_with(entry->d_name, ".scm")) {
             continue;
         }
@@ -1945,6 +2275,35 @@ static SCM scm_load_directory(SCM dirname) {
 #include "theme.h"
 
 
+static SCM scm_set_buffer(SCM buffer_or_name) {
+    Buffer *buf = NULL;
+    
+    if (SCM_IS_A_P(buffer_or_name, buffer_type)) {
+        buf = scm_to_buffer(buffer_or_name);
+    } else if (scm_is_string(buffer_or_name)) {
+        char *name = scm_to_locale_string(buffer_or_name);
+        buf = get_buffer(name);
+        free(name);
+        
+        if (!buf) {
+            scm_misc_error("set-buffer", "No buffer named ~S", 
+                          scm_list_1(buffer_or_name));
+        }
+    } else {
+        scm_wrong_type_arg("set-buffer", 1, buffer_or_name);
+    }
+    
+    if (!buf) {
+        return SCM_BOOL_F;
+    }
+    
+    // Just change current_buffer (don't update windows)
+    current_buffer = buf;
+    
+    return get_or_make_buffer_object(buf);
+}
+
+
 void lisp_init(void) {
 
     setup_load_paths();
@@ -1980,11 +2339,21 @@ void lisp_init(void) {
     init_face_bindings();
     init_textprop_bindings();
     init_theme_bindings();
+    init_frame_bindings();
+
 
     init_buffer_locals();
     
 
     init_treesit_bindings();
+
+    scm_c_define_gsubr("set-buffer",                    1, 0, 0, scm_set_buffer);
+    scm_c_define_gsubr("goto-char",                     1, 0, 0, scm_goto_char);
+    
+    scm_c_define_gsubr("window--try-horizontal-split",  0, 1, 0, scm_window_try_horizontal_split);
+    scm_c_define_gsubr("window--try-vertical-split",    0, 1, 0, scm_window_try_vertical_split);
+    scm_c_define_gsubr("split-window-sensibly",         0, 0, 0, scm_split_window_sensibly);
+    scm_c_define_gsubr("display-buffer",                1, 2, 0, scm_display_buffer);
 
 
     scm_c_define_gsubr("show-cursor",                   0, 0, 0, scm_show_cursor);
@@ -2004,7 +2373,9 @@ void lisp_init(void) {
     scm_c_define_gsubr("default-value",                 1, 0, 0, scm_default_value);
     scm_c_define_gsubr("buffer-local-value",            2, 0, 0, scm_buffer_local_value);
     scm_c_define_gsubr("set",                           2, 0, 0, scm_set);
-    scm_c_define_gsubr("setq",                          2, 0, 0, scm_setq);
+    /* scm_c_define_gsubr("setq",                          2, 0, 0, scm_setq); */
+    scm_c_define_gsubr("setq-impl",                     2, 0, 0, scm_setq_impl);
+
     scm_c_define_gsubr("local-variable?",               1, 1, 0, scm_local_variable_p);
     scm_c_define_gsubr("local-variable-if-set?",        1, 1, 0, scm_local_variable_if_set_p);
     scm_c_define_gsubr("kill-local-variable",           1, 0, 0, scm_kill_local_variable);
@@ -2022,7 +2393,6 @@ void lisp_init(void) {
     mark_automatically_buffer_local(scm_from_utf8_symbol("truncate-lines"));
     mark_automatically_buffer_local(scm_from_utf8_symbol("fill-column"));
     mark_automatically_buffer_local(scm_from_utf8_symbol("tab-width"));
-
 
 
     scm_c_define_gsubr("load",                           1, 0, 0, scm_load);
@@ -2052,8 +2422,9 @@ void lisp_init(void) {
     scm_c_define_gsubr("get-buffer-create",              1, 0, 0, scm_get_buffer_create);
     scm_c_define_gsubr("current-buffer",                 0, 0, 0, scm_current_buffer);
     scm_c_define_gsubr("next-buffer",                    0, 1, 0, scm_next_buffer);
-    scm_c_define_gsubr("previous-buffer",                0, 1, 0, scm_previous_buffer);        
+    scm_c_define_gsubr("previous-buffer",                0, 1, 0, scm_previous_buffer);
     scm_c_define_gsubr("append-to-buffer",               2, 1, 0, scm_append_to_buffer);
+
 
     // Window
     scm_c_define_gsubr("window?",                        1, 0, 0, window_p);
@@ -2069,6 +2440,10 @@ void lisp_init(void) {
     scm_c_define_gsubr("select-window",                  1, 0, 0, scm_select_window);
     scm_c_define_gsubr("window-pixel-width",             0, 1, 0, scm_window_pixel_width);
     scm_c_define_gsubr("window-pixel-height",            0, 1, 0, scm_window_pixel_height);
+    scm_c_define_gsubr("window-min-pixel-width",         0, 1, 0, scm_window_min_pixel_width);
+    scm_c_define_gsubr("window-min-pixel-height",        0, 1, 0, scm_window_min_pixel_height);
+
+
     scm_c_define_gsubr("minibuffer-window?",             0, 1, 0, scm_minibuffer_window_p);
     scm_c_define_gsubr("set-window-buffer",              2, 0, 0, scm_set_window_buffer);    
 
@@ -2095,7 +2470,8 @@ void lisp_init(void) {
     scm_c_define_gsubr("beginning-of-buffer",            0, 1, 0, scm_beginning_of_buffer);
     
     // Editing
-    scm_c_define_gsubr("insert",                         1, 0, 0, scm_insert);
+    scm_c_define_gsubr("char-or-string?",                1, 0, 0, scm_char_or_string_p);
+    scm_c_define_gsubr("insert",                         0, 0, 1, scm_insert);
     scm_c_define_gsubr("delete-backward-char",           0, 1, 0, scm_delete_backward_char);
     scm_c_define_gsubr("delete-char",                    0, 1, 0, scm_delete_char);
     scm_c_define_gsubr("delete-blank-lines",             0, 0, 0, scm_delete_blank_lines);
@@ -2112,8 +2488,6 @@ void lisp_init(void) {
     REGISTER_COMMAND("open-line",          scm_open_line);
     REGISTER_COMMAND("split-line",         scm_split_line);
 
-    /* scm_c_define_gsubr("open-line",                      0, 1, 0, scm_open_line); */
-    /* scm_c_define_gsubr("split-line",                     0, 1, 0, scm_split_line); */
     scm_c_define_gsubr("capitalize-word",                0, 1, 0, scm_capitalize_word);
     scm_c_define_gsubr("downcase-word",                  0, 1, 0, scm_downcase_word);
     scm_c_define_gsubr("upcase-word",                    0, 1, 0, scm_upcase_word);
@@ -2173,7 +2547,8 @@ void lisp_init(void) {
     scm_c_define_gsubr("point",                          0, 0, 0, scm_point);
     scm_c_define_gsubr("mark",                           0, 0, 0, scm_mark);
     scm_c_define_gsubr("mark-active?",                   0, 0, 0, scm_mark_active_p);
-    scm_c_define_gsubr("buffer-size",                    0, 0, 0, scm_buffer_size);
+    /* scm_c_define_gsubr("buffer-size",                    0, 0, 0, scm_buffer_size); */
+    scm_c_define_gsubr("buffer-size",                    0, 1, 0, scm_buffer_size);
     scm_c_define_gsubr("current-column",                 0, 0, 0, scm_current_column);
     scm_c_define_gsubr("line-beginning-position",        0, 1, 0, scm_line_beginning_position);
     scm_c_define_gsubr("line-end-position",              0, 1, 0, scm_line_end_position);
@@ -2186,6 +2561,20 @@ void lisp_init(void) {
     // Message
     scm_c_define_gsubr("message",                        1, 0, 1, scm_message);    
 
+
+    // NOTE: Load core macros FIRST - this must happen before any other .scm files
+    scm_c_eval_string(
+        "(catch #t"
+        "  (lambda () (primitive-load \"./lisp/subr.scm\"))"
+        "  (lambda (key . args)"
+        "    (message \"Error loading subr.scm: ~s~@?\" key"
+        "      (if (and (pair? args) (pair? (cdr args)))"
+        "          (cadr args)"
+        "          \"\") "
+        "      (if (and (pair? args) (pair? (cdr args)) (pair? (cddr args)))"
+        "          (caddr args)"
+        "          '()))))"
+    );
 
 
     // NOTE Preload everything BEFORE loading user init file

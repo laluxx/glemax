@@ -1,16 +1,13 @@
 #include "wm.h"
 #include "buffer.h"
+#include "frame.h"
 #include <stdlib.h>
 #include <string.h>
-
-WindowManager wm = {0};
+#include "lisp.h"
 
 #define DEFAULT_SPLIT_RATIO 0.5f
-#define MIN_WINDOW_SIZE 100.0f
 
 static bool debug_them_windows = false;
-size_t fringe_width = 8;
-
 
 Window* window_create(Window *parent, Buffer *buffer) {
     Window *win = (Window*)calloc(1, sizeof(Window));
@@ -46,44 +43,43 @@ bool is_minibuffer_window(Window *win) {
     return win && win->is_minibuffer;
 }
 
-void wm_init(Buffer *initial_buffer, Buffer *minibuffer,float x, float y, float width, float height) {
-    wm.minibuffer_window = window_create(NULL, minibuffer);
-    wm.minibuffer_window->is_minibuffer = true;
-    wm.minibuffer_window->x = x;
-    wm.minibuffer_window->y = y;
-    wm.minibuffer_window->scrollx = x;
-    wm.minibuffer_window->scrolly = y;
-
-    wm.minibuffer_window->width = width;
-    wm.minibuffer_window->height = 0;
+void wm_init(WindowManager *wm, Buffer *initial_buffer, Buffer *minibuffer, float x, float y, float width, float height) {
+    wm->minibuffer_window = window_create(NULL, minibuffer);
+    wm->minibuffer_window->is_minibuffer = true;
+    wm->minibuffer_window->x = x;
+    wm->minibuffer_window->y = y;
+    wm->minibuffer_window->scrollx = x;
+    wm->minibuffer_window->scrolly = y;
+    wm->minibuffer_window->width = width;
+    wm->minibuffer_window->height = 0;
     
     // Create root window
-    wm.root = window_create(NULL, initial_buffer);
-    if (!wm.root) return;
+    wm->root = window_create(NULL, initial_buffer);
+    if (!wm->root) return;
     
-    wm.root->x = x;
-    wm.root->y = y;
-    wm.root->width = width;
-    wm.root->height = height;
-    wm.root->is_selected = true;
+    wm->root->x = x;
+    wm->root->y = y;
+    wm->root->width = width;
+    wm->root->height = height;
+    wm->root->is_selected = true;
     
-    wm.selected = wm.root;
-    wm.window_count = 1;
-    wm.minibuffer_active = false;
+    wm->selected = wm->root;
+    wm->window_count = 1;
+    wm->minibuffer_active = false;
 }
 
-void wm_cleanup() {
-    if (wm.root) {
-        window_destroy(wm.root);
-        wm.root = NULL;
+void wm_cleanup(WindowManager *wm) {
+    if (wm->root) {
+        window_destroy(wm->root);
+        wm->root = NULL;
     }
-    if (wm.minibuffer_window) {
-        buffer_destroy(wm.minibuffer_window->buffer);
-        free(wm.minibuffer_window);
-        wm.minibuffer_window = NULL;
+    if (wm->minibuffer_window) {
+        buffer_destroy(wm->minibuffer_window->buffer);
+        free(wm->minibuffer_window);
+        wm->minibuffer_window = NULL;
     }
-    wm.selected = NULL;
-    wm.window_count = 0;
+    wm->selected = NULL;
+    wm->window_count = 0;
 }
 
 // Collect all leaf windows in left-to-right, top-to-bottom order
@@ -100,25 +96,25 @@ void collect_leaf_windows(Window *win, Window **leaves, int *count) {
 }
 
 int count_windows() {
-    if (!wm.root) return 0;
+    if (!selected_frame->wm.root) return 0;
     
     Window *leaves[256];
     int count = 0;
-    collect_leaf_windows(wm.root, leaves, &count);
+    collect_leaf_windows(selected_frame->wm.root, leaves, &count);
     return count;
 }
 
 
 Window* next_window(Window *current) {
-    if (!current || !wm.root) return NULL;
+    if (!current || !selected_frame->wm.root) return NULL;
     
     Window *leaves[256];
     int count = 0;
-    collect_leaf_windows(wm.root, leaves, &count);
+    collect_leaf_windows(selected_frame->wm.root, leaves, &count);
     
     // If minibuffer is active, include it at the end
-    if (wm.minibuffer_active && wm.minibuffer_window) {
-        leaves[count++] = wm.minibuffer_window;
+    if (selected_frame->wm.minibuffer_active && selected_frame->wm.minibuffer_window) {
+        leaves[count++] = selected_frame->wm.minibuffer_window;
     }
     
     if (count <= 1) return current;
@@ -134,15 +130,15 @@ Window* next_window(Window *current) {
 }
 
 Window* previous_window(Window *current) {
-    if (!current || !wm.root) return NULL;
+    if (!current || !selected_frame->wm.root) return NULL;
     
     Window *leaves[256];
     int count = 0;
-    collect_leaf_windows(wm.root, leaves, &count);
+    collect_leaf_windows(selected_frame->wm.root, leaves, &count);
     
     // If minibuffer is active, include it at the end
-    if (wm.minibuffer_active && wm.minibuffer_window) {
-        leaves[count++] = wm.minibuffer_window;
+    if (selected_frame->wm.minibuffer_active && selected_frame->wm.minibuffer_window) {
+        leaves[count++] = selected_frame->wm.minibuffer_window;
     }
     
     if (count <= 1) return current;
@@ -158,10 +154,10 @@ Window* previous_window(Window *current) {
 }
 
 void other_window() {
-    wm.selected->point = current_buffer->pt;
+    selected_frame->wm.selected->point = current_buffer->pt;
     
-    Window *original = wm.selected;
-    Window *target = wm.selected;
+    Window *original = selected_frame->wm.selected;
+    Window *target = selected_frame->wm.selected;
     
     int arg = get_prefix_arg();
     int count = abs(arg);
@@ -181,10 +177,10 @@ void other_window() {
         return;
     }
     
-    if (target && target != wm.selected) {
-        wm.selected->is_selected = false;
+    if (target && target != selected_frame->wm.selected) {
+        selected_frame->wm.selected->is_selected = false;
         target->is_selected = true;
-        wm.selected = target;
+        selected_frame->wm.selected = target;
         
         // Update global buffer pointer and restore point
         current_buffer = target->buffer;
@@ -231,19 +227,15 @@ WindowConfiguration save_window_configuration() {
     config.root_index = 0;
     
     // Save root geometry
-    config.root_x = wm.root->x;
-    config.root_y = wm.root->y;
-    config.root_width = wm.root->width;
-    config.root_height = wm.root->height;
+    config.root_x = selected_frame->wm.root->x;
+    config.root_y = selected_frame->wm.root->y;
+    config.root_width = selected_frame->wm.root->width;
+    config.root_height = selected_frame->wm.root->height;
     
-    save_window_recursive(wm.root, config.windows, &config.count, 0);
+    save_window_recursive(selected_frame->wm.root, config.windows, &config.count, 0);
     
     return config;
 }
-
-
-
-
 
 Window* restore_window_recursive(WindowSnapshot *snapshots, int index, Window *parent) {
     if (index < 0) return NULL;
@@ -268,48 +260,43 @@ Window* restore_window_recursive(WindowSnapshot *snapshots, int index, Window *p
     return win;
 }
 
-
-
-
-
 void restore_window_configuration(WindowConfiguration *config) {
     if (!config->windows) return;
     
     // Destroy current window tree
-    if (wm.root) {
-        window_destroy(wm.root);
+    if (selected_frame->wm.root) {
+        window_destroy(selected_frame->wm.root);
     }
     
     // Restore from snapshot
-    wm.root = restore_window_recursive(config->windows, config->root_index, NULL);
+    selected_frame->wm.root = restore_window_recursive(config->windows, config->root_index, NULL);
     
     // Restore saved root geometry
-    wm.root->x = config->root_x;
-    wm.root->y = config->root_y;
-    wm.root->width = config->root_width;
-    wm.root->height = config->root_height;
+    selected_frame->wm.root->x = config->root_x;
+    selected_frame->wm.root->y = config->root_y;
+    selected_frame->wm.root->width = config->root_width;
+    selected_frame->wm.root->height = config->root_height;
     
     // Find selected window
     Window *leaves[256];
     int count = 0;
-    collect_leaf_windows(wm.root, leaves, &count);
+    collect_leaf_windows(selected_frame->wm.root, leaves, &count);
     
-    wm.selected = NULL;
+    selected_frame->wm.selected = NULL;
     for (int i = 0; i < count; i++) {
         if (leaves[i]->is_selected) {
-            wm.selected = leaves[i];
+            selected_frame->wm.selected = leaves[i];
             break;
         }
     }
     
-    if (!wm.selected && count > 0) {
-        wm.selected = leaves[0];
-        wm.selected->is_selected = true;
+    if (!selected_frame->wm.selected && count > 0) {
+        selected_frame->wm.selected = leaves[0];
+        selected_frame->wm.selected->is_selected = true;
     }
     
-    wm.window_count = count;
-    current_buffer = wm.selected->buffer;
-    current_buffer->pt = wm.selected->point;
+    selected_frame->wm.window_count = count;
+    current_buffer->pt = selected_frame->wm.selected->point;
     
     wm_recalculate_layout();
 }
@@ -322,7 +309,7 @@ void free_window_configuration(WindowConfiguration *config) {
     config->count = 0;
 }
 
-static void recalculate_window_geometry(Window *win) {
+void recalculate_window_geometry(Window *win) {
     if (!win || is_leaf_window(win)) return;
     
     if (win->split_type == SPLIT_VERTICAL) {
@@ -365,8 +352,8 @@ static void recalculate_window_geometry(Window *win) {
 }
 
 void wm_recalculate_layout() {
-    if (wm.root) {
-        recalculate_window_geometry(wm.root);
+    if (selected_frame->wm.root) {
+        recalculate_window_geometry(selected_frame->wm.root);
         /* printf("Recalculated layout\n"); */
     }
 }
@@ -374,7 +361,7 @@ void wm_recalculate_layout() {
 void debug_print_windows() {
     Window *leaves[256];
     int count = 0;
-    collect_leaf_windows(wm.root, leaves, &count);
+    collect_leaf_windows(selected_frame->wm.root, leaves, &count);
     
     printf("=== Window Order (count=%d) ===\n", count);
     for (int i = 0; i < count; i++) {
@@ -383,29 +370,29 @@ void debug_print_windows() {
                leaves[i]->width, leaves[i]->height,
                leaves[i]->is_selected ? "[SELECTED]" : "");
     }
-    if (wm.minibuffer_window) {
+    if (selected_frame->wm.minibuffer_window) {
         printf("  [M] Minibuffer at (%.0f, %.0f) size (%.0f x %.0f) %s %s\n",
-               wm.minibuffer_window->x, wm.minibuffer_window->y,
-               wm.minibuffer_window->width, wm.minibuffer_window->height,
-               wm.minibuffer_window->is_selected ? "[SELECTED]" : "",
-               wm.minibuffer_active ? "[ACTIVE]" : "[INACTIVE]");
+               selected_frame->wm.minibuffer_window->x, selected_frame->wm.minibuffer_window->y,
+               selected_frame->wm.minibuffer_window->width, selected_frame->wm.minibuffer_window->height,
+               selected_frame->wm.minibuffer_window->is_selected ? "[SELECTED]" : "",
+               selected_frame->wm.minibuffer_active ? "[ACTIVE]" : "[INACTIVE]");
     }
     printf("Selected window: (%.0f, %.0f)\n\n",
-           wm.selected->x, wm.selected->y);
+           selected_frame->wm.selected->x, selected_frame->wm.selected->y);
 }
 
 // TODO Handle ARG
 void split_window_below() {
-    if (!is_leaf_window(wm.selected)) return;
-    if (is_minibuffer_window(wm.selected)) {
+    if (!is_leaf_window(selected_frame->wm.selected)) return;
+    if (is_minibuffer_window(selected_frame->wm.selected)) {
         message("Attempt to split minibuffer window");
         return;
     }
     
-    if (wm.selected->height < MIN_WINDOW_SIZE * 2) return;
+    if (selected_frame->wm.selected->height < MIN_WINDOW_SIZE * 2) return;
     
-    Window *top = window_create(wm.selected, wm.selected->buffer);
-    Window *bottom = window_create(wm.selected, wm.selected->buffer);
+    Window *top = window_create(selected_frame->wm.selected, current_buffer);
+    Window *bottom = window_create(selected_frame->wm.selected, current_buffer);
     
     if (!top || !bottom) {
         if (top) free(top);
@@ -413,24 +400,24 @@ void split_window_below() {
         return;
     }
     
-    top->point = wm.selected->point;
-    bottom->point = wm.selected->point;
-    top->scrollx = wm.selected->scrollx;
-    top->scrolly = wm.selected->scrolly;
-    bottom->scrollx = wm.selected->scrollx;
-    bottom->scrolly = wm.selected->scrolly;
+    top->point = selected_frame->wm.selected->point;
+    bottom->point = selected_frame->wm.selected->point;
+    top->scrollx = selected_frame->wm.selected->scrollx;
+    top->scrolly = selected_frame->wm.selected->scrolly;
+    bottom->scrollx = selected_frame->wm.selected->scrollx;
+    bottom->scrolly = selected_frame->wm.selected->scrolly;
     
-    wm.selected->is_selected = false;
-    wm.selected->split_type = SPLIT_HORIZONTAL;
-    wm.selected->left = top;
-    wm.selected->right = bottom;
+    selected_frame->wm.selected->is_selected = false;
+    selected_frame->wm.selected->split_type = SPLIT_HORIZONTAL;
+    selected_frame->wm.selected->left = top;
+    selected_frame->wm.selected->right = bottom;
     
     top->is_selected = true;
-    wm.selected = top;
+    selected_frame->wm.selected = top;
     current_buffer = top->buffer;
     current_buffer->pt = top->point;
     
-    wm.window_count++;
+    selected_frame->wm.window_count++;
     wm_recalculate_layout();
 
     // NOTE The top window is already scrolled
@@ -444,16 +431,16 @@ void split_window_below() {
 // and adds a scroll offset to compesate so the current window doesn’t move down when splitting
 // TODO Handle ARG
 void split_window_right() {
-    if (!is_leaf_window(wm.selected)) return;
-    if (is_minibuffer_window(wm.selected)) {
+    if (!is_leaf_window(selected_frame->wm.selected)) return;
+    if (is_minibuffer_window(selected_frame->wm.selected)) {
         message("Attempt to split minibuffer window");
         return;
     }
     
-    if (wm.selected->width < MIN_WINDOW_SIZE * 2) return;
+    if (selected_frame->wm.selected->width < MIN_WINDOW_SIZE * 2) return;
     
-    Window *left = window_create(wm.selected, wm.selected->buffer);
-    Window *right = window_create(wm.selected, wm.selected->buffer);
+    Window *left = window_create(selected_frame->wm.selected, current_buffer);
+    Window *right = window_create(selected_frame->wm.selected, current_buffer);
     
     if (!left || !right) {
         if (left) free(left);
@@ -461,33 +448,220 @@ void split_window_right() {
         return;
     }
     
-    left->point = wm.selected->point;
-    right->point = wm.selected->point;
-    left->scrollx = wm.selected->scrollx;
-    left->scrolly = wm.selected->scrolly;
-    right->scrollx = wm.selected->scrollx;
-    right->scrolly = wm.selected->scrolly;
+    left->point = selected_frame->wm.selected->point;
+    right->point = selected_frame->wm.selected->point;
+    left->scrollx = selected_frame->wm.selected->scrollx;
+    left->scrolly = selected_frame->wm.selected->scrolly;
+    right->scrollx = selected_frame->wm.selected->scrollx;
+    right->scrolly = selected_frame->wm.selected->scrolly;
     
-    wm.selected->split_type = SPLIT_VERTICAL;
-    wm.selected->left = left;
-    wm.selected->right = right;
+    selected_frame->wm.selected->split_type = SPLIT_VERTICAL;
+    selected_frame->wm.selected->left = left;
+    selected_frame->wm.selected->right = right;
     
     left->is_selected = true;
-    wm.selected = left;
+    selected_frame->wm.selected = left;
     
-    wm.window_count++;
+    selected_frame->wm.window_count++;
     wm_recalculate_layout();
     if (debug_them_windows) debug_print_windows();
 }
 
+
+// TODO Implement window_splittable_p and use it in those function
+
+bool window_try_horizontal_split(Window *win) {
+    if (is_minibuffer_window(win)) {
+        return false;
+    }
+    
+    // Get split-height-threshold (for horizontal splits)
+    SCM threshold_var = scm_c_lookup("split-height-threshold");
+    if (scm_is_false(threshold_var)) {
+        return false;
+    }
+    
+    SCM threshold_val = scm_variable_ref(threshold_var);
+    if (!scm_is_integer(threshold_val)) {
+        return false;
+    }
+    
+    size_t split_height_threshold = scm_to_size_t(threshold_val);
+    size_t height_in_lines = (size_t)(win->height / selected_frame->line_height);
+    
+    if (split_height_threshold > 0 && height_in_lines < split_height_threshold) {
+        return false;
+    }
+    
+    if (win->height < MIN_WINDOW_SIZE * 2) {
+        return false;
+    }
+    
+    split_window_below();  // Horizontal split = top/bottom
+    return true;
+}
+
+bool window_try_vertical_split(Window *win) {
+    if (is_minibuffer_window(win)) {
+        return false;
+    }
+    
+    // Get split-width-threshold (for vertical splits)
+    SCM threshold_var = scm_c_lookup("split-width-threshold");
+    if (scm_is_false(threshold_var)) {
+        return false;
+    }
+    
+    SCM threshold_val = scm_variable_ref(threshold_var);
+    if (!scm_is_integer(threshold_val)) {
+        return false;
+    }
+    
+    size_t split_width_threshold = scm_to_size_t(threshold_val);
+    size_t width_in_cols = (size_t)(win->width / selected_frame->column_width);
+    
+    if (split_width_threshold > 0 && width_in_cols < split_width_threshold) {
+        return false;
+    }
+    
+    if (win->width < MIN_WINDOW_SIZE * 2) {
+        return false;
+    }
+    
+    split_window_right();  // Vertical split = left/right
+    return true;
+}
+
+
+Window* split_window_sensibly() {
+    Window *win = selected_frame->wm.selected;
+    
+    // Get split-window-preferred-direction
+    SCM direction_var = scm_c_lookup("split-window-preferred-direction");
+    SCM direction = scm_variable_ref(direction_var);
+    
+    bool try_horizontal_first = false;  // horizontal = top/bottom
+    
+    if (scm_is_symbol(direction)) {
+        SCM horizontal_sym = scm_from_utf8_symbol("horizontal");
+        SCM longest_sym = scm_from_utf8_symbol("longest");
+        
+        if (scm_is_eq(direction, horizontal_sym)) {
+            try_horizontal_first = true;  // Try top/bottom first
+        } else if (scm_is_eq(direction, longest_sym)) {
+            // For 'longest, split along longest dimension
+            // If width > height, split vertically (left/right)
+            // If height > width, split horizontally (top/bottom)
+            try_horizontal_first = (selected_frame->height > selected_frame->width);
+        }
+        // Default (vertical) means try_horizontal_first = false
+    }
+    
+    bool success = false;
+    
+    if (try_horizontal_first) {
+        // Try horizontal (top/bottom) first, then vertical (left/right)
+        if (window_try_horizontal_split(win)) {
+            success = true;
+        } else if (window_try_vertical_split(win)) {
+            success = true;
+        }
+    } else {
+        // Try vertical (left/right) first, then horizontal (top/bottom)
+        if (window_try_vertical_split(win)) {
+            success = true;
+        } else if (window_try_horizontal_split(win)) {
+            success = true;
+        }
+    }
+    
+    // Last resort: if this is the only window, try horizontal split (top/bottom)
+    // disregarding split-height-threshold
+    if (!success && selected_frame->wm.window_count == 1 && !is_minibuffer_window(win)) {
+        if (win->height >= MIN_WINDOW_SIZE * 2) {
+            split_window_below();
+            success = true;
+        }
+    }
+    
+    if (!success) {
+        message("Window too small to split");
+        return NULL;
+    }
+    
+    // Return the newly created window (which is now selected)
+    return selected_frame->wm.selected;
+}
+
+
+// TODO Doesn't support display-buffer-alist yet (that's a lot more complex)
+// TODO Doesn't support ACTION argument yet
+Window* display_buffer(Buffer *buffer) {
+    if (!buffer) return NULL;
+    
+    // 1. If buffer is already displayed in a window, return that window
+    Window *leaves[256];
+    int count = 0;
+    collect_leaf_windows(selected_frame->wm.root, leaves, &count);
+    
+    for (int i = 0; i < count; i++) {
+        if (leaves[i]->buffer == buffer) {
+            return leaves[i];
+        }
+    }
+    
+    // 2. Buffer not displayed, need to find/create a window for it
+    Window *original_selected = selected_frame->wm.selected;
+    Window *target_window = NULL;
+    
+    // Get the split-window-preferred-function variable
+    SCM split_func_var = scm_c_lookup("split-window-preferred-function");
+    SCM split_func_sym = scm_variable_ref(split_func_var);
+    
+    // The variable contains a quoted symbol, so look up the actual function
+    if (scm_is_symbol(split_func_sym)) {
+        // Convert symbol to C string
+        char *func_name = scm_to_locale_string(scm_symbol_to_string(split_func_sym));
+        SCM actual_func_var = scm_c_lookup(func_name);
+        SCM actual_func = scm_variable_ref(actual_func_var);
+        free(func_name);
+        
+        if (scm_is_true(scm_procedure_p(actual_func))) {
+            // Call the function (e.g., split-window-sensibly)
+            SCM result = scm_call_0(actual_func);
+            
+            // Check if it returned a window (not #f)
+            if (scm_is_true(result)) {
+                // Split succeeded - use the OTHER window (next-window)
+                target_window = next_window(selected_frame->wm.selected);
+            }
+        }
+    }
+    
+    // If split failed, use next window
+    if (!target_window) {
+        target_window = next_window(original_selected);
+    }
+    
+    // Display buffer in target window
+    target_window->buffer = buffer;
+    target_window->point = 0;
+    
+    // Keep original selection
+    current_buffer = original_selected->buffer;
+    current_buffer->pt = original_selected->point;
+    
+    return target_window;
+}
+
 void delete_window() {
-    if (!wm.selected->parent || wm.window_count <= 1 || is_minibuffer_window(wm.selected)) {
+    if (!selected_frame->wm.selected->parent || selected_frame->wm.window_count <= 1 || is_minibuffer_window(selected_frame->wm.selected)) {
         message("Attempt to delete minibuffer or sole ordinary window");
         return;
     }
     
-    Window *parent = wm.selected->parent;
-    Window *sibling = (parent->left == wm.selected) ? parent->right : parent->left;
+    Window *parent = selected_frame->wm.selected->parent;
+    Window *sibling = (parent->left == selected_frame->wm.selected) ? parent->right : parent->left;
     
     if (!sibling) return;
     
@@ -499,7 +673,7 @@ void delete_window() {
         if (count > 0) new_selected = leaves[0];
     }
     
-    free(wm.selected);
+    free(selected_frame->wm.selected);
     
     sibling->parent = parent->parent;
     
@@ -510,7 +684,7 @@ void delete_window() {
             parent->parent->right = sibling;
         }
     } else {
-        wm.root = sibling;
+        selected_frame->wm.root = sibling;
     }
     
     sibling->x = parent->x;
@@ -522,42 +696,41 @@ void delete_window() {
     
     if (new_selected) {
         new_selected->is_selected = true;
-        wm.selected = new_selected;
+        selected_frame->wm.selected = new_selected;
         current_buffer = new_selected->buffer;
         current_buffer->pt = new_selected->point;
     }
     
-    wm.window_count--;
+    selected_frame->wm.window_count--;
     wm_recalculate_layout();
 }
 
 void delete_other_windows() {
-    if (is_minibuffer_window(wm.selected)) {
+    if (is_minibuffer_window(selected_frame->wm.selected)) {
         message("Can’t expand minibuffer to full frame");
         return;
     }
-    if (wm.window_count <= 1) {
+    if (selected_frame->wm.window_count <= 1) {
         message("No other windows to delete");
         return;
     }
     
-    Buffer *current_buffer = wm.selected->buffer;
-    float x = wm.root->x;
-    float y = wm.root->y;
-    float width = wm.root->width;
-    float height = wm.root->height;
+    float x = selected_frame->wm.root->x;
+    float y = selected_frame->wm.root->y;
+    float width = selected_frame->wm.root->width;
+    float height = selected_frame->wm.root->height;
     
-    window_destroy(wm.root);
+    window_destroy(selected_frame->wm.root);
     
-    wm.root = window_create(NULL, current_buffer);
-    wm.root->x = x;
-    wm.root->y = y;
-    wm.root->width = width;
-    wm.root->height = height;
-    wm.root->is_selected = true;
+    selected_frame->wm.root = window_create(NULL, current_buffer);
+    selected_frame->wm.root->x = x;
+    selected_frame->wm.root->y = y;
+    selected_frame->wm.root->width = width;
+    selected_frame->wm.root->height = height;
+    selected_frame->wm.root->is_selected = true;
     
-    wm.selected = wm.root;
-    wm.window_count = 1;
+    selected_frame->wm.selected = selected_frame->wm.root;
+    selected_frame->wm.window_count = 1;
     current_buffer = current_buffer;
 }
 
@@ -569,18 +742,19 @@ static void balance_recursive(Window *win) {
 }
 
 void balance_windows() {
-    balance_recursive(wm.root);
+    balance_recursive(selected_frame->wm.root);
     wm_recalculate_layout();
 }
 
+// TODO Doesn’t behave like emacs and we should support ARG
 void enlarge_window() {
-    if (is_minibuffer_window(wm.selected)) return;
-    if (!wm.selected->parent) return;
+    if (is_minibuffer_window(selected_frame->wm.selected)) return;
+    if (!selected_frame->wm.selected->parent) return;
     
-    Window *parent = wm.selected->parent;
+    Window *parent = selected_frame->wm.selected->parent;
     float delta = 0.1f;
     
-    if (parent->left == wm.selected) {
+    if (parent->left == selected_frame->wm.selected) {
         parent->split_ratio = fminf(0.9f, parent->split_ratio + delta);
     } else {
         parent->split_ratio = fmaxf(0.1f, parent->split_ratio - delta);
@@ -589,14 +763,15 @@ void enlarge_window() {
     wm_recalculate_layout();
 }
 
+// TODO Doesn’t behave like emacs and we should support ARG
 void shrink_window() {
-    if (is_minibuffer_window(wm.selected)) return;
-    if (!wm.selected || !wm.selected->parent) return;
+    if (is_minibuffer_window(selected_frame->wm.selected)) return;
+    if (!selected_frame->wm.selected || !selected_frame->wm.selected->parent) return;
     
-    Window *parent = wm.selected->parent;
+    Window *parent = selected_frame->wm.selected->parent;
     float delta = 0.1f;
     
-    if (parent->left == wm.selected) {
+    if (parent->left == selected_frame->wm.selected) {
         parent->split_ratio = fmaxf(0.1f, parent->split_ratio - delta);
     } else {
         parent->split_ratio = fminf(0.9f, parent->split_ratio + delta);
@@ -610,6 +785,10 @@ void shrink_window() {
 
 #include "modeline.h"
 
+
+// NOTE We should use Scrissors to emulate emacs 100%
+// Or do weird tricks with the order of drawing
+// But we can’t because draw cakks are batched and reordered rn
 static void draw_modeline(Window *win) {
     if (!win) return;
     
@@ -620,7 +799,7 @@ static void draw_modeline(Window *win) {
     
     // If minibuffer is active and this is the previous window, keep it highlighted
     bool is_active = win->is_selected || 
-                    (wm.minibuffer_active && win == wm.previous_window);
+                    (selected_frame->wm.minibuffer_active && win == selected_frame->wm.previous_window);
 
     Color bg_color = is_active ? face_cache->faces[FACE_MODE_LINE_ACTIVE]->bg :
         face_cache->faces[FACE_MODE_LINE_INACTIVE]->bg;
@@ -628,7 +807,7 @@ static void draw_modeline(Window *win) {
     Color fg_color = is_active ? face_cache->faces[FACE_MODE_LINE_ACTIVE]->fg :
         face_cache->faces[FACE_MODE_LINE_INACTIVE]->fg;
     
-    // Draw background
+    // Draw background over entire window width
     quad2D((vec2){win->x, modeline_y},
            (vec2){win->width, modeline_height},
            bg_color);
@@ -636,11 +815,38 @@ static void draw_modeline(Window *win) {
     // Get formatted mode-line text
     char *mode_line_text = format_mode_line(win);
     
-    // Draw mode-line text
-    float text_x = win->x + fringe_width;
+    // Draw mode-line text with clipping
+    float text_x = win->x;  // Start at window edge, not after fringe
     float text_y = modeline_y + font->descent * 2;
     
-    text(font, mode_line_text, text_x, text_y, fg_color);
+    // Calculate max X position (end of window)
+    float max_x = win->x + win->width;
+    
+    // Draw character by character, stopping at window boundary
+    float x = text_x;
+    char *ptr = mode_line_text;
+    
+    while (*ptr && x < max_x) {
+        unsigned char c = *ptr;
+        
+        // Skip non-ASCII for simplicity
+        if (c >= 128) {
+            ptr++;
+            continue;
+        }
+        
+        float char_width = character_width(font, c);
+        
+        // Check if this character would go past the boundary
+        if (x + char_width > max_x) {
+            break;
+        }
+        
+        // Draw the character
+        character(font, c, x, text_y, fg_color);
+        x += char_width;
+        ptr++;
+    }
     
     free_mode_line_string(mode_line_text);
 }
@@ -660,7 +866,8 @@ void update_window_scroll(Window *win) {
     // Account for modeline at bottom (1 line high)
     float modeline_height = line_height;
     float usable_height = win->height - modeline_height;
-    float usable_width = win->width - 2 * fringe_width;
+    /* float usable_width = win->width - 2 * fringe_width; */
+    float usable_width = win->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width);
     
     // Calculate cursor's line number and x position TODO Cache it
     size_t cursor_line = 0;
@@ -765,7 +972,8 @@ void update_window_scroll(Window *win) {
 void update_windows_scroll() {
     Window *leaves[256];
     int count = 0;
-    collect_leaf_windows(wm.root, leaves, &count);
+    collect_leaf_windows(selected_frame->wm.root, leaves, &count);
+
     
     // Update all leaf windows
     for (int i = 0; i < count; i++) {
@@ -786,17 +994,17 @@ static void draw_window(Window *win) {
         Font *font = face_cache->faces[FACE_DEFAULT]->font;
 
         if (win->buffer) {
-            draw_buffer(win->buffer, win, win->x + fringe_width,
+            draw_buffer(win->buffer, win, win->x + selected_frame->left_fringe_width,
                        win->y + win->height - font->ascent + font->descent);
         }
 
         // Left fringe
         quad2D((vec2){win->x, win->y},
-               (vec2){fringe_width, win->height}, face_cache->faces[FACE_FRINGE]->bg);
+               (vec2){selected_frame->left_fringe_width, win->height}, face_cache->faces[FACE_FRINGE]->bg);
         
         // Right fringe
-        quad2D((vec2){win->x + win->width - fringe_width, win->y},
-               (vec2){fringe_width, win->height}, face_cache->faces[FACE_FRINGE]->bg);
+        quad2D((vec2){win->x + win->width - selected_frame->right_fringe_width, win->y},
+               (vec2){selected_frame->right_fringe_width, win->height}, face_cache->faces[FACE_FRINGE]->bg);
  
         if (!win->is_minibuffer) draw_modeline(win);
 
@@ -823,7 +1031,7 @@ static void draw_dividers_recursive(Window *win) {
     draw_dividers_recursive(win->right);
 }
 
-void draw_window_dividers() {
+void draw_window_dividers(WindowManager wm) {
     draw_dividers_recursive(wm.root);
 }
 
@@ -853,14 +1061,14 @@ static size_t count_buffer_lines(Buffer *buf) {
 
 // Count actual visual lines including wraps
 float calculate_minibuffer_height() {
-    if (!wm.minibuffer_window || !wm.minibuffer_window->buffer) return 0.0f;
+    if (!selected_frame->wm.minibuffer_window || !selected_frame->wm.minibuffer_window->buffer) return 0.0f;
     
-    Buffer *buf = wm.minibuffer_window->buffer;
+    Buffer *buf = selected_frame->wm.minibuffer_window->buffer;
     Font *font = face_cache->faces[FACE_DEFAULT]->font;
     float line_height = font->ascent + font->descent;
     
     // Calculate usable width for text (excluding fringes)
-    float usable_width = wm.minibuffer_window->width - 2 * fringe_width;
+    float usable_width = selected_frame->wm.minibuffer_window->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width);
     
     size_t text_len = rope_char_length(buf->rope);
     if (text_len == 0) return line_height;  // Empty buffer = 1 line
@@ -902,7 +1110,7 @@ float calculate_minibuffer_height() {
 // and we should limit the minibuffer height to ‘max-mini-window-height’
 
 
-void wm_draw() {
+void wm_draw(WindowManager *wm) {
     // Calculate minibuffer height dynamically each frame
     float minibuffer_height = calculate_minibuffer_height();
     
@@ -911,26 +1119,26 @@ void wm_draw() {
     bool minibuffer_height_changed = (minibuffer_height != prev_minibuffer_height);
     prev_minibuffer_height = minibuffer_height;
     
-    wm.minibuffer_window->height = minibuffer_height;
+    wm->minibuffer_window->height = minibuffer_height;
     
     // Use current screen height, not cached value
     float frame_height = context.swapChainExtent.height;
     
     // Adjust root window to account for minibuffer
-    wm.root->y = wm.minibuffer_window->y + minibuffer_height;
-    wm.root->height = frame_height - wm.root->y;
+    wm->root->y = wm->minibuffer_window->y + minibuffer_height;
+    wm->root->height = frame_height - wm->root->y;
     
     // If minibuffer height changed and we have splits, recalculate layout
-    if (minibuffer_height_changed && !is_leaf_window(wm.root)) {
+    if (minibuffer_height_changed && !is_leaf_window(wm->root)) {
         wm_recalculate_layout();
     }
    
     // Draw all windows
-    draw_window(wm.root);
-    draw_window_dividers();
+    draw_window(wm->root);
+    draw_window_dividers(*wm);
     
     // Draw minibuffer
-    draw_window(wm.minibuffer_window);
+    draw_window(wm->minibuffer_window);
 }
 
 /// Window related editing functions
@@ -938,26 +1146,25 @@ void wm_draw() {
 int recenter_positions = 0;  // 0=middle, 1=top, 2=bottom
 
 void recenter() {
-    if (is_minibuffer_window(wm.selected)) return;
+    if (is_minibuffer_window(selected_frame->wm.selected)) return;
     
     Font *font = face_cache->faces[FACE_DEFAULT]->font;
-    Buffer *buf = wm.selected->buffer;
     float line_height = font->ascent + font->descent;
     float modeline_height = line_height;
-    float usable_height = wm.selected->height - modeline_height;
+    float usable_height = selected_frame->wm.selected->height - modeline_height;
     float visible_lines = usable_height / line_height;
     
     // Calculate cursor's line number
     size_t cursor_line = 0;
     rope_iter_t iter;
-    rope_iter_init(&iter, buf->rope, 0);
+    rope_iter_init(&iter, current_buffer->rope, 0);
     
     uint32_t ch;
     size_t i = 0;
     float x = 0;
-    float max_x = wm.selected->width - 2 * fringe_width;
+    float max_x = selected_frame->wm.selected->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width);
     
-    while (i < wm.selected->point && rope_iter_next_char(&iter, &ch)) {
+    while (i < selected_frame->wm.selected->point && rope_iter_next_char(&iter, &ch)) {
         if (ch == '\n') {
             cursor_line++;
             x = 0;
@@ -1006,14 +1213,14 @@ void recenter() {
     // target_line is relative to the TOP of the visible window
     // So if we want cursor on target_line, we need:
     // scrolly = cursor_y - (target_line * line_height)
-    wm.selected->scrolly = cursor_y - (target_line * line_height);
+    selected_frame->wm.selected->scrolly = cursor_y - (target_line * line_height);
     
     // Ensure we don't scroll past the top of the buffer
-    if (wm.selected->scrolly < 0) wm.selected->scrolly = 0;
+    if (selected_frame->wm.selected->scrolly < 0) selected_frame->wm.selected->scrolly = 0;
 }
 
 void recenter_top_bottom() {
-    if (is_minibuffer_window(wm.selected)) return;
+    if (is_minibuffer_window(selected_frame->wm.selected)) return;
     
     // If argument was manually set, just call recenter with that argument
     if (argument_manually_set) {
@@ -1024,9 +1231,9 @@ void recenter_top_bottom() {
     static Window *last_window = NULL;
     
     // Reset cycle if we're in a different window
-    if (last_window != wm.selected) {
+    if (last_window != selected_frame->wm.selected) {
         recenter_positions = 0;
-        last_window = wm.selected;
+        last_window = selected_frame->wm.selected;
     }
     
     // Save current arg state
@@ -1080,13 +1287,12 @@ int next_screen_context_lines = 2;  // Lines of overlap when scrolling full scre
 
 
 void scroll_up_command() {
-    if (is_minibuffer_window(wm.selected)) return;
+    if (is_minibuffer_window(selected_frame->wm.selected)) return;
     
-    Buffer *buf = wm.selected->buffer;
     Font *font = face_cache->faces[FACE_DEFAULT]->font;
     float line_height = font->ascent + font->descent;
     float modeline_height = line_height;
-    float usable_height = wm.selected->height - modeline_height;
+    float usable_height = selected_frame->wm.selected->height - modeline_height;
     float visible_lines = usable_height / line_height;
     
     int arg = get_prefix_arg();
@@ -1117,14 +1323,14 @@ void scroll_up_command() {
     // Calculate current cursor line
     size_t cursor_line = 0;
     rope_iter_t iter;
-    rope_iter_init(&iter, buf->rope, 0);
+    rope_iter_init(&iter, current_buffer->rope, 0);
     
     uint32_t ch;
     size_t i = 0;
     float x = 0;
-    float max_x = wm.selected->width - 2 * fringe_width;
+    float max_x = selected_frame->wm.selected->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width);
     
-    while (i < wm.selected->point && rope_iter_next_char(&iter, &ch)) {
+    while (i < selected_frame->wm.selected->point && rope_iter_next_char(&iter, &ch)) {
         if (ch == '\n') {
             cursor_line++;
             x = 0;
@@ -1146,7 +1352,7 @@ void scroll_up_command() {
     
     // Calculate total lines in buffer
     size_t total_lines = 0;
-    rope_iter_init(&iter, buf->rope, 0);
+    rope_iter_init(&iter, current_buffer->rope, 0);
     x = 0;
     while (rope_iter_next_char(&iter, &ch)) {
         if (ch == '\n') {
@@ -1172,13 +1378,13 @@ void scroll_up_command() {
     if (max_scroll < 0) max_scroll = 0;
     
     // Try to scroll
-    float new_scroll = wm.selected->scrolly + (lines_to_scroll * line_height);
+    float new_scroll = selected_frame->wm.selected->scrolly + (lines_to_scroll * line_height);
     
     // Check if we can scroll
     if (new_scroll > max_scroll) {
         // Can't scroll further
         // Check if we're already at end of buffer
-        if (wm.selected->point >= rope_char_length(buf->rope)) {
+        if (selected_frame->wm.selected->point >= rope_char_length(current_buffer->rope)) {
             message("End of buffer");
             return;
         }
@@ -1186,9 +1392,9 @@ void scroll_up_command() {
         // Move point instead
         if (manually_set) {
             // Move by ARG lines
-            size_t new_point = wm.selected->point;
+            size_t new_point = selected_frame->wm.selected->point;
             rope_iter_t move_iter;
-            rope_iter_init(&move_iter, buf->rope, new_point);
+            rope_iter_init(&move_iter, current_buffer->rope, new_point);
             
             int lines_moved = 0;
             while (lines_moved < lines_to_scroll && rope_iter_next_char(&move_iter, &ch)) {
@@ -1206,24 +1412,24 @@ void scroll_up_command() {
             set_point(new_point);
         } else {
             // Move to end of buffer
-            set_point(rope_char_length(buf->rope));
+            set_point(rope_char_length(current_buffer->rope));
         }
         
         // Clamp scroll to max
-        wm.selected->scrolly = max_scroll;
+        selected_frame->wm.selected->scrolly = max_scroll;
     } else {
         // Can scroll normally
-        wm.selected->scrolly = new_scroll;
+        selected_frame->wm.selected->scrolly = new_scroll;
         
         // Check if cursor is now off-screen (above the visible area)
-        float cursor_relative_y = cursor_y - wm.selected->scrolly;
+        float cursor_relative_y = cursor_y - selected_frame->wm.selected->scrolly;
         
         if (cursor_relative_y < 0) {
             // Cursor scrolled off top, move it to top of window
-            size_t top_line = (size_t)(wm.selected->scrolly / line_height);
+            size_t top_line = (size_t)(selected_frame->wm.selected->scrolly / line_height);
             
             // Find character position for that line
-            rope_iter_init(&iter, buf->rope, 0);
+            rope_iter_init(&iter, current_buffer->rope, 0);
             size_t current_line = 0;
             size_t pos = 0;
             x = 0;
@@ -1258,13 +1464,12 @@ void scroll_up_command() {
 }
 
 void scroll_down_command() {
-    if (is_minibuffer_window(wm.selected)) return;
+    if (is_minibuffer_window(selected_frame->wm.selected)) return;
     
-    Buffer *buf = wm.selected->buffer;
     Font *font = face_cache->faces[FACE_DEFAULT]->font;
     float line_height = font->ascent + font->descent;
     float modeline_height = line_height;
-    float usable_height = wm.selected->height - modeline_height;
+    float usable_height = selected_frame->wm.selected->height - modeline_height;
     float visible_lines = usable_height / line_height;
     
     int arg = get_prefix_arg();
@@ -1295,14 +1500,14 @@ void scroll_down_command() {
     // Calculate current cursor line
     size_t cursor_line = 0;
     rope_iter_t iter;
-    rope_iter_init(&iter, buf->rope, 0);
+    rope_iter_init(&iter, current_buffer->rope, 0);
     
     uint32_t ch;
     size_t i = 0;
     float x = 0;
-    float max_x = wm.selected->width - 2 * fringe_width;
+    float max_x = selected_frame->wm.selected->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width);
     
-    while (i < wm.selected->point && rope_iter_next_char(&iter, &ch)) {
+    while (i < selected_frame->wm.selected->point && rope_iter_next_char(&iter, &ch)) {
         if (ch == '\n') {
             cursor_line++;
             x = 0;
@@ -1325,13 +1530,13 @@ void scroll_down_command() {
     float cursor_y = cursor_line * line_height;
     
     // Try to scroll
-    float new_scroll = wm.selected->scrolly - (lines_to_scroll * line_height);
+    float new_scroll = selected_frame->wm.selected->scrolly - (lines_to_scroll * line_height);
     
     // Check if we can scroll
     if (new_scroll < 0) {
         // Can't scroll further
         // Check if we're already at beginning of buffer
-        if (wm.selected->point == 0) {
+        if (selected_frame->wm.selected->point == 0) {
             message("Beginning of buffer");
             return;
         }
@@ -1339,9 +1544,9 @@ void scroll_down_command() {
         // Move point instead
         if (manually_set) {
             // Move by ARG lines backward
-            size_t new_point = wm.selected->point;
+            size_t new_point = selected_frame->wm.selected->point;
             rope_iter_t move_iter;
-            rope_iter_init(&move_iter, buf->rope, new_point);
+            rope_iter_init(&move_iter, current_buffer->rope, new_point);
             
             int lines_moved = 0;
             while (lines_moved < lines_to_scroll && rope_iter_prev_char(&move_iter, &ch)) {
@@ -1363,20 +1568,20 @@ void scroll_down_command() {
         }
         
         // Clamp scroll to 0
-        wm.selected->scrolly = 0;
+        selected_frame->wm.selected->scrolly = 0;
     } else {
         // Can scroll normally
-        wm.selected->scrolly = new_scroll;
+        selected_frame->wm.selected->scrolly = new_scroll;
         
         // Check if cursor is now off-screen (below the visible area)
-        float cursor_relative_y = cursor_y - wm.selected->scrolly;
+        float cursor_relative_y = cursor_y - selected_frame->wm.selected->scrolly;
         
         if (cursor_relative_y >= usable_height) {
             // Cursor scrolled off bottom, move it to bottom of window
-            size_t bottom_line = (size_t)((wm.selected->scrolly + usable_height - line_height) / line_height);
+            size_t bottom_line = (size_t)((selected_frame->wm.selected->scrolly + usable_height - line_height) / line_height);
             
             // Find character position for that line
-            rope_iter_init(&iter, buf->rope, 0);
+            rope_iter_init(&iter, current_buffer->rope, 0);
             size_t current_line = 0;
             size_t pos = 0;
             x = 0;
@@ -1411,8 +1616,8 @@ void scroll_down_command() {
 }
 
 void scroll_other_window() {
-    Window *original = wm.selected;
-    Window *other = next_window(wm.selected);
+    Window *original = selected_frame->wm.selected;
+    Window *other = next_window(selected_frame->wm.selected);
     
     if (other == original || !other) {
         message("There is no other window");
@@ -1420,20 +1625,20 @@ void scroll_other_window() {
     }
     
     // Temporarily switch to other window
-    wm.selected = other;
+    selected_frame->wm.selected = other;
     current_buffer = other->buffer;
     current_buffer->pt = other->point;
     scroll_up_command();
 
     // Switch back to original window
-    wm.selected = original;
+    selected_frame->wm.selected = original;
     current_buffer = original->buffer;
     current_buffer->pt = original->point;
 }
 
 void scroll_other_window_down() {
-    Window *original = wm.selected;
-    Window *other = next_window(wm.selected);
+    Window *original = selected_frame->wm.selected;
+    Window *other = next_window(selected_frame->wm.selected);
     
     if (other == original || !other) {
         message("There is no other window");
@@ -1441,25 +1646,24 @@ void scroll_other_window_down() {
     }
     
     // Temporarily switch to other window
-    wm.selected = other;
+    selected_frame->wm.selected = other;
     current_buffer = other->buffer;
     current_buffer->pt = other->point;
     scroll_down_command();
     
     // Switch back to original window
-    wm.selected = original;
+    selected_frame->wm.selected = original;
     current_buffer = original->buffer;
     current_buffer->pt = original->point;
 }
 
 void move_to_window_line() {
-    if (is_minibuffer_window(wm.selected)) return;
+    if (is_minibuffer_window(selected_frame->wm.selected)) return;
     
-    Buffer *buf = wm.selected->buffer;
     Font *font = face_cache->faces[FACE_DEFAULT]->font;
     float line_height = font->ascent + font->descent;
     float modeline_height = line_height;
-    float usable_height = wm.selected->height - modeline_height;
+    float usable_height = selected_frame->wm.selected->height - modeline_height;
     float visible_lines = usable_height / line_height;
     
     int arg = get_prefix_arg();
@@ -1484,18 +1688,18 @@ void move_to_window_line() {
     
     // Calculate the target Y position in buffer coordinates
     // This matches how recenter calculates: target_y = scrolly + (target_line * line_height)
-    float target_y = wm.selected->scrolly + (target_line_float * line_height) + 1;
+    float target_y = selected_frame->wm.selected->scrolly + (target_line_float * line_height) + 1;
     size_t target_visual_line = (size_t)(target_y / line_height);
     
     // Now find the character at the START of that visual line
     rope_iter_t iter;
-    rope_iter_init(&iter, buf->rope, 0);
+    rope_iter_init(&iter, current_buffer->rope, 0);
     
     uint32_t ch;
     size_t current_visual_line = 0;
     size_t line_start_pos = 0;
     float x = 0;
-    float max_x = wm.selected->width - 2 * fringe_width;
+    float max_x = selected_frame->wm.selected->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width);
     
     // Iterate through buffer, tracking visual line starts
     while (rope_iter_next_char(&iter, &ch)) {
@@ -1531,12 +1735,12 @@ void move_to_window_line() {
     
     // If we didn't find the target line (beyond end of buffer),
     // go to end of buffer
-    size_t buffer_len = rope_char_length(buf->rope);
+    size_t buffer_len = rope_char_length(current_buffer->rope);
     set_point(buffer_len);
 }
 
 void move_to_window_line_top_bottom() {
-    if (is_minibuffer_window(wm.selected)) return;
+    if (is_minibuffer_window(selected_frame->wm.selected)) return;
     
     // If argument was manually set, just call move_to_window_line with that argument
     if (argument_manually_set) {
@@ -1547,9 +1751,9 @@ void move_to_window_line_top_bottom() {
     static Window *last_window = NULL;
     
     // Reset cycle if we're in a different window
-    if (last_window != wm.selected) {
+    if (last_window != selected_frame->wm.selected) {
         recenter_positions = 0;
-        last_window = wm.selected;
+        last_window = selected_frame->wm.selected;
     }
     
     // Save current arg state
@@ -1583,4 +1787,36 @@ void move_to_window_line_top_bottom() {
     // Restore arg state
     set_prefix_arg(saved_arg);
     argument_manually_set = saved_manually_set;
+}
+
+
+
+/// SCM
+
+
+// Get minimum window width in pixels (columns + fringes)
+SCM scm_window_min_pixel_width(SCM window_obj) {
+    // Get window-min-width in columns
+    size_t min_cols = scm_get_size_t("window-min-width", 9);
+    
+    // Get character width
+    float char_width = frame_char_width(selected_frame);
+    
+    // Calculate minimum width: columns + fringes
+    float min_width = (float)min_cols * char_width + 
+                      selected_frame->left_fringe_width + 
+                      selected_frame->right_fringe_width;
+    
+    return scm_from_double(min_width);
+}
+
+// Get minimum window height in pixels (lines)
+SCM scm_window_min_pixel_height(SCM window_obj) {
+    // Get window-min-height in lines
+    size_t min_lines = scm_get_size_t("window-min-height", 4);
+    
+    // Calculate minimum height: lines * line_height
+    float min_height = (float)min_lines * selected_frame->line_height;
+    
+    return scm_from_double(min_height);
 }

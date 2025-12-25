@@ -8,33 +8,13 @@ void read_only_mode() {
     current_buffer->read_only = !current_buffer->read_only;
 }
 
-void insert(uint32_t codepoint) {
-    char utf8[5] = {0};
-    size_t len = 0;
-    
-    // Convert Unicode codepoint to UTF-8
-    if (codepoint < 0x80) {
-        utf8[0] = (char)codepoint;
-        len = 1;
-    } else if (codepoint < 0x800) {
-        utf8[0] = 0xC0 | (codepoint >> 6);
-        utf8[1] = 0x80 | (codepoint & 0x3F);
-        len = 2;
-    } else if (codepoint < 0x10000) {
-        utf8[0] = 0xE0 | (codepoint >> 12);
-        utf8[1] = 0x80 | ((codepoint >> 6) & 0x3F);
-        utf8[2] = 0x80 | (codepoint & 0x3F);
-        len = 3;
-    } else if (codepoint < 0x110000) {
-        utf8[0] = 0xF0 | (codepoint >> 18);
-        utf8[1] = 0x80 | ((codepoint >> 12) & 0x3F);
-        utf8[2] = 0x80 | ((codepoint >> 6) & 0x3F);
-        utf8[3] = 0x80 | (codepoint & 0x3F);
-        len = 4;
-    }
-    
-    if (len == 0) return;
 
+void insert(const char *text) {
+    if (!text) return;
+    
+    size_t len = strlen(text);
+    if (len == 0) return;
+    
     if (current_buffer->read_only) {
         message("Buffer is read-only: #<buffer %s>", current_buffer->name);
         return; 
@@ -49,6 +29,16 @@ void insert(uint32_t codepoint) {
         return;
     }
     
+    // Calculate how many characters (not bytes) we're inserting
+    size_t char_count = 0;
+    for (size_t i = 0; i < len; ) {
+        size_t bytes_read;
+        uint32_t ch = utf8_decode(&text[i], len - i, &bytes_read);
+        if (bytes_read == 0) break;
+        i += bytes_read;
+        char_count++;
+    }
+
     // Check if tree-sitter is active
     bool has_treesit = current_buffer->ts_state && current_buffer->ts_state->tree;
     
@@ -67,7 +57,7 @@ void insert(uint32_t codepoint) {
         // Scan inserted bytes for newlines
         size_t bytes_after_last_newline = 0;
         for (size_t i = 0; i < len; i++) {
-            if (utf8[i] == '\n') {
+            if (text[i] == '\n') {
                 new_end_point.row++;
                 new_end_point.column = 0;
                 bytes_after_last_newline = 0;
@@ -84,14 +74,14 @@ void insert(uint32_t codepoint) {
     
     // Update region mark
     if (current_buffer->region.mark >= 0 && (size_t)current_buffer->region.mark > insert_pos) {
-        current_buffer->region.mark++;
+        current_buffer->region.mark += char_count;
     }
     
     // Perform the rope insertion
     current_buffer->rope = rope_insert_chars(
         current_buffer->rope,
         insert_pos,
-        utf8,
+        text,
         len
     );
     
@@ -115,15 +105,132 @@ void insert(uint32_t codepoint) {
     
     // Only adjust text properties if tree-sitter is NOT active
     if (!has_treesit) {
-        adjust_text_properties(current_buffer, insert_pos, 1);
+        adjust_text_properties(current_buffer, insert_pos, char_count);
     }
     
-    adjust_all_window_points_after_modification(insert_pos, 1);
-    set_point(current_buffer->pt + 1);
+    adjust_all_window_points_after_modification(insert_pos, char_count);
+    set_point(current_buffer->pt + char_count);
     update_goal_column();
     reset_cursor_blink(current_buffer);
     current_buffer->modified = true;
 }
+
+/* void insert(uint32_t codepoint) { */
+/*     char utf8[5] = {0}; */
+/*     size_t len = 0; */
+    
+/*     // Convert Unicode codepoint to UTF-8 */
+/*     if (codepoint < 0x80) { */
+/*         utf8[0] = (char)codepoint; */
+/*         len = 1; */
+/*     } else if (codepoint < 0x800) { */
+/*         utf8[0] = 0xC0 | (codepoint >> 6); */
+/*         utf8[1] = 0x80 | (codepoint & 0x3F); */
+/*         len = 2; */
+/*     } else if (codepoint < 0x10000) { */
+/*         utf8[0] = 0xE0 | (codepoint >> 12); */
+/*         utf8[1] = 0x80 | ((codepoint >> 6) & 0x3F); */
+/*         utf8[2] = 0x80 | (codepoint & 0x3F); */
+/*         len = 3; */
+/*     } else if (codepoint < 0x110000) { */
+/*         utf8[0] = 0xF0 | (codepoint >> 18); */
+/*         utf8[1] = 0x80 | ((codepoint >> 12) & 0x3F); */
+/*         utf8[2] = 0x80 | ((codepoint >> 6) & 0x3F); */
+/*         utf8[3] = 0x80 | (codepoint & 0x3F); */
+/*         len = 4; */
+/*     } */
+    
+/*     if (len == 0) return; */
+
+/*     if (current_buffer->read_only) { */
+/*         message("Buffer is read-only: #<buffer %s>", current_buffer->name); */
+/*         return;  */
+/*     } */
+    
+/*     size_t insert_pos = current_buffer->pt; */
+    
+/*     // Check if we're trying to insert at a read-only position */
+/*     SCM readonly = get_text_property(current_buffer, insert_pos, scm_from_locale_symbol("read-only")); */
+/*     if (scm_is_true(readonly)) { */
+/*         message("Text is read-only"); */
+/*         return; */
+/*     } */
+    
+/*     // Check if tree-sitter is active */
+/*     bool has_treesit = current_buffer->ts_state && current_buffer->ts_state->tree; */
+    
+/*     // Capture tree-sitter state BEFORE modification */
+/*     size_t start_byte = 0; */
+/*     TSPoint start_point = {0, 0}; */
+/*     TSPoint new_end_point = {0, 0}; */
+    
+/*     if (has_treesit) { */
+/*         start_byte = rope_char_to_byte(current_buffer->rope, insert_pos); */
+/*         start_point = treesit_char_to_point(current_buffer, insert_pos); */
+        
+/*         // Calculate new_end_point based on inserted content */
+/*         new_end_point = start_point; */
+        
+/*         // Scan inserted bytes for newlines */
+/*         size_t bytes_after_last_newline = 0; */
+/*         for (size_t i = 0; i < len; i++) { */
+/*             if (utf8[i] == '\n') { */
+/*                 new_end_point.row++; */
+/*                 new_end_point.column = 0; */
+/*                 bytes_after_last_newline = 0; */
+/*             } else { */
+/*                 bytes_after_last_newline++; */
+/*             } */
+/*         } */
+        
+/*         // Update column based on whether we had newlines */
+/*         if (bytes_after_last_newline > 0 || new_end_point.row == start_point.row) { */
+/*             new_end_point.column += bytes_after_last_newline; */
+/*         } */
+/*     } */
+    
+/*     // Update region mark */
+/*     if (current_buffer->region.mark >= 0 && (size_t)current_buffer->region.mark > insert_pos) { */
+/*         current_buffer->region.mark++; */
+/*     } */
+    
+/*     // Perform the rope insertion */
+/*     current_buffer->rope = rope_insert_chars( */
+/*         current_buffer->rope, */
+/*         insert_pos, */
+/*         utf8, */
+/*         len */
+/*     ); */
+    
+/*     // Update tree-sitter if active */
+/*     if (has_treesit) { */
+/*         size_t new_end_byte = start_byte + len; */
+        
+/*         treesit_update_tree( */
+/*             current_buffer, */
+/*             start_byte, */
+/*             start_byte,      // old_end_byte = start_byte (nothing was there before) */
+/*             new_end_byte, */
+/*             start_point, */
+/*             start_point,     // old_end_point = start_point (nothing was there before) */
+/*             new_end_point */
+/*         ); */
+        
+/*         treesit_reparse_if_needed(current_buffer); */
+/*         treesit_apply_highlights(current_buffer); */
+/*     } */
+    
+/*     // Only adjust text properties if tree-sitter is NOT active */
+/*     if (!has_treesit) { */
+/*         adjust_text_properties(current_buffer, insert_pos, 1); */
+/*     } */
+    
+/*     adjust_all_window_points_after_modification(insert_pos, 1); */
+/*     set_point(current_buffer->pt + 1); */
+/*     update_goal_column(); */
+/*     reset_cursor_blink(current_buffer); */
+/*     current_buffer->modified = true; */
+/* } */
 
 
 #include <setjmp.h>
@@ -336,7 +443,7 @@ void newline() {
     }
     
     for (int i = 0; i < arg; i++) {
-        insert('\n');
+        insert("\n");
     }
 }
 
@@ -359,10 +466,10 @@ void split_line() {
     size_t col = current_column();
     size_t pos = current_buffer->pt;
     
-    insert('\n');
+    insert("\n");
     
     for (size_t i = 0; i < col; i++) {
-        insert(' ');
+        insert(" ");
     }
     
     // Go back
@@ -733,7 +840,7 @@ void delete_blank_lines() {
         // Case 3: Surrounded by blank lines - delete all, keep one
         delete(region_start, region_end - region_start);
         set_point(region_start);
-        insert('\n');
+        insert("\n");
         set_point(region_start);
     }
 }
@@ -849,7 +956,7 @@ void delete_indentation() {
             }
             
             if (need_space) {
-                insert(' ');
+                insert(" ");
                 last_line_end++;  // Adjust end position
             }
         }
@@ -967,7 +1074,7 @@ void delete_indentation() {
     }
     
     if (need_space) {
-        insert(' ');
+        insert(" ");
     }
 }
 

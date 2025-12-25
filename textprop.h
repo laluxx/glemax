@@ -1,6 +1,7 @@
 #pragma once
 #include <stddef.h>
 #include <libguile.h>
+#include <stdbool.h>
 
 typedef struct Buffer Buffer;
 
@@ -10,6 +11,8 @@ typedef struct PropValue {
     struct PropValue *next;
 } PropValue;
 
+// TODO We might want to use an interval tree 
+// https://en.wikipedia.org/wiki/Interval_tree
 typedef struct TextProp {
     size_t start;
     size_t end;

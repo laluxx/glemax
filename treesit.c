@@ -935,8 +935,8 @@ static SCM scm_treesit_debug_tree(void) {
 }
 
 void init_treesit_bindings(void) {
-    scm_c_define_gsubr("treesit-available?",          0, 0, 0, scm_treesit_available_p);
-    scm_c_define_gsubr("treesit-language-available?", 1, 0, 0, scm_treesit_language_available_p);
+    scm_c_define_gsubr("treesit-available?",           0, 0, 0, scm_treesit_available_p);
+    scm_c_define_gsubr("treesit-language-available?",  1, 0, 0, scm_treesit_language_available_p);
     scm_c_define_gsubr("treesit-parser-create",        1, 0, 0, scm_treesit_parser_create);
     scm_c_define_gsubr("treesit-parser-delete",        0, 0, 0, scm_treesit_parser_delete);
     scm_c_define_gsubr("treesit-set-highlight-query!", 1, 0, 0, scm_treesit_set_highlight_query);

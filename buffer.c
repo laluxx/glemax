@@ -1,4 +1,5 @@
 #include "buffer.h"
+#include "frame.h"
 #include "wm.h"
 #include "lisp.h"
 #include "faces.h"
@@ -8,6 +9,7 @@
 
 Buffer *all_buffers = NULL;
 Buffer *current_buffer = NULL;
+
 
 bool argument_manually_set = false;
 
@@ -145,7 +147,7 @@ Buffer *get_buffer_create(const char *name) {
 void switch_to_buffer(Buffer *buf) {
     if (!buf) return;
 
-    if (buf == wm.minibuffer_window->buffer) {
+    if (buf == selected_frame->wm.minibuffer_window->buffer) {
         message("Can't switch to minibuf buffer");
         return; 
     }
@@ -159,9 +161,9 @@ void switch_to_buffer(Buffer *buf) {
     }
     
     // Update selected window to point to new buffer
-    if (wm.selected) {
-        wm.selected->buffer = buf;
-        wm.selected->point = buf->pt;
+    if (selected_frame->wm.selected) {
+        selected_frame->wm.selected->buffer = buf;
+        selected_frame->wm.selected->point = buf->pt;
     }
 }
 
@@ -169,7 +171,7 @@ Buffer* other_buffer() {
     if (!current_buffer || !current_buffer->next) return current_buffer;
     
     Buffer *buf = current_buffer->next;
-    Buffer *minibuf = wm.minibuffer_window->buffer;
+    Buffer *minibuf = selected_frame->wm.minibuffer_window->buffer;
     
     // Skip minibuffer and return to start if needed
     while (buf != current_buffer) {
@@ -199,7 +201,7 @@ void kill_buffer(Buffer *buf) {
     // Update all windows pointing to this buffer
     Window *leaves[256];
     int count = 0;
-    collect_leaf_windows(wm.root, leaves, &count);
+    collect_leaf_windows(selected_frame->wm.root, leaves, &count);
     
     for (int i = 0; i < count; i++) {
         if (leaves[i]->buffer == buf) {
@@ -217,12 +219,12 @@ void next_buffer() {
     if (arg == 0) return;
     
     // Don't switch in minibuffer
-    if (current_buffer == wm.minibuffer_window->buffer) {
+    if (current_buffer == selected_frame->wm.minibuffer_window->buffer) {
         message("Cannot switch buffers in minibuffer window");
         return;
     }
     
-    Buffer *minibuf = wm.minibuffer_window->buffer;
+    Buffer *minibuf = selected_frame->wm.minibuffer_window->buffer;
     int count = abs(arg);
     int direction = arg > 0 ? 1 : -1;
     
@@ -271,13 +273,13 @@ void adjust_all_window_points_after_modification(size_t pos, int delta) {
     // Collect all leaf windows
     Window *leaves[256];
     int count = 0;
-    collect_leaf_windows(wm.root, leaves, &count);
+    collect_leaf_windows(selected_frame->wm.root, leaves, &count);
     
     // Adjust point for each window viewing this buffer
     for (int i = 0; i < count; i++) {
         Window *win = leaves[i];
         if (win->buffer != current_buffer) continue; // Skip windows showing other buffers
-        if (win == wm.selected) continue; // Skip selected window (already updated)
+        if (win == selected_frame->wm.selected) continue; // Skip selected window (already updated)
         
         if (delta > 0) {
             // Insertion: shift points after insertion position
@@ -300,9 +302,13 @@ void adjust_all_window_points_after_modification(size_t pos, int delta) {
 
 inline void set_point(size_t new_pt) {
     current_buffer->pt = new_pt;
-    wm.selected->point = new_pt;
+    selected_frame->wm.selected->point = new_pt;
 }
 
+size_t goto_char(size_t pos) {
+    set_point(clip_to_bounds(0, pos, rope_char_length(current_buffer->rope)));
+    return pos;
+}
 
 inline void move_point(int delta) {
     size_t text_len = rope_char_length(current_buffer->rope);
@@ -339,14 +345,47 @@ void append_to_buffer(Buffer *buf, const char *text, bool prepend_newline) {
     size_t text_len = strlen(text);
     if (text_len == 0) return;
     
-    size_t end_pos = rope_char_length(buf->rope);
+    size_t old_end_pos = rope_char_length(buf->rope);
+    size_t end_pos = old_end_pos;
+    
+    // Track how many characters we're adding
+    size_t chars_added = 0;
     
     if (prepend_newline) {
         buf->rope = rope_insert_chars(buf->rope, end_pos, "\n", 1);
         end_pos++;
+        chars_added++;
     }
     
     buf->rope = rope_insert_chars(buf->rope, end_pos, text, text_len);
+    
+    // Count actual characters (not bytes) in the text
+    for (size_t i = 0; i < text_len; ) {
+        size_t bytes_read;
+        utf8_decode(&text[i], text_len - i, &bytes_read);
+        if (bytes_read == 0) break;
+        i += bytes_read;
+        chars_added++;
+    }
+    
+    // Update buffer's point if it was at the end
+    if (buf->pt == old_end_pos) {
+        buf->pt = old_end_pos + chars_added;
+    }
+    
+    // Update all windows viewing this buffer where point was at the end
+    Window *leaves[256];
+    int count = 0;
+    collect_leaf_windows(selected_frame->wm.root, leaves, &count);
+    
+    for (int i = 0; i < count; i++) {
+        Window *win = leaves[i];
+        if (win->buffer == buf && win->point == old_end_pos) {
+            win->point = old_end_pos + chars_added;
+        }
+    }
+    
+    buf->modified = true;
 }
 
 void message(const char *format, ...) {
@@ -372,24 +411,24 @@ void message(const char *format, ...) {
     vsnprintf(formatted, needed, format, args);
     va_end(args);
     
-    Buffer *minibuf = wm.minibuffer_window->buffer;
+    Buffer *minibuf = selected_frame->wm.minibuffer_window->buffer;
     
-    if (wm.minibuffer_active) {
+    if (selected_frame->wm.minibuffer_active) {
         // Clear any existing echo area message first
-        if (wm.minibuffer_message_start > 0) {
+        if (selected_frame->wm.minibuffer_message_start > 0) {
             size_t current_len = rope_char_length(minibuf->rope);
-            if (current_len > wm.minibuffer_message_start) {
-                size_t msg_len = current_len - wm.minibuffer_message_start;
-                remove_text_properties(minibuf, wm.minibuffer_message_start, current_len);
+            if (current_len > selected_frame->wm.minibuffer_message_start) {
+                size_t msg_len = current_len - selected_frame->wm.minibuffer_message_start;
+                remove_text_properties(minibuf, selected_frame->wm.minibuffer_message_start, current_len);
                 minibuf->rope = rope_delete_chars(minibuf->rope, 
-                                                  wm.minibuffer_message_start, 
+                                                  selected_frame->wm.minibuffer_message_start, 
                                                   msg_len);
             }
         }
         
         // Append new message in brackets
         size_t original_len = rope_char_length(minibuf->rope);
-        wm.minibuffer_message_start = original_len;  // Track where message starts
+        selected_frame->wm.minibuffer_message_start = original_len;  // Track where message starts
         
         char *bracketed = malloc(strlen(formatted) + 4);
         if (bracketed) {
@@ -414,7 +453,7 @@ void message(const char *format, ...) {
         }
     } else {
         // Minibuffer is not active - replace content
-        wm.minibuffer_message_start = 0;  // Reset tracking
+        selected_frame->wm.minibuffer_message_start = 0;  // Reset tracking
         size_t len = rope_char_length(minibuf->rope);
         if (len > 0) {
             clear_text_properties(minibuf);
@@ -423,7 +462,7 @@ void message(const char *format, ...) {
         
         size_t msg_len = strlen(formatted);
         minibuf->rope = rope_insert_chars(minibuf->rope, 0, formatted, msg_len);
-        wm.minibuffer_window->point = 0;
+        selected_frame->wm.minibuffer_window->point = 0;
     }
     
     // Log to *Messages* buffer
@@ -489,7 +528,7 @@ void set_raw_prefix_arg(bool value) {
 
 void keyboard_quit() {
     current_buffer->region.active = false;
-    if (wm.selected == wm.minibuffer_window) {
+    if (selected_frame->wm.selected == selected_frame->wm.minibuffer_window) {
         deactivate_minibuffer();
     }
 }
@@ -666,7 +705,7 @@ KeyChordMap* current_global_map(void) {
 
 
 // Helper function to find the character position at a given scroll offset
-static size_t find_start_position(Buffer *buffer, Window *win, float *out_start_y) {
+size_t find_start_position(Buffer *buffer, Window *win, float *out_start_y) {
     if (!win || win->is_minibuffer) {
         *out_start_y = 0;
         return 0;
@@ -682,7 +721,7 @@ static size_t find_start_position(Buffer *buffer, Window *win, float *out_start_
     }
     
     float line_height = default_font->ascent + default_font->descent;
-    float max_x = win->width - 2 * fringe_width;
+    float max_x = win->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width);
     
     // Calculate how many lines are scrolled off the top
     // Add a buffer of a few lines to avoid visual glitches
@@ -729,6 +768,9 @@ static size_t find_start_position(Buffer *buffer, Window *win, float *out_start_
     return pos;
 }
 
+
+// TODO Use frame->line_height and frame->column_width
+// instead of querying the default face each frame to get line_height
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     // Get default face for fallback
     Face *default_face = get_face(FACE_DEFAULT);
@@ -740,7 +782,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     Color base_fg = theme_cache->base_fg;
     
     float line_height = default_font->ascent + default_font->descent;
-    float max_x = start_x + (win->width - 2 * fringe_width);
+    float max_x = start_x + (win->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width));
     
     // Get truncate-lines buffer-local variable
     SCM truncate_lines_sym = scm_from_utf8_symbol("truncate-lines");
@@ -834,6 +876,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             x = line_start_x;
             y -= current_line_height;
             current_line_height = line_height;
+
         } else {
             float char_width = character_width(char_font, ch);
             
@@ -852,6 +895,13 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     i += 2;
                     continue;
                 }
+                
+                // NEW: Skip characters that are off the left edge of the window
+                if (x + char_width < start_x) {
+                    x += char_width;
+                    i++;
+                    continue;
+                }
             } else {
                 if (x + char_width > max_x) {
                     x = start_x;
@@ -863,7 +913,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     }
                 }
             }
-            
+
             if (y >= window_bottom && y <= window_top) {
                 Color char_color = face->fg;
                 Color bg_color = face->bg;
@@ -875,6 +925,9 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 bool at_mark = mark_is_set && is_selected && visible_mark_mode && 
                                i == (size_t)buffer->region.mark && (size_t)buffer->region.mark != point;
                 
+                // Check if both window is selected AND frame is focused
+                bool should_draw_filled = is_selected && selected_frame && selected_frame->focused;
+
                 if (at_cursor) {
                     // Save cursor position and properties for later drawing
                     cursor_x = x;
@@ -882,7 +935,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     Character *char_info = font_get_character(char_font, ch);
                     cursor_width = char_info ? char_info->ax : char_width;
                     cursor_height = char_font->ascent + char_font->descent;
-                    
+    
                     // Determine cursor color based on crystal-point-mode
                     if (crystal_point_mode && ch != '\n' && ch != ' ' && ch != '\t') {
                         cursor_color = face->fg;
@@ -890,9 +943,9 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                         cursor_color = face_cache->faces[FACE_CURSOR]->bg;
                     }
                     cursor_found = true;
-                    
-                    // Only modify character appearance if window is selected and cursor is visible
-                    if (is_selected && buffer->cursor.visible) {
+    
+                    // Only modify character appearance if window is selected, frame is focused, and cursor is visible
+                    if (should_draw_filled && buffer->cursor.visible) {
                         char_color = base_bg;
                     }
                 } else if (at_mark) {
@@ -900,6 +953,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     bg_color = face_cache->faces[FACE_VISIBLE_MARK]->bg;
                     char_color = base_bg;
                 }
+
                 
                 // Draw background if needed
                 bool needs_bg = (!at_cursor || !is_selected || !buffer->cursor.visible) && 
@@ -947,14 +1001,18 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     buffer->cursor.y = cursor_y;
     
     // Draw cursor based on window selection state
+    // Draw cursor based on window selection state
     if (cursor_found) {
         // Skip drawing if minibuffer is not active
-        if (win && win->is_minibuffer && !wm.minibuffer_active) {
+        if (win && win->is_minibuffer && !selected_frame->wm.minibuffer_active) {
             return;
         }
-        
-        if (is_selected) {
-            // Draw filled cursor with optional blinking for selected window
+
+        // Check if both window is selected AND frame is focused
+        bool should_draw_filled = is_selected && selected_frame && selected_frame->focused;
+
+        if (should_draw_filled) {
+            // Draw filled cursor with optional blinking for selected window in focused frame
             bool blink_cursor_mode = scm_get_bool("blink-cursor-mode", true);
             size_t blink_cursor_blinks = scm_get_size_t("blink-cursor-blinks", 0);
             float blink_cursor_interval = scm_get_float("blink-cursor-interval", 0.1);
@@ -963,7 +1021,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             if (blink_cursor_mode && buffer->cursor.blink_count < blink_cursor_blinks) {
                 double currentTime = getTime();
                 double interval = buffer->cursor.visible ? blink_cursor_interval : blink_cursor_delay;
-                
+        
                 if (currentTime - buffer->cursor.last_blink >= interval) {
                     buffer->cursor.visible = !buffer->cursor.visible;
                     buffer->cursor.last_blink = currentTime;
@@ -971,7 +1029,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                         buffer->cursor.blink_count++;
                     }
                 }
-                
+        
                 if (buffer->cursor.visible) {
                     quad2D((vec2){cursor_x, cursor_y},
                            (vec2){cursor_width, cursor_height}, cursor_color);
@@ -981,21 +1039,28 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                        (vec2){cursor_width, cursor_height}, cursor_color);
             }
         } else {
-            // Draw hollow cursor for non-selected windows
+            // Reset blink state when frame loses focus or window is not selected
+            if (is_selected) {
+                // Only reset for the selected window to avoid affecting other windows
+                buffer->cursor.visible = true;
+                buffer->cursor.blink_count = 0;
+            }
+    
+            // Draw hollow cursor for non-selected windows OR unfocused frame
             float border_width = 1.0f;
-            
+    
             // Bottom border
             quad2D((vec2){cursor_x, cursor_y + cursor_height - border_width},
                    (vec2){cursor_width, border_width}, cursor_color);
-            
+    
             // Top border
             quad2D((vec2){cursor_x, cursor_y},
                    (vec2){cursor_width, border_width}, cursor_color);
-            
+    
             // Left border
             quad2D((vec2){cursor_x, cursor_y},
                    (vec2){border_width, cursor_height}, cursor_color);
-            
+    
             // Right border
             quad2D((vec2){cursor_x + cursor_width - border_width, cursor_y},
                    (vec2){border_width, cursor_height}, cursor_color);

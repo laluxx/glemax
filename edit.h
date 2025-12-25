@@ -4,7 +4,8 @@
 #include <stddef.h>
 
 void message(const char *format, ...);
-void insert(uint32_t codepoint); // TODO it should take a string
+/* void insert(uint32_t codepoint); // TODO it should take a string */
+void insert(const char *text);
 void delete_backward_char();
 void delete_char();
 void newline();

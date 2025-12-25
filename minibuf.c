@@ -2,59 +2,61 @@
 #include "buffer.h"
 #include "wm.h"
 #include "rope.h"
+#include "frame.h"
+
 
 void activate_minibuffer() {
-    if (wm.minibuffer_active) return;
+    if (selected_frame->wm.minibuffer_active) return;
     
-    wm.minibuffer_active = true;
+    selected_frame->wm.minibuffer_active = true;
     
     // Save window configuration before switching
-    if (wm.saved_config.windows) free_window_configuration(&wm.saved_config);
-    wm.saved_config = save_window_configuration();
+    if (selected_frame->wm.saved_config.windows) free_window_configuration(&selected_frame->wm.saved_config);
+    selected_frame->wm.saved_config = save_window_configuration();
     
     // Store the current window (for minibuffer highlight)
-    wm.previous_window = wm.selected;
+    selected_frame->wm.previous_window = selected_frame->wm.selected;
     
     // Switch to minibuffer
-    wm.selected->is_selected = false;
-    wm.minibuffer_window->is_selected = true;
-    wm.selected = wm.minibuffer_window;
-    current_buffer = wm.minibuffer_window->buffer;
-    current_buffer->pt = wm.minibuffer_window->point;
+    selected_frame->wm.selected->is_selected = false;
+    selected_frame->wm.minibuffer_window->is_selected = true;
+    selected_frame->wm.selected = selected_frame->wm.minibuffer_window;
+    current_buffer = selected_frame->wm.minibuffer_window->buffer;
+    current_buffer->pt = selected_frame->wm.minibuffer_window->point;
 }
 
 
 
 
 void deactivate_minibuffer() {
-    if (!wm.minibuffer_active) return;
-    wm.minibuffer_active = false;
+    if (!selected_frame->wm.minibuffer_active) return;
+    selected_frame->wm.minibuffer_active = false;
     
     // Clear minibuffer content
-    if (wm.minibuffer_window->buffer) {
-        size_t len = rope_char_length(wm.minibuffer_window->buffer->rope);
+    if (selected_frame->wm.minibuffer_window->buffer) {
+        size_t len = rope_char_length(selected_frame->wm.minibuffer_window->buffer->rope);
         if (len > 0) {
-            wm.minibuffer_window->buffer->rope = rope_delete_chars(
-                wm.minibuffer_window->buffer->rope, 0, len);
+            selected_frame->wm.minibuffer_window->buffer->rope = rope_delete_chars(
+                selected_frame->wm.minibuffer_window->buffer->rope, 0, len);
         }
-        wm.minibuffer_window->point = 0;
+        selected_frame->wm.minibuffer_window->point = 0;
     }
     
-    wm.minibuffer_window->is_selected = false;
+    selected_frame->wm.minibuffer_window->is_selected = false;
     
     /* // Restore saved window configuration */
-    restore_window_configuration(&wm.saved_config);
-    free_window_configuration(&wm.saved_config);
+    restore_window_configuration(&selected_frame->wm.saved_config);
+    free_window_configuration(&selected_frame->wm.saved_config);
     
-    wm.previous_window = NULL;
+    selected_frame->wm.previous_window = NULL;
 }
 
 #include "faces.h"
 void read_from_minibuffer(const char *prompt) {
     activate_minibuffer();
-    wm.minibuffer_message_start = 0;  // No message yet
+    selected_frame->wm.minibuffer_message_start = 0;  // No message yet
     
-    Buffer *mb = wm.minibuffer_window->buffer;
+    Buffer *mb = selected_frame->wm.minibuffer_window->buffer;
     
     if (prompt) {
         size_t len = strlen(prompt);
@@ -76,7 +78,7 @@ void read_from_minibuffer(const char *prompt) {
 
 
         mb->pt = rope_char_length(mb->rope);
-        wm.minibuffer_window->point = mb->pt;
+        selected_frame->wm.minibuffer_window->point = mb->pt;
     }
 }
 
@@ -91,20 +93,20 @@ void eval_expression() {
 
 
 void clear_minibuffer() {
-    Buffer *minibuf = wm.minibuffer_window->buffer;
+    Buffer *minibuf = selected_frame->wm.minibuffer_window->buffer;
     if (!minibuf) return;
     
-    if (wm.minibuffer_active) {
+    if (selected_frame->wm.minibuffer_active) {
         // Clear only the echo area (the [...] message part)
-        if (wm.minibuffer_message_start > 0) {
+        if (selected_frame->wm.minibuffer_message_start > 0) {
             size_t current_len = rope_char_length(minibuf->rope);
-            if (current_len > wm.minibuffer_message_start) {
-                size_t msg_len = current_len - wm.minibuffer_message_start;
-                remove_text_properties(minibuf, wm.minibuffer_message_start, current_len);
+            if (current_len > selected_frame->wm.minibuffer_message_start) {
+                size_t msg_len = current_len - selected_frame->wm.minibuffer_message_start;
+                remove_text_properties(minibuf, selected_frame->wm.minibuffer_message_start, current_len);
                 minibuf->rope = rope_delete_chars(minibuf->rope, 
-                                                  wm.minibuffer_message_start, 
+                                                  selected_frame->wm.minibuffer_message_start, 
                                                   msg_len);
-                wm.minibuffer_message_start = 0;  // Reset
+                selected_frame->wm.minibuffer_message_start = 0;  // Reset
             }
         }
     } else {
@@ -113,7 +115,7 @@ void clear_minibuffer() {
         if (len > 0) {
             clear_text_properties(minibuf);
             minibuf->rope = rope_delete_chars(minibuf->rope, 0, len);
-            wm.minibuffer_window->point = 0;
+            selected_frame->wm.minibuffer_window->point = 0;
         }
     }
 }

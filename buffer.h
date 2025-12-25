@@ -39,7 +39,6 @@ typedef struct Buffer {
 extern Buffer *all_buffers;
 extern Buffer *current_buffer;
 
-
 // Keymap functions
 KeyChordMap* make_sparse_keymap(void);
 void use_local_map(KeyChordMap *local_map, Buffer *buf);
@@ -64,6 +63,7 @@ void next_buffer();
 void previous_buffer();
 
 void set_point(size_t new_pt);
+size_t goto_char(size_t pos);
 void move_point(int delta);
 
 void end_of_line();
@@ -113,6 +113,7 @@ void keyboard_quit();
 
 bool is_pair(uint32_t left, uint32_t right);
 
+size_t find_start_position(Buffer *buffer, Window *win, float *out_start_y);
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y);
 void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y);
 void reset_cursor_blink(Buffer *buffer);

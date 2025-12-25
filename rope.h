@@ -65,6 +65,9 @@ rope_t *rope_new(void);
 rope_t *rope_new_from_str(const char *str, size_t len);
 void rope_free(rope_t *rope);
 
+uint32_t utf8_decode(const char *str, size_t len, size_t *bytes_read);
+size_t utf8_encode(uint32_t codepoint, char *out);
+
 /* Query operations - O(log n) */
 size_t rope_byte_length(const rope_t *rope);
 size_t rope_char_length(const rope_t *rope);
@@ -238,6 +241,29 @@ uint32_t utf8_decode(const char *str, size_t len, size_t *bytes_read) {
         default:
             return 0xFFFD;
     }
+}
+
+size_t utf8_encode(uint32_t codepoint, char *out) {
+    if (codepoint <= 0x7F) {
+        out[0] = (char)codepoint;
+        return 1;
+    } else if (codepoint <= 0x7FF) {
+        out[0] = (char)(0xC0 | (codepoint >> 6));
+        out[1] = (char)(0x80 | (codepoint & 0x3F));
+        return 2;
+    } else if (codepoint <= 0xFFFF) {
+        out[0] = (char)(0xE0 | (codepoint >> 12));
+        out[1] = (char)(0x80 | ((codepoint >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (codepoint & 0x3F));
+        return 3;
+    } else if (codepoint <= 0x10FFFF) {
+        out[0] = (char)(0xF0 | (codepoint >> 18));
+        out[1] = (char)(0x80 | ((codepoint >> 12) & 0x3F));
+        out[2] = (char)(0x80 | ((codepoint >> 6) & 0x3F));
+        out[3] = (char)(0x80 | (codepoint & 0x3F));
+        return 4;
+    }
+    return 0;  // Invalid codepoint
 }
 
 /* Count UTF-8 characters in byte string */

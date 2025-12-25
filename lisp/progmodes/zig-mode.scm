@@ -299,7 +299,7 @@
 (define-derived-mode zig-mode prog-mode "Zig"
   "A major mode for the Zig programming language."
   (use-local-map zig-mode-map)
-  (setq-local 'tab-width 4)
+  (setq-local tab-width 4)
   ;; Initialize tree-sitter if available
   (zig-mode-setup-treesitter)
   (message "Zig mode enabled"))
