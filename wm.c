@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include "lisp.h"
+#include "faces.h"
+#include "modeline.h"
+
 
 #define DEFAULT_SPLIT_RATIO 0.5f
 
@@ -296,6 +299,8 @@ void restore_window_configuration(WindowConfiguration *config) {
     }
     
     selected_frame->wm.window_count = count;
+    
+    current_buffer = selected_frame->wm.selected->buffer;
     current_buffer->pt = selected_frame->wm.selected->point;
     
     wm_recalculate_layout();
@@ -780,12 +785,6 @@ void shrink_window() {
     wm_recalculate_layout();
 }
 
-#include "faces.h"
-
-
-#include "modeline.h"
-
-
 // NOTE We should use Scrissors to emulate emacs 100%
 // Or do weird tricks with the order of drawing
 // But we can’t because draw cakks are batched and reordered rn
@@ -1035,29 +1034,6 @@ void draw_window_dividers(WindowManager wm) {
     draw_dividers_recursive(wm.root);
 }
 
-
-static size_t count_buffer_lines(Buffer *buf) {
-    if (!buf) return 1;
-    
-    size_t text_len = rope_char_length(buf->rope);
-    if (text_len == 0) return 1;  // Empty buffer = 1 line
-    
-    size_t line_count = 1;  // At least one line
-    
-    // Count newlines
-    rope_iter_t iter;
-    rope_iter_init(&iter, buf->rope, 0);
-    
-    uint32_t ch;
-    while (rope_iter_next_char(&iter, &ch)) {
-        if (ch == '\n') {
-            line_count++;
-        }
-    }
-    
-    rope_iter_destroy(&iter);
-    return line_count;
-}
 
 // Count actual visual lines including wraps
 float calculate_minibuffer_height() {
@@ -1794,6 +1770,8 @@ void move_to_window_line_top_bottom() {
 /// SCM
 
 
+
+
 // Get minimum window width in pixels (columns + fringes)
 SCM scm_window_min_pixel_width(SCM window_obj) {
     // Get window-min-width in columns
@@ -1803,8 +1781,8 @@ SCM scm_window_min_pixel_width(SCM window_obj) {
     float char_width = frame_char_width(selected_frame);
     
     // Calculate minimum width: columns + fringes
-    float min_width = (float)min_cols * char_width + 
-                      selected_frame->left_fringe_width + 
+    float min_width = (float)min_cols * char_width +
+                      selected_frame->left_fringe_width +
                       selected_frame->right_fringe_width;
     
     return scm_from_double(min_width);

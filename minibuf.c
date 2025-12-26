@@ -3,7 +3,7 @@
 #include "wm.h"
 #include "rope.h"
 #include "frame.h"
-
+#include "faces.h"
 
 void activate_minibuffer() {
     if (selected_frame->wm.minibuffer_active) return;
@@ -25,9 +25,6 @@ void activate_minibuffer() {
     current_buffer->pt = selected_frame->wm.minibuffer_window->point;
 }
 
-
-
-
 void deactivate_minibuffer() {
     if (!selected_frame->wm.minibuffer_active) return;
     selected_frame->wm.minibuffer_active = false;
@@ -44,14 +41,20 @@ void deactivate_minibuffer() {
     
     selected_frame->wm.minibuffer_window->is_selected = false;
     
-    /* // Restore saved window configuration */
+    // Restore saved window configuration
     restore_window_configuration(&selected_frame->wm.saved_config);
     free_window_configuration(&selected_frame->wm.saved_config);
     
     selected_frame->wm.previous_window = NULL;
 }
 
-#include "faces.h"
+void keyboard_quit() {
+    current_buffer->region.active = false;
+    if (selected_frame->wm.selected == selected_frame->wm.minibuffer_window) {
+        deactivate_minibuffer();
+    }
+}
+
 void read_from_minibuffer(const char *prompt) {
     activate_minibuffer();
     selected_frame->wm.minibuffer_message_start = 0;  // No message yet
@@ -89,8 +92,6 @@ void execute_extended_command() {
 void eval_expression() {
     read_from_minibuffer("Eval: ");
 }
-
-
 
 void clear_minibuffer() {
     Buffer *minibuf = selected_frame->wm.minibuffer_window->buffer;

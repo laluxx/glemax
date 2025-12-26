@@ -6,4 +6,6 @@ void eval_expression();
 
 void activate_minibuffer();
 void deactivate_minibuffer();
+void keyboard_quit();
+
 void clear_minibuffer();

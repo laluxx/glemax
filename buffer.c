@@ -526,12 +526,6 @@ void set_raw_prefix_arg(bool value) {
 
 
 
-void keyboard_quit() {
-    current_buffer->region.active = false;
-    if (selected_frame->wm.selected == selected_frame->wm.minibuffer_window) {
-        deactivate_minibuffer();
-    }
-}
 
 
 /// Buffer local variables

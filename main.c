@@ -20,110 +20,48 @@
 uint32_t sw = 500;
 uint32_t sh = 500;
 
-/* void text_callback(unsigned int codepoint) { */
-/*     bool electric_pair_mode = scm_get_bool("electric-pair-mode", false); */
+// Helper function to check if there are unmatched closing characters of a specific type after point
+// Uses scan_lists for efficient balance checking
+static bool has_unmatched_closing_after(Buffer *buffer, size_t point, char opening, char closing) {
+    size_t buf_len = rope_char_length(buffer->rope);
+    if (point >= buf_len) return false;
     
-/*     uint32_t closing_char = 0; */
-/*     bool should_pair = false; */
+    int balance = 0;
     
-/*     if (electric_pair_mode && codepoint < 128) { */
-/*         switch (codepoint) { */
-/*             case '(': closing_char = ')'; should_pair = true; break; */
-/*             case '[': closing_char = ']'; should_pair = true; break; */
-/*             case '{': closing_char = '}'; should_pair = true; break; */
-/*             case '<': closing_char = '>'; should_pair = true; break; */
-/*             case '"': closing_char = '"'; should_pair = true; break; */
-/*             case '\'': closing_char = '\''; should_pair = true; break; */
-/*             case '`': closing_char = '`'; should_pair = true; break; */
-/*         } */
-/*     } */
+    // Scan from beginning to current point to get initial balance
+    rope_iter_t iter;
+    rope_iter_init(&iter, buffer->rope, 0);
+    uint32_t ch;
     
-/*     if (should_pair) { */
-/*         char pair[3] = {(char)codepoint, (char)closing_char, '\0'}; */
-/*         size_t insert_pos = current_buffer->pt; */
+    while (iter.char_pos < point) {
+        if (!rope_iter_next_char(&iter, &ch)) break;
         
-/*         // Capture tree-sitter state BEFORE modification */
-/*         size_t start_byte = 0; */
-/*         TSPoint start_point = {0, 0}; */
-/*         bool has_treesit = current_buffer->ts_state && current_buffer->ts_state->tree; */
-        
-/*         if (has_treesit) { */
-/*             start_byte = rope_char_to_byte(current_buffer->rope, insert_pos); */
-/*             start_point = treesit_char_to_point(current_buffer, insert_pos); */
-/*         } */
-        
-/*         // Update region mark */
-/*         if (current_buffer->region.active && current_buffer->region.mark > insert_pos) { */
-/*             current_buffer->region.mark += 2; */
-/*         } */
-        
-/*         // Insert 2 ASCII characters (2 bytes) */
-/*         current_buffer->rope = rope_insert_chars(current_buffer->rope, insert_pos, pair, 2); */
-        
-/*         // Update tree-sitter */
-/*         if (has_treesit) { */
-/*             // CRITICAL: new_end_byte = start_byte + 2 (not char position!) */
-/*             size_t new_end_byte = start_byte + 2;  // 2 ASCII bytes */
-/*             TSPoint new_end_point = treesit_char_to_point(current_buffer, insert_pos + 2); */
-            
-/*             treesit_update_tree( */
-/*                 current_buffer, */
-/*                 start_byte, */
-/*                 start_byte, */
-/*                 new_end_byte, */
-/*                 start_point, */
-/*                 start_point, */
-/*                 new_end_point */
-/*             ); */
-            
-/*             treesit_reparse_if_needed(current_buffer); */
-/*             treesit_apply_highlights(current_buffer); */
-/*         } */
-        
-/*         adjust_text_properties(current_buffer, insert_pos, 2); */
-/*         adjust_all_window_points_after_modification(insert_pos, 2); */
-/*         set_point(current_buffer->pt + 1); */
-/*         update_goal_column(); */
-/*         reset_cursor_blink(current_buffer); */
-/*     } else { */
-/*         insert(codepoint); */
-/*     } */
-/* } */
-
-
-/* void text_callback(unsigned int codepoint) { */
-/*     bool electric_pair_mode = scm_get_bool("electric-pair-mode", false); */
+        if (ch == (uint32_t)opening) {
+            balance++;
+        } else if (ch == (uint32_t)closing) {
+            balance--;
+        }
+    }
     
-/*     // Check if this is an opening pair character */
-/*     uint32_t closing_char = 0; */
-/*     bool should_pair = false; */
-    
-/*     if (electric_pair_mode && codepoint < 128) { */
-/*         switch (codepoint) { */
-/*             case '(': closing_char = ')'; should_pair = true; break; */
-/*             case '[': closing_char = ']'; should_pair = true; break; */
-/*             case '{': closing_char = '}'; should_pair = true; break; */
-/*             case '<': closing_char = '>'; should_pair = true; break; */
-/*             case '"': closing_char = '"'; should_pair = true; break; */
-/*             case '\'': closing_char = '\''; should_pair = true; break; */
-/*             case '`': closing_char = '`'; should_pair = true; break; */
-/*         } */
-/*     } */
-    
-/*     if (should_pair) { */
-/*         // Insert both characters as a single string */
-/*         char pair[3] = {(char)codepoint, (char)closing_char, 0}; */
+    // Now scan from point to end, checking if balance ever goes negative
+    while (iter.char_pos < buf_len) {
+        if (!rope_iter_next_char(&iter, &ch)) break;
         
-/*         if (current_buffer->pt < current_buffer->region.mark) current_buffer->region.mark += 2; */
-/*         current_buffer->rope = rope_insert_chars(current_buffer->rope, current_buffer->pt, pair, 2); */
-/*         adjust_all_window_points_after_modification(current_buffer->pt, 2); */
-/*         set_point(current_buffer->pt + 1);  // Move to between the pair */
-/*         update_goal_column(); */
-/*     } else { */
-/*         // No pair, just insert normally */
-/*         insert(codepoint); */
-/*     } */
-/* } */
+        if (ch == (uint32_t)opening) {
+            balance++;
+        } else if (ch == (uint32_t)closing) {
+            balance--;
+            // If balance goes negative, we found an unmatched closing char
+            if (balance < 0) {
+                rope_iter_destroy(&iter);
+                return true;
+            }
+        }
+    }
+    
+    rope_iter_destroy(&iter);
+    return false;
+}
 
 void text_callback(unsigned int codepoint) {
     clear_minibuffer();
@@ -132,11 +70,101 @@ void text_callback(unsigned int codepoint) {
     char utf8_buf[5] = {0};  // Max 4 bytes + null terminator
     size_t len = utf8_encode(codepoint, utf8_buf);
     
+    bool electric_pair_mode = scm_get_bool("electric-pair-mode", false);
+    
+    // Handle electric pairing
+    if (electric_pair_mode && len == 1) {  // Only for single-byte characters
+        char ch = utf8_buf[0];
+        char closing_char = 0;
+        bool should_pair = false;
+        bool is_closing = false;
+        
+        switch (ch) {
+            case '(': closing_char = ')'; should_pair = true; break;
+            case '[': closing_char = ']'; should_pair = true; break;
+            case '{': closing_char = '}'; should_pair = true; break;
+            case '<': closing_char = '>'; should_pair = true; break;
+            case '"': closing_char = '"'; should_pair = true; break;
+            case '\'': closing_char = '\''; should_pair = true; break;
+            case '`': closing_char = '`'; should_pair = true; break;
+            
+            // Check if typed character is a closing character
+            case ')':
+            case ']':
+            case '}':
+            case '>':
+                is_closing = true;
+                break;
+        }
+        
+        // If we typed a closing character, check if it matches the next character
+        if (is_closing) {
+            // Get the character at current point
+            size_t buf_len = rope_char_length(current_buffer->rope);
+            if (current_buffer->pt < buf_len) {
+                uint32_t next_char = rope_char_at(current_buffer->rope, current_buffer->pt);
+                
+                // If the next character matches what we typed, just skip over it
+                if (next_char == (uint32_t)ch) {
+                    set_point(current_buffer->pt + 1);
+                    update_windows_scroll();
+                    
+                    // Only hide if the feature is enabled and pointer is currently visible
+                    if (scm_get_bool("make-pointer-invisible", true) &&
+                        scm_get_bool("pointer-visible", true)) {
+                        hideCursor();
+                        scm_c_define("pointer-visible", SCM_BOOL_F);
+                    }
+                    
+                    return;
+                }
+            }
+        }
+        
+        if (should_pair) {
+            // Check if there are unmatched closing characters ahead
+            bool has_unmatched = has_unmatched_closing_after(current_buffer, current_buffer->pt, ch, closing_char);
+            
+            if (has_unmatched) {
+                // There's an unmatched closing char, so just insert the opening char
+                insert(utf8_buf);
+                update_windows_scroll();
+                
+                // Only hide if the feature is enabled and pointer is currently visible
+                if (scm_get_bool("make-pointer-invisible", true) &&
+                    scm_get_bool("pointer-visible", true)) {
+                    hideCursor();
+                    scm_c_define("pointer-visible", SCM_BOOL_F);
+                }
+                
+                return;
+            }
+            
+            // Insert both characters at once
+            char pair_str[3] = {ch, closing_char, '\0'};
+            insert(pair_str);
+            
+            // Move point back one position (between the pair)
+            set_point(current_buffer->pt - 1);
+            update_windows_scroll();
+            
+            // Only hide if the feature is enabled and pointer is currently visible
+            if (scm_get_bool("make-pointer-invisible", true) &&
+                scm_get_bool("pointer-visible", true)) {
+                hideCursor();
+                scm_c_define("pointer-visible", SCM_BOOL_F);
+            }
+            
+            return;
+        }
+    }
+    
+    // Normal insertion (no pairing)
     insert(utf8_buf);
     update_windows_scroll();
-
+    
     // Only hide if the feature is enabled and pointer is currently visible
-    if (scm_get_bool("make-pointer-invisible", true) && 
+    if (scm_get_bool("make-pointer-invisible", true) &&
         scm_get_bool("pointer-visible", true)) {
         hideCursor();
         scm_c_define("pointer-visible", SCM_BOOL_F);
@@ -301,12 +329,6 @@ Window* find_window_at_point(float x, float y) {
     // Then check regular windows
     return find_window_at_point_recursive(selected_frame->wm.root, x, y);
 }
-
-
-
-// TODO Set the cursor position where we click (mouse-set-point), drag for the region
-// and if we click on the modeline select the window without setting the cursor position
-// TODO If we click on the minibuffer split and open the *messages* buffer using ‘display-buffer’
 
 size_t point_at_window_position(Window *win, float click_x, float click_y) {
     if (!win || !win->buffer) return 0;
@@ -514,11 +536,13 @@ size_t point_at_window_position(Window *win, float click_x, float click_y) {
 
 static GLFWcursor* arrow_cursor = NULL;
 static GLFWcursor* hresize_cursor = NULL;
+static GLFWcursor* vresize_cursor = NULL;
 static GLFWcursor* current_cursor = NULL;
 
 void init_cursors() {
     arrow_cursor = createStandardCursor(ARROW_CURSOR);
     hresize_cursor = createStandardCursor(HRESIZE_CURSOR);
+    vresize_cursor = createStandardCursor(VRESIZE_CURSOR);
     current_cursor = arrow_cursor;  // Set initial cursor
 }
 
@@ -549,6 +573,69 @@ static bool is_on_divider(float x, float y, Window *win, Window **out_parent) {
 }
 
 
+// Returns true if the position is on a modeline that can be dragged for vertical resizing
+static bool is_on_draggable_modeline(float x, float y, Window *win, Window **out_parent) {
+    if (!win) return false;
+    
+    // If it's a leaf window with a modeline
+    if (is_leaf_window(win) && !win->is_minibuffer) {
+        Font *font = face_cache->faces[FACE_DEFAULT]->font;
+        float line_height = font->ascent + font->descent;
+        float modeline_y = win->y;
+        
+        // Check if mouse is on this window's modeline
+        if (x >= win->x && x <= win->x + win->width &&
+            y >= modeline_y && y <= modeline_y + line_height) {
+            
+            // Now check if this window has a horizontal split parent with this window on top
+            // We need to traverse up to find the parent
+            // For now, we'll check in the parent finding logic
+            if (out_parent) {
+                *out_parent = win;
+            }
+            return true;
+        }
+    }
+    
+    // Recursively check children
+    bool found = false;
+    if (win->left) {
+        found = is_on_draggable_modeline(x, y, win->left, out_parent);
+        if (found) return true;
+    }
+    if (win->right) {
+        found = is_on_draggable_modeline(x, y, win->right, out_parent);
+        if (found) return true;
+    }
+    
+    return false;
+}
+
+// Check if 'target' is a descendant of 'node' (or is the node itself)
+static bool is_descendant_of(Window *node, Window *target) {
+    if (!node) return false;
+    if (node == target) return true;
+    
+    if (is_leaf_window(node)) return false;
+    
+    return is_descendant_of(node->left, target) || is_descendant_of(node->right, target);
+}
+
+// Find the horizontal split parent where this window is in the top child subtree
+static Window* find_horizontal_split_parent(Window *root, Window *target) {
+    if (!root || is_leaf_window(root)) return NULL;
+    
+    // Check if this is a horizontal split with target in left (top) subtree
+    if (root->split_type == SPLIT_HORIZONTAL && is_descendant_of(root->left, target)) {
+        return root;
+    }
+    
+    // Recursively search in children
+    Window *result = find_horizontal_split_parent(root->left, target);
+    if (result) return result;
+    return find_horizontal_split_parent(root->right, target);
+}
+
 
 // Store absolute positions of all dividers when drag starts
 typedef struct {
@@ -560,7 +647,11 @@ static DividerPosition saved_dividers[64];
 static int saved_divider_count = 0;
 
 static bool is_dragging_divider = false;
+static bool is_dragging_modeline = false;
 static Window *dragging_divider_parent = NULL;
+static Window *dragging_modeline_window = NULL;
+static Window *dragging_modeline_parent = NULL;
+
 static float drag_start_x = 0;
 static float drag_start_y = 0;
 static float drag_start_ratio = 0;
@@ -597,16 +688,21 @@ static void save_divider_positions(Window *win, bool vertical, Window *exclude) 
 static bool check_min_sizes_recursive(Window *win, bool is_vertical) {
     if (!win || is_leaf_window(win)) return true;
     
+    // Get minimum sizes from Scheme functions
+    float min_width_pixels = scm_to_double(scm_window_min_pixel_width(SCM_UNDEFINED));
+    float min_height_pixels = scm_to_double(scm_window_min_pixel_height(SCM_UNDEFINED));
+    
     // Check this window's split
     if ((is_vertical && win->split_type == SPLIT_VERTICAL) ||
         (!is_vertical && win->split_type == SPLIT_HORIZONTAL)) {
         
         float size = is_vertical ? win->width : win->height;
+        float min_size = is_vertical ? min_width_pixels : min_height_pixels;
         float left_size = size * win->split_ratio;
         float right_size = size * (1.0f - win->split_ratio);
         
         // If either child is too small, fail
-        if (left_size < MIN_WINDOW_SIZE || right_size < MIN_WINDOW_SIZE) {
+        if (left_size < min_size || right_size < min_size) {
             return false;
         }
     }
@@ -621,13 +717,17 @@ static bool check_min_sizes_recursive(Window *win, bool is_vertical) {
 // Restore divider positions, but allow them to move if constrained
 // Returns true if all dividers were successfully restored without violating min size
 static bool restore_divider_positions() {
+    // Get minimum sizes from Scheme functions
+    float min_width_pixels = scm_to_double(scm_window_min_pixel_width(SCM_UNDEFINED));
+    float min_height_pixels = scm_to_double(scm_window_min_pixel_height(SCM_UNDEFINED));
+    
     for (int i = 0; i < saved_divider_count; i++) {
         Window *win = saved_dividers[i].window;
         float target_abs_pos = saved_dividers[i].absolute_position;
         
         if (win->split_type == SPLIT_VERTICAL) {
             float new_ratio = (target_abs_pos - win->x) / win->width;
-            float min_ratio = MIN_WINDOW_SIZE / win->width;
+            float min_ratio = min_width_pixels / win->width;
             float max_ratio = 1.0f - min_ratio;
             
             // If we need to clamp, it means this divider is being pushed
@@ -643,7 +743,7 @@ static bool restore_divider_positions() {
             win->split_ratio = new_ratio;
         } else if (win->split_type == SPLIT_HORIZONTAL) {
             float new_ratio = (target_abs_pos - win->y) / win->height;
-            float min_ratio = MIN_WINDOW_SIZE / win->height;
+            float min_ratio = min_height_pixels / win->height;
             float max_ratio = 1.0f - min_ratio;
             
             // If we need to clamp, it means this divider is being pushed
@@ -663,6 +763,7 @@ static bool restore_divider_positions() {
     return true;
 }
 
+
 void mouse_button_callback(int button, int action, int mods) {
     if (button == MOUSE_BUTTON_LEFT) {
         double xpos, ypos;
@@ -672,7 +773,7 @@ void mouse_button_callback(int button, int action, int mods) {
         float y = (float)(context.swapChainExtent.height - ypos);
         
         if (action == PRESS) {
-            // Check if clicking on a divider
+            // Check if clicking on a vertical divider first (higher priority)
             Window *divider_parent = NULL;
             if (is_on_divider(x, y, selected_frame->wm.root, &divider_parent)) {
                 // Start dragging the divider
@@ -688,6 +789,28 @@ void mouse_button_callback(int button, int action, int mods) {
                 save_divider_positions(selected_frame->wm.root, is_vertical, divider_parent);
                 
                 return;
+            }
+            
+            // Check if clicking on a draggable modeline
+            Window *modeline_window = NULL;
+            if (is_on_draggable_modeline(x, y, selected_frame->wm.root, &modeline_window)) {
+                // Find the horizontal split parent
+                Window *h_parent = find_horizontal_split_parent(selected_frame->wm.root, modeline_window);
+                if (h_parent) {
+                    // Start dragging the modeline
+                    is_dragging_modeline = true;
+                    dragging_modeline_window = modeline_window;
+                    dragging_modeline_parent = h_parent;
+                    drag_start_x = x;
+                    drag_start_y = y;
+                    drag_start_ratio = h_parent->split_ratio;
+                    
+                    // Save all other horizontal divider positions
+                    saved_divider_count = 0;
+                    save_divider_positions(selected_frame->wm.root, false, h_parent); // false = horizontal
+                    
+                    return;
+                }
             }
             
             // Get font for line height calculation
@@ -762,6 +885,12 @@ void mouse_button_callback(int button, int action, int mods) {
             if (is_dragging_divider) {
                 is_dragging_divider = false;
                 dragging_divider_parent = NULL;
+                saved_divider_count = 0;
+            }
+            if (is_dragging_modeline) {
+                is_dragging_modeline = false;
+                dragging_modeline_window = NULL;
+                dragging_modeline_parent = NULL;
                 saved_divider_count = 0;
             }
         }
@@ -856,9 +985,8 @@ static float snap_delta_to_char_width(float delta, float char_width, bool moving
 }
 
 
-// [A][B|C] Works fine but only from left to right
-// [A][B[C|D]] Doesn't work even from left to right it's like it
-// stops correctly only for 1 window
+// TODO Fix windows pushing eachoter after reaching
+// min-width or min-height, it doesn't work really nice rn
 // TODO Fix cursor hiding after we move at least once
 // on a window divider thus changing the cursor
 void cursor_pos_callback(double xpos, double ypos) {
@@ -955,13 +1083,66 @@ void cursor_pos_callback(double xpos, double ypos) {
                 wm_recalculate_layout();
             }
         }
-    } else {
+        update_windows_scroll();
+    }
+    // Handle modeline dragging (vertical resize)
+    else if (is_dragging_modeline && dragging_modeline_parent) {
+        bool pixelwise = scm_get_bool("window-resize-pixelwise", false);
+        
+        // Horizontal split - handle vertical dragging
+        float delta_y = y - drag_start_y;
+        
+        // Apply line-wise snapping to the delta
+        if (!pixelwise) {
+            float line_height = selected_frame->line_height;
+            bool moving_down = delta_y > 0;
+            delta_y = snap_delta_to_char_width(delta_y, line_height, moving_down);
+        }
+        
+        float new_position = drag_start_ratio * dragging_modeline_parent->height + delta_y;
+        float new_ratio = new_position / dragging_modeline_parent->height;
+        
+        // Get minimum height in pixels
+        float min_height = scm_to_double(scm_window_min_pixel_height(SCM_UNDEFINED));
+        float min_ratio = min_height / dragging_modeline_parent->height;
+        float max_ratio = 1.0f - min_ratio;
+        new_ratio = fmaxf(min_ratio, fminf(max_ratio, new_ratio));
+        
+        // Save old ratio for potential revert
+        float old_ratio = dragging_modeline_parent->split_ratio;
+        
+        // Apply new ratio
+        dragging_modeline_parent->split_ratio = new_ratio;
+        wm_recalculate_layout();
+        restore_divider_positions();
+        wm_recalculate_layout();
+        
+        // Check if all windows still meet minimum size requirements
+        if (!check_min_sizes_recursive(selected_frame->wm.root, false)) {  // false = horizontal
+            // Revert - minimum size violated
+            dragging_modeline_parent->split_ratio = old_ratio;
+            wm_recalculate_layout();
+            restore_divider_positions();
+            wm_recalculate_layout();
+        }
+        update_windows_scroll();
+    }
+    else {
         // Not dragging - update cursor based on hover position
         Window *divider_parent = NULL;
+        Window *modeline_window = NULL;
         GLFWcursor* desired_cursor = arrow_cursor;
         
+        // Check vertical dividers first (higher priority)
         if (is_on_divider(x, y, selected_frame->wm.root, &divider_parent)) {
             desired_cursor = hresize_cursor;
+        }
+        // Then check draggable modelines
+        else if (is_on_draggable_modeline(x, y, selected_frame->wm.root, &modeline_window)) {
+            Window *h_parent = find_horizontal_split_parent(selected_frame->wm.root, modeline_window);
+            if (h_parent) {
+                desired_cursor = vresize_cursor;
+            }
         }
         
         // ONLY change cursor if it's different from current

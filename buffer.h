@@ -109,7 +109,6 @@ void backward_kill_word();
 #include "wm.h"
 typedef struct Window Window;
 
-void keyboard_quit();
 
 bool is_pair(uint32_t left, uint32_t right);
 

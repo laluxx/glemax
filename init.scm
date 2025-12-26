@@ -374,7 +374,6 @@ application should instead call `window-resize' with a non-nil
 IGNORE argument.  In order to have `split-window' make a window
 narrower, explicitly specify the SIZE argument of that function.")
 
-;; TODO
 (define window-min-height 4)
 (set-var-doc! window-min-height
 "The minimum total height, in lines, of any window.
