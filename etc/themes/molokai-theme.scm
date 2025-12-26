@@ -37,7 +37,7 @@
   '(font-lock-negation-char-face              ((t (:foreground "#9c91e4"))))
   '(font-lock-number-face                     ((t (:foreground "#9c91e4"))))
   ;; '(font-lock-operator-face                   ((t (:foreground ""))))
-  '(font-lock-preprocessor-face               ((t (:foreground "#9c91e4" :inherit bold))))
+  '(font-lock-preprocessor-face               ((t (:foreground "#9c91e4" :weight bold))))
   '(font-lock-property-name-face              ((t (:inherit font-lock-variable-name-face))))
   '(font-lock-property-use-face               ((t (:inherit font-lock-property-name-face))))
   ;; '(font-lock-punctuation-face                ((t (:foreground ""))))
@@ -49,4 +49,6 @@
   '(font-lock-variable-name-face              ((t (:foreground "#fd971f"))))
   '(font-lock-variable-use-face               ((t (:inherit font-lock-variable-name-face))))
   '(font-lock-warning-face                    ((t (:inherit warning))))
+
+  '(minibuffer-prompt                         ((t (:foreground "#fd971f"))))
 )

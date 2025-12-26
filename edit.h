@@ -82,6 +82,7 @@ size_t scan_sexps(Buffer *buffer, size_t from, int count);
 void forward_sexp();
 void backward_sexp();
 void kill_sexp();
+void mark_sexp();
 
 /// DEFUN
 void beginning_of_defun();

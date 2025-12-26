@@ -85,15 +85,12 @@ void free_faces(void);
 
 Face *get_face(int id);
 Font *get_face_font(Face *face);
-
-// Resolve face inheritance - call after modifying faces or loading themes
 void resolve_face_inheritance(void);
-
 Face *get_named_face(const char *name);
 int face_id_from_name(const char *name);
 int face_at_pos(Buffer *buf, size_t pos);
-
 Font *fontconfig_load_font(const char *family, int size, bool bold, bool italic);
 Color parse_color(const char *str);
 
+Font *get_font_variant(bool bold, bool italic);
 void init_face_bindings(void);

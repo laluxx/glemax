@@ -200,18 +200,28 @@ static void reapply_all_themes(void) {
                         face->bg = spec->bg;
                         face->bg_set = true;
                     }
-                    if (spec->bold) face->bold = true;
-                    if (spec->italic) face->italic = true;
-                    if (spec->underline) face->underline = true;
+                    
+                    // Apply text attributes
+                    if (spec->bold)
+                        face->bold = true;
+                    if (spec->italic)
+                        face->italic = true;
+                    if (spec->underline)
+                        face->underline = true;
+                    
+                    // UPDATE THE FONT if bold or italic changed
+                    if (spec->bold || spec->italic) {
+                        face->font = get_font_variant(face->bold, face->italic);
+                    }
                 }
                 spec = spec->next;
             }
         }
-        
+
         free(theme_name);
         reversed = scm_cdr(reversed);
     }
-    
+
     // Step 3: Resolve inheritance
     resolve_face_inheritance();
 }
@@ -318,7 +328,7 @@ void disable_all_themes(void) {
     }
 }
 
-// Scheme bindings
+/// Scheme bindings
 
 static char *scm_to_c_string(SCM str) {
     if (scm_is_string(str)) {
@@ -405,9 +415,8 @@ static SCM scm_custom_theme_set_faces(SCM theme_name, SCM rest) {
         fspec->bold = false;
         fspec->italic = false;
         fspec->underline = false;
-        fspec->inherit_from = -1;      // Add this
-        fspec->has_inherit = false;    // Add this
-
+        fspec->inherit_from = -1;
+        fspec->has_inherit = false;
 
         // Navigate: (face-name ((t (:foreground ...))))
         SCM rest_of_spec = scm_cdr(face_spec);
@@ -504,7 +513,6 @@ static SCM scm_custom_theme_set_faces(SCM theme_name, SCM rest) {
                                     char *inherit_name = scm_to_c_string(value);
                                     int inherit_id = face_id_from_name(inherit_name);
                                     if (inherit_id >= 0) {
-                                        // Store this for later - you'll need to add inherit_from to FaceSpec too
                                         fspec->inherit_from = inherit_id;
                                         fspec->has_inherit = true;
                                     }

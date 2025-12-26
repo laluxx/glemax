@@ -50,4 +50,6 @@
   '(font-lock-variable-name-face              ((t (:foreground "#4c5361" :background "#dde4f2"))))
   '(font-lock-variable-use-face               ((t (:inherit font-lock-variable-name-face))))
   '(font-lock-warning-face                    ((t (:foreground "#5b4343" :background "#f6cfcb"))))
+
+  '(minibuffer-prompt                         ((t (:foreground "#7382a0"))))
 )

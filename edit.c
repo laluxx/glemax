@@ -2641,6 +2641,77 @@ void kill_sexp() {
     kill_region();
 }
 
+// TODO make sure it works well when `transient-mark-mode' is enabled
+void mark_sexp() {
+    int arg = get_prefix_arg();
+    bool raw_prefix_arg = get_raw_prefix_arg();
+    
+    // Check if we should extend: region active AND last command was mark-sexp
+    bool allow_extend = current_buffer->region.active && is_scm_proc(last_command, "mark-sexp");
+    
+    if (allow_extend) {
+        // Continuing from previous mark-sexp - extend the region
+        
+        // If no explicit arg given, decide direction based on mark position
+        if (!argument_manually_set && !raw_prefix_arg) {
+            // Move mark 1 sexp away from point
+            if (current_buffer->region.mark < current_buffer->pt) {
+                arg = -1;  // Mark is before point, move backward
+            } else {
+                arg = 1;   // Mark is at/after point, move forward
+            }
+        }
+        
+        // Save current point
+        size_t saved_point = current_buffer->pt;
+        
+        // Move to mark position
+        set_point(current_buffer->region.mark);
+        
+        // Scan from mark
+        size_t new_mark = scan_sexps(current_buffer, current_buffer->pt, arg);
+        
+        if (new_mark == SIZE_MAX) {
+            // Restore point and show error
+            set_point(saved_point);
+            message("No more sexp to select");
+            return;
+        }
+        
+        // Update mark to new position
+        current_buffer->region.mark = new_mark;
+        
+        // Restore point
+        set_point(saved_point);
+        
+    } else {
+        // Starting fresh - set mark from point
+        
+        // Default to 1 if no arg given
+        if (!argument_manually_set && !raw_prefix_arg) {
+            arg = 1;
+        }
+        
+        // Save current point
+        size_t saved_point = current_buffer->pt;
+        
+        // Scan from point
+        size_t new_mark = scan_sexps(current_buffer, current_buffer->pt, arg);
+        
+        if (new_mark == SIZE_MAX) {
+            message("No sexp to select");
+            return;
+        }
+        
+        // Set mark at the new position
+        current_buffer->region.mark = new_mark;
+        current_buffer->region.active = true;
+        
+        message("Mark set");
+    }
+}
+
+
 /// DEFUN
 
 // Helper to check if a node is a function definition

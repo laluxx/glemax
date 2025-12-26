@@ -28,17 +28,17 @@
   '(success                                   ((t (:foreground "#00cd6d"))))
   '(warning                                   ((t (:foreground "#0081c7"))))
   '(font-lock-bracket-face                    ((t (:inherit font-lock-punctuation-face))))
-  '(font-lock-builtin-face                    ((t (:foreground "#00b25f"))));; TODO Italic
+  '(font-lock-builtin-face                    ((t (:foreground "#00b25f" :weight italic))))
   '(font-lock-comment-delimiter-face          ((t (:inherit font-lock-comment-face))))
   '(font-lock-comment-face                    ((t (:foreground "#00733d"))))
   '(font-lock-constant-face                   ((t (:inherit bold))))
   '(font-lock-delimiter-face                  ((t (:inherit font-lock-punctuation-face))))
-  '(font-lock-doc-face                        ((t (:foreground "#00733d"))));; TODO Italic
+  '(font-lock-doc-face                        ((t (:foreground "#00733d" :weight italic))))
   '(font-lock-doc-markup-face                 ((t (:inherit font-lock-constant-face))))
   '(font-lock-escape-face                     ((t (:inherit font-lock-regexp-grouping-backslash))))
   '(font-lock-function-call-face              ((t (:inherit font-lock-function-name-face))))
-  '(font-lock-function-name-face              ((t (:foreground "#00cd6d"))));; TODO Extrabold
-  '(font-lock-keyword-face                    ((t (:foreground "#00e57a"))));; TODO Bold
+  '(font-lock-function-name-face              ((t (:foreground "#00cd6d" :weight bold))));; TODO Extrabold
+  '(font-lock-keyword-face                    ((t (:foreground "#00e57a" :weight bold))))
   '(font-lock-misc-punctuation-face           ((t (:inherit font-lock-punctuation-face))))
   ;; '(font-lock-negation-char-face              ((t (:foreground ""))))
   '(font-lock-number-face                     ((t (:inherit default))))
@@ -48,13 +48,15 @@
   '(font-lock-property-use-face               ((t (:inherit font-lock-property-name-face))))
   ;; '(font-lock-punctuation-face                ((t (:foreground ""))))
   '(font-lock-regexp-face                     ((t (:inherit font-lock-string-face))))
-  '(font-lock-regexp-grouping-backslash       ((t (:foreground "#00cd6d"))))
-  '(font-lock-regexp-grouping-construct       ((t (:foreground "#00cd6d"))))
+  '(font-lock-regexp-grouping-backslash       ((t (:foreground "#00cd6d" :weight bold))))
+  '(font-lock-regexp-grouping-construct       ((t (:foreground "#00cd6d" :weight bold))))
   '(font-lock-string-face                     ((t (:foreground "#00b25f" :background "#011f11"))))
   '(font-lock-type-face                       ((t (:inherit bold))))
-  '(font-lock-variable-name-face              ((t (:foreground "#00b25f"))));; TODO Weight: black
+  '(font-lock-variable-name-face              ((t (:foreground "#00b25f" :weight bold))));; TODO Weight: black
   '(font-lock-variable-use-face               ((t (:inherit font-lock-variable-name-face))))
-  '(font-lock-warning-face                    ((t (:foreground "#cc0037" :inherit italic))))
-  )
+  '(font-lock-warning-face                    ((t (:foreground "#cc0037" :weight italic))))
+
+  '(minibuffer-prompt                         ((t (:foreground "#00e57a" :weight bold))))
+)
 
 

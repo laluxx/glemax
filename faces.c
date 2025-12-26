@@ -1,8 +1,6 @@
 #include "faces.h"
 #include "buffer.h"
-#include <obsidian/common.h>
-#include <stdlib.h>
-#include <string.h>
+#include "x11_colors.h"
 #include <fontconfig/fontconfig.h>
 
 FaceCache *face_cache = NULL;
@@ -17,52 +15,52 @@ static struct {
     const char *name;
     int id;
 } face_names[] = {
-    {"default",                             FACE_DEFAULT},                             
-    {"mode-line",                           FACE_MODE_LINE},                           
-    {"mode-line-active",                    FACE_MODE_LINE_ACTIVE},                    
-    {"mode-line-inactive",                  FACE_MODE_LINE_INACTIVE},                  
-    {"window-divider",                      FACE_WINDOW_DIVIDER},                      
-    {"fringe",                              FACE_FRINGE},                              
-    {"cursor",                              FACE_CURSOR},                              
-    {"bold",                                FACE_BOLD},                                
-    {"italic",                              FACE_ITALIC},                              
-    {"bold-italic",                         FACE_BOLD_ITALIC},                         
-    {"visible-mark",                        FACE_VISIBLE_MARK},                        
+    {"default",                             FACE_DEFAULT},
+    {"mode-line",                           FACE_MODE_LINE},
+    {"mode-line-active",                    FACE_MODE_LINE_ACTIVE},
+    {"mode-line-inactive",                  FACE_MODE_LINE_INACTIVE},
+    {"window-divider",                      FACE_WINDOW_DIVIDER},
+    {"fringe",                              FACE_FRINGE},
+    {"cursor",                              FACE_CURSOR},
+    {"bold",                                FACE_BOLD},
+    {"italic",                              FACE_ITALIC},
+    {"bold-italic",                         FACE_BOLD_ITALIC},
+    {"visible-mark",                        FACE_VISIBLE_MARK},
 
-    {"error",                               FACE_ERROR},                        
-    {"success",                             FACE_SUCCESS},                        
-    {"warning",                             FACE_WARNING},                        
+    {"error",                               FACE_ERROR},
+    {"success",                             FACE_SUCCESS},
+    {"warning",                             FACE_WARNING},
 
-    {"font-lock-bracket-face",              FACE_FONT_LOCK_BRACKET},                   
-    {"font-lock-builtin-face",              FACE_FONT_LOCK_BUILTIN},                   
-    {"font-lock-comment-delimiter-face",    FACE_FONT_LOCK_COMMENT_DELIMITER},         
-    {"font-lock-comment-face",              FACE_FONT_LOCK_COMMENT},                   
-    {"font-lock-constant-face",             FACE_FONT_LOCK_CONSTANT},                  
-    {"font-lock-delimiter-face",            FACE_FONT_LOCK_DELIMITER},                 
-    {"font-lock-doc-face",                  FACE_FONT_LOCK_DOC},                       
-    {"font-lock-doc-markup-face",           FACE_FONT_LOCK_DOC_MARKUP},                
-    {"font-lock-escape-face",               FACE_FONT_LOCK_ESCAPE},                    
-    {"font-lock-function-call-face",        FACE_FONT_LOCK_FUNCTION_CALL},             
-    {"font-lock-function-name-face",        FACE_FONT_LOCK_FUNCTION_NAME},             
-    {"font-lock-keyword-face",              FACE_FONT_LOCK_KEYWORD},                   
-    {"font-lock-misc-punctuation-face",     FACE_FONT_LOCK_MISC_PUNCTUATION},     
-    {"font-lock-negation-char-face",        FACE_FONT_LOCK_NEGATION_CHAR},             
-    {"font-lock-number-face",               FACE_FONT_LOCK_NUMBER},                    
-    {"font-lock-operator-face",             FACE_FONT_LOCK_OPERATOR},                  
-    {"font-lock-preprocessor-face",         FACE_FONT_LOCK_PREPROCESSOR},              
-    {"font-lock-property-name-face",        FACE_FONT_LOCK_PROPERTY_NAME},             
-    {"font-lock-property-use-face",         FACE_FONT_LOCK_PROPERTY_USE},              
-    {"font-lock-punctuation-face",          FACE_FONT_LOCK_PUNCTUATION},               
-    {"font-lock-regexp-face",               FACE_FONT_LOCK_REGEXP},                    
-    {"font-lock-regexp-grouping-backslash", FACE_FONT_LOCK_REGEXP_GROUPING_BACKSLASH}, 
-    {"font-lock-regexp-grouping-construct", FACE_FONT_LOCK_REGEXP_GROUPING_CONSTRUCT}, 
-    {"font-lock-string-face",               FACE_FONT_LOCK_STRING},                    
-    {"font-lock-type-face",                 FACE_FONT_LOCK_TYPE},                      
-    {"font-lock-variable-name-face",        FACE_FONT_LOCK_VARIABLE_NAME},             
-    {"font-lock-variable-use-face",         FACE_FONT_LOCK_VARIABLE_USE},              
-    {"font-lock-warning-face",              FACE_FONT_LOCK_WARNING},                   
+    {"font-lock-bracket-face",              FACE_FONT_LOCK_BRACKET},
+    {"font-lock-builtin-face",              FACE_FONT_LOCK_BUILTIN},
+    {"font-lock-comment-delimiter-face",    FACE_FONT_LOCK_COMMENT_DELIMITER},
+    {"font-lock-comment-face",              FACE_FONT_LOCK_COMMENT},
+    {"font-lock-constant-face",             FACE_FONT_LOCK_CONSTANT},
+    {"font-lock-delimiter-face",            FACE_FONT_LOCK_DELIMITER},
+    {"font-lock-doc-face",                  FACE_FONT_LOCK_DOC},
+    {"font-lock-doc-markup-face",           FACE_FONT_LOCK_DOC_MARKUP},
+    {"font-lock-escape-face",               FACE_FONT_LOCK_ESCAPE},
+    {"font-lock-function-call-face",        FACE_FONT_LOCK_FUNCTION_CALL},
+    {"font-lock-function-name-face",        FACE_FONT_LOCK_FUNCTION_NAME},
+    {"font-lock-keyword-face",              FACE_FONT_LOCK_KEYWORD},
+    {"font-lock-misc-punctuation-face",     FACE_FONT_LOCK_MISC_PUNCTUATION},
+    {"font-lock-negation-char-face",        FACE_FONT_LOCK_NEGATION_CHAR},
+    {"font-lock-number-face",               FACE_FONT_LOCK_NUMBER},
+    {"font-lock-operator-face",             FACE_FONT_LOCK_OPERATOR},
+    {"font-lock-preprocessor-face",         FACE_FONT_LOCK_PREPROCESSOR},
+    {"font-lock-property-name-face",        FACE_FONT_LOCK_PROPERTY_NAME},
+    {"font-lock-property-use-face",         FACE_FONT_LOCK_PROPERTY_USE},
+    {"font-lock-punctuation-face",          FACE_FONT_LOCK_PUNCTUATION},
+    {"font-lock-regexp-face",               FACE_FONT_LOCK_REGEXP},
+    {"font-lock-regexp-grouping-backslash", FACE_FONT_LOCK_REGEXP_GROUPING_BACKSLASH},
+    {"font-lock-regexp-grouping-construct", FACE_FONT_LOCK_REGEXP_GROUPING_CONSTRUCT},
+    {"font-lock-string-face",               FACE_FONT_LOCK_STRING},
+    {"font-lock-type-face",                 FACE_FONT_LOCK_TYPE},
+    {"font-lock-variable-name-face",        FACE_FONT_LOCK_VARIABLE_NAME},
+    {"font-lock-variable-use-face",         FACE_FONT_LOCK_VARIABLE_USE},
+    {"font-lock-warning-face",              FACE_FONT_LOCK_WARNING},
 
-    {"minibuffer-prompt",                   FACE_MINIBUFFER_PROMPT},                   
+    {"minibuffer-prompt",                   FACE_MINIBUFFER_PROMPT},
     {NULL, -1}
 };
 
@@ -465,9 +463,6 @@ int face_at_pos(Buffer *buf, size_t pos) {
     return get_text_property_face(buf, pos);
 }
 
-#include "x11_colors.h"
-
-
 Color parse_color(const char *str) {
     if (!str || str[0] == '\0') {
         return (Color){0, 0, 0, 1};
@@ -508,8 +503,6 @@ Color parse_color(const char *str) {
     // Fallback to red to suggest ERROR
     return (Color){1, 0, 0, 1};
 }
-
-
 
 /// Scheme bindings
 

@@ -1,4 +1,4 @@
-;;; dak-one-theme.scm --- inspired by Atom One Dark
+;;; dark-one-theme.scm --- inspired by Atom One Dark
 
 
 ;;; Commentary:
@@ -48,4 +48,6 @@
   '(font-lock-variable-name-face              ((t (:foreground "#dcaeea"))))
   '(font-lock-variable-use-face               ((t (:inherit font-lock-variable-name-face))))
   '(font-lock-warning-face                    ((t (:inherit warning))))
+
+  '(minibuffer-prompt                         ((t (:foreground "#51afef"))))
 )

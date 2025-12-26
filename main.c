@@ -194,7 +194,6 @@ void before_keychord_hook(const char *notation, KeyChordBinding *binding) {
 
 }
 
-
 void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
     reset_cursor_blink(current_buffer);
     update_windows_scroll();
@@ -572,8 +571,6 @@ static bool is_on_divider(float x, float y, Window *win, Window **out_parent) {
     return false;
 }
 
-
-// Returns true if the position is on a modeline that can be dragged for vertical resizing
 static bool is_on_draggable_modeline(float x, float y, Window *win, Window **out_parent) {
     if (!win) return false;
     
@@ -762,7 +759,6 @@ static bool restore_divider_positions() {
     
     return true;
 }
-
 
 void mouse_button_callback(int button, int action, int mods) {
     if (button == MOUSE_BUTTON_LEFT) {

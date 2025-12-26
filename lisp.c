@@ -618,6 +618,27 @@ DEFINE_SCM_COMMAND(scm_backward_list,                  backward_list,           
 DEFINE_SCM_COMMAND(scm_forward_sexp,                   forward_sexp,                   NULL);
 DEFINE_SCM_COMMAND(scm_backward_sexp,                  backward_sexp,                  NULL);
 DEFINE_SCM_COMMAND(scm_kill_sexp,                      kill_sexp,                      NULL);
+
+DEFINE_SCM_COMMAND(scm_mark_sexp, mark_sexp,
+"Set mark ARG sexps from point or move mark one sexp."
+"When called from Lisp with ALLOW-EXTEND omitted or nil, mark is"
+"set ARG sexps from point."
+"With ARG and ALLOW-EXTEND both non-nil (interactively, with prefix"
+"argument), the place to which mark goes is the same place \\[forward-sexp]"
+"would move to with the same argument; if the mark is active, it moves"
+"ARG sexps from its current position, otherwise it is set ARG sexps"
+"from point."
+"When invoked interactively without a prefix argument and no active"
+"region, mark moves one sexp forward."
+"When invoked interactively without a prefix argument, and region"
+"is active, mark moves one sexp away of point (i.e., forward"
+"if mark is at or after point, back if mark is before point), thus"
+"extending the region by one sexp.  Since the direction of region"
+"extension depends on the relative position of mark and point, you"
+"can change the direction by \\[exchange-point-and-mark]."
+"This command assumes point is not in a string or comment.");
+
+
 DEFINE_SCM_COMMAND(scm_forward_char,                   forward_char,                   NULL);
 DEFINE_SCM_COMMAND(scm_backward_char,                  backward_char,                  NULL);
 DEFINE_SCM_COMMAND(scm_next_line,                      next_line,                      NULL);
@@ -2506,6 +2527,7 @@ void lisp_init(void) {
     scm_c_define_gsubr("forward-sexp",                   0, 1, 0, scm_forward_sexp);
     scm_c_define_gsubr("backward-sexp",                  0, 1, 0, scm_backward_sexp);
     scm_c_define_gsubr("kill-sexp",                      0, 1, 0, scm_kill_sexp);
+    REGISTER_COMMAND("mark-sexp",         scm_mark_sexp);
 
     
     // Kill/yank

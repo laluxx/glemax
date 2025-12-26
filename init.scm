@@ -89,6 +89,7 @@
 (keymap-global-set "C-M-f" forward-sexp)
 (keymap-global-set "C-M-b" backward-sexp)
 (keymap-global-set "C-M-k" kill-sexp)
+(keymap-global-set "C-M-SPC" mark-sexp)
 
 (keymap-global-set "C-M-e" end-of-defun)
 (keymap-global-set "C-M-a" beginning-of-defun)

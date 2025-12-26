@@ -48,4 +48,6 @@
   '(font-lock-variable-name-face              ((t (:foreground "#c79af4"))))
   '(font-lock-variable-use-face               ((t (:inherit font-lock-variable-name-face))))
   '(font-lock-warning-face                    ((t (:foreground "#dbac66"))))
+
+  '(minibuffer-prompt                         ((t (:foreground "#738FD7" :weight bold))))
 )
