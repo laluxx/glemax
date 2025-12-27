@@ -54,6 +54,8 @@ typedef enum {
     FACE_MINIBUFFER_PROMPT,
 
     FACE_UNDERLINE,
+    FACE_STRIKE_THROUGH,
+    FACE_BOX,
 
 
     FACE_BUILTIN_COUNT,
@@ -67,6 +69,8 @@ typedef struct Face {
     bool bold;
     bool italic;
     bool underline;
+    bool strike_through;
+    bool box;
     bool fg_set;        // True if foreground explicitly set
     bool bg_set;        // True if background explicitly set
     int inherit_from;   // face ID to inherit from, -1 for none

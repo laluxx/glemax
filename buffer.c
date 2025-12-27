@@ -764,10 +764,6 @@ size_t find_start_position(Buffer *buffer, Window *win, float *out_start_y) {
 }
 
 
-// TODO Use frame->line_height and frame->column_width
-// instead of querying the default face each frame to get line_height
-
-
 // Helper to draw a character with its face properties
 // Returns the advance width
 static float draw_character_with_face(
@@ -777,10 +773,14 @@ static float draw_character_with_face(
     Face *face,
     Font *font,
     Color fg_color,
-    bool draw_underline)
+    bool draw_underline,
+    bool draw_strike_through)
 {
     // Draw the character
     float advance = character(font, ch, x, y, fg_color);
+    
+    Character *char_info = font_get_character(font, ch);
+    float char_width = char_info ? char_info->ax : advance;
     
     // Draw underline if needed
     if (draw_underline) {
@@ -793,12 +793,10 @@ static float draw_character_with_face(
         
         // Determine underline position
         if (underline_at_descent_line) {
-            // Always use descent line for position when this is true
             underline_y = y - font->descent * 2;
         } else if (use_underline_position_properties) {
             underline_y = y - font->descent - font->underline_position;
         } else {
-            // Default: minimum offset from baseline
             underline_y = y - font->descent - underline_minimum_offset;
         }
         
@@ -806,14 +804,21 @@ static float draw_character_with_face(
         if (use_underline_position_properties) {
             underline_thickness = font->underline_thickness;
         } else {
-            underline_thickness = 1.0f; // TODO This hardcoded 1 should come from the face
+            underline_thickness = 1.0f;
         }
         
-        Character *char_info = font_get_character(font, ch);
-        float underline_width = char_info ? char_info->ax : advance;
-        
         quad2D((vec2){x, underline_y},
-               (vec2){underline_width, underline_thickness},
+               (vec2){char_width, underline_thickness},
+               fg_color);
+    }
+    
+    // Draw strike-through
+    if (draw_strike_through) {
+        float strike_y = y;
+        float strike_thickness = 1.0f;
+        
+        quad2D((vec2){x, strike_y},
+               (vec2){char_width, strike_thickness},
                fg_color);
     }
     
@@ -823,6 +828,30 @@ static float draw_character_with_face(
 // Helper to draw a background span for multiple characters with same background
 static void draw_background_span(float x, float y, float width, float height, Color bg) {
     quad2D((vec2){x, y}, (vec2){width, height}, bg);
+}
+
+
+// Helper to draw a box around a span of text
+static void draw_box_span(float x, float y, float width, float height, Color color, float thickness) {
+    // Top line
+    quad2D((vec2){x, y + height},
+           (vec2){width, thickness},
+           color);
+    
+    // Bottom line
+    quad2D((vec2){x, y - thickness},
+           (vec2){width, thickness},
+           color);
+    
+    // Left line
+    quad2D((vec2){x, y},
+           (vec2){thickness, height},
+           color);
+    
+    // Right line
+    quad2D((vec2){x + width - thickness, y},
+           (vec2){thickness, height},
+           color);
 }
 
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
@@ -874,6 +903,10 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     bool crystal_point_mode = scm_get_bool("crystal-point-mode", false);
     
     float current_line_height = line_height;
+    float box_line_thickness = 1.0f;
+    
+    // Track if current line has a box (affects line height)
+    bool current_line_has_box = false;
     
     // Cursor tracking
     float cursor_x = 0, cursor_y = 0;
@@ -892,6 +925,15 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     Color bg_span_color = {0, 0, 0, 0};
     bool has_bg_span = false;
     
+    // Box batching
+    float box_span_start_x = 0;
+    float box_span_width = 0;
+    float box_span_y = 0;
+    float box_span_height = 0;
+    Color box_span_color = {0, 0, 0, 0};
+    bool has_box_span = false;
+    bool was_in_box = false;  // Track if previous character was in a box
+    
     while (rope_iter_next_char(&iter, &ch)) {
         // Get face info once
         int face_id = get_text_property_face(buffer, i);
@@ -902,8 +944,20 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
         if (!char_font) char_font = default_font;
         
         float font_height = char_font->ascent + char_font->descent;
-        if (font_height > current_line_height) {
-            current_line_height = font_height;
+        
+        // If this character has a box, account for box thickness in line height
+        float effective_font_height = font_height;
+        if (face->box) {
+            effective_font_height = font_height + (box_line_thickness * 2);
+            // If this is the first box character on this line, move the line down
+            if (!current_line_has_box) {
+                y -= box_line_thickness;
+                current_line_has_box = true;
+            }
+        }
+        
+        if (effective_font_height > current_line_height) {
+            current_line_height = effective_font_height;
         }
         
         float char_width = character_width(char_font, ch);
@@ -923,6 +977,12 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             if (has_bg_span) {
                 draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
                 has_bg_span = false;
+            }
+            
+            // Flush any pending box span
+            if (has_box_span) {
+                draw_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, box_span_color, box_line_thickness);
+                has_box_span = false;
             }
             
             // Handle cursor at newline
@@ -948,6 +1008,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             x = line_start_x;
             y -= current_line_height;
             current_line_height = line_height;
+            current_line_has_box = false;
         } else {
             // Handle truncation/wrapping
             if (truncate_lines) {
@@ -958,6 +1019,12 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                         has_bg_span = false;
                     }
                     
+                    // Flush box span
+                    if (has_box_span) {
+                        draw_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, box_span_color, box_line_thickness);
+                        has_box_span = false;
+                    }
+                    
                     // Skip to next line
                     while (rope_iter_next_char(&iter, &ch) && ch != '\n') {
                         i++;
@@ -966,6 +1033,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                         x = line_start_x;
                         y -= current_line_height;
                         current_line_height = line_height;
+                        current_line_has_box = false;
                     }
                     i += 2;
                     continue;
@@ -985,9 +1053,16 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                         has_bg_span = false;
                     }
                     
+                    // Flush box span
+                    if (has_box_span) {
+                        draw_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, box_span_color, box_line_thickness);
+                        has_box_span = false;
+                    }
+                    
                     x = start_x;
                     y -= current_line_height;
                     current_line_height = line_height;
+                    current_line_has_box = false;
                     
                     if (y < window_bottom - current_line_height) {
                         break;
@@ -1029,9 +1104,19 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             
             // Draw character if visible
             if (y >= window_bottom && y <= window_top) {
+                // Calculate the actual drawing position
+                float draw_x = x;
+                float draw_y = y;
+                
+                // If this character has a box, offset the text position
+                if (face->box) {
+                    draw_x += box_line_thickness;  // Move right by left border
+                    draw_y -= box_line_thickness;  // Move down by top border
+                }
+                
                 // Handle background batching
                 if (needs_bg && (!at_cursor || !should_draw_filled || !buffer->cursor.visible)) {
-                    float bg_y = y - char_font->descent * 2;
+                    float bg_y = draw_y - char_font->descent * 2;
                     float bg_height = font_height;
                     
                     // Check if we can extend the current background span
@@ -1039,7 +1124,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                         color_equals(bg_color, bg_span_color) &&
                         bg_y == bg_span_y &&
                         bg_height == bg_span_height &&
-                        x == bg_span_start_x + bg_span_width) {
+                        draw_x == bg_span_start_x + bg_span_width) {
                         // Extend the span
                         Character *char_info = font_get_character(char_font, ch);
                         bg_span_width += char_info ? char_info->ax : char_width;
@@ -1050,7 +1135,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                         }
                         
                         Character *char_info = font_get_character(char_font, ch);
-                        bg_span_start_x = x;
+                        bg_span_start_x = draw_x;
                         bg_span_y = bg_y;
                         bg_span_width = char_info ? char_info->ax : char_width;
                         bg_span_height = bg_height;
@@ -1065,11 +1150,77 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     }
                 }
                 
-                // Draw character with underline if needed
-                float advance = draw_character_with_face(ch, x, y, face, char_font, char_color, face->underline);
-                x += advance;
+                // Handle box batching
+                if (face->box) {
+                    // If this is the first character in a box span, add space for left border
+                    if (!has_box_span) {
+                        x += box_line_thickness;
+                    }
+                    
+                    // Box position - use draw_y which already accounts for the line shift
+                    float box_y = draw_y - char_font->descent * 2 - box_line_thickness;
+                    float box_height = font_height + (box_line_thickness * 2);
+                    
+                    Character *char_info = font_get_character(char_font, ch);
+                    float actual_char_width = char_info ? char_info->ax : char_width;
+                    
+                    // Check if we're continuing the same box span
+                    bool can_extend = has_box_span && 
+                                      color_equals(char_color, box_span_color) &&
+                                      box_y == box_span_y &&
+                                      box_height == box_span_height;
+                    
+                    if (can_extend) {
+                        // Extend: just add the character width
+                        box_span_width += actual_char_width;
+                    } else {
+                        // Flush previous span and start new one
+                        if (has_box_span) {
+                            draw_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, box_span_color, box_line_thickness);
+                        }
+                        
+                        // Start new box span at current x minus the left border we just added
+                        box_span_start_x = x - box_line_thickness;
+                        box_span_y = box_y;
+                        // Initial width: left border + character + right border
+                        box_span_width = actual_char_width + (box_line_thickness * 2);
+                        box_span_height = box_height;
+                        box_span_color = char_color;
+                        has_box_span = true;
+                    }
+                    
+                    // Draw the character
+                    float advance = draw_character_with_face(ch, draw_x, draw_y, face, char_font, char_color, 
+                                                            face->underline, face->strike_through);
+                    x += actual_char_width;
+                    was_in_box = true;
+                } else {
+                    // Not in a box - if we were just in a box, add space for right border
+                    if (was_in_box) {
+                        x += box_line_thickness;
+                        was_in_box = false;
+                    }
+                    
+                    // Flush any pending box span
+                    if (has_box_span) {
+                        draw_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, box_span_color, box_line_thickness);
+                        has_box_span = false;
+                    }
+                    
+                    // Draw character normally and advance x
+                    float advance = draw_character_with_face(ch, draw_x, draw_y, face, char_font, char_color, 
+                                                            face->underline, face->strike_through);
+                    x += advance;
+                }
             } else if (y >= window_bottom) {
-                x += char_width;
+                // Still need to update x position for off-screen characters
+                if (face->box) {
+                    Character *char_info = font_get_character(char_font, ch);
+                    float actual_char_width = char_info ? char_info->ax : char_width;
+                    x += actual_char_width + (box_line_thickness * 2);
+                } else {
+                    x += char_width;
+                }
             }
         }
         i++;
@@ -1078,6 +1229,11 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     // Flush any remaining background span
     if (has_bg_span) {
         draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
+    }
+    
+    // Flush any remaining box span
+    if (has_box_span) {
+        draw_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, box_span_color, box_line_thickness);
     }
     
     rope_iter_destroy(&iter);
@@ -1151,4 +1307,3 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
         }
     }
 }
-

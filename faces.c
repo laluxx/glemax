@@ -62,6 +62,9 @@ static struct {
 
     {"minibuffer-prompt",                   FACE_MINIBUFFER_PROMPT},
     {"underline",                           FACE_UNDERLINE},
+    {"strike-through",                      FACE_STRIKE_THROUGH},
+    {"box",                                 FACE_BOX},
+
     {NULL, -1}
 };
 
@@ -132,6 +135,8 @@ static Face *create_face(int id) {
     face->bold = false;
     face->italic = false;
     face->underline = false;
+    face->strike_through = false;
+    face->box = false;
     face->fg_set = false;
     face->bg_set = false;
     face->next = NULL;
@@ -187,7 +192,7 @@ void resolve_face_inheritance(void) {
             }
         }
         
-        // could also inherit bold/italic/underline attributes similarly if needed
+        // TODO Should also inherit bold/italic/underline/strike_through/box
     }
 }
 
@@ -393,9 +398,13 @@ void init_faces(void) {
                 break;
 
             case FACE_UNDERLINE:
-                face->fg = parse_color("black");
-                face->fg_set = true;
                 face->underline = true;
+                break;
+            case FACE_STRIKE_THROUGH:
+                face->strike_through = true;
+                break;
+            case FACE_BOX:
+                face->box = true;
                 break;
             
             
