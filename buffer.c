@@ -6,6 +6,7 @@
 #include "theme.h"
 #include <obsidian/window.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 Buffer *all_buffers = NULL;
 Buffer *current_buffer = NULL;
@@ -765,20 +766,77 @@ size_t find_start_position(Buffer *buffer, Window *win, float *out_start_y) {
 
 // TODO Use frame->line_height and frame->column_width
 // instead of querying the default face each frame to get line_height
+
+
+// Helper to draw a character with its face properties
+// Returns the advance width
+static float draw_character_with_face(
+    uint32_t ch,
+    float x,
+    float y,
+    Face *face,
+    Font *font,
+    Color fg_color,
+    bool draw_underline)
+{
+    // Draw the character
+    float advance = character(font, ch, x, y, fg_color);
+    
+    // Draw underline if needed
+    if (draw_underline) {
+        int underline_minimum_offset = scm_get_int("underline-minimum-offset", 1);
+        bool underline_at_descent_line = scm_get_bool("underline-at-descent-line", false);
+        bool use_underline_position_properties = scm_get_bool("use-underline-position-properties", true);
+        
+        float underline_y;
+        float underline_thickness;
+        
+        // Determine underline position
+        if (underline_at_descent_line) {
+            // Always use descent line for position when this is true
+            underline_y = y - font->descent * 2;
+        } else if (use_underline_position_properties) {
+            underline_y = y - font->descent - font->underline_position;
+        } else {
+            // Default: minimum offset from baseline
+            underline_y = y - font->descent - underline_minimum_offset;
+        }
+        
+        // Determine underline thickness
+        if (use_underline_position_properties) {
+            underline_thickness = font->underline_thickness;
+        } else {
+            underline_thickness = 1.0f; // TODO This hardcoded 1 should come from the face
+        }
+        
+        Character *char_info = font_get_character(font, ch);
+        float underline_width = char_info ? char_info->ax : advance;
+        
+        quad2D((vec2){x, underline_y},
+               (vec2){underline_width, underline_thickness},
+               fg_color);
+    }
+    
+    return advance;
+}
+
+// Helper to draw a background span for multiple characters with same background
+static void draw_background_span(float x, float y, float width, float height, Color bg) {
+    quad2D((vec2){x, y}, (vec2){width, height}, bg);
+}
+
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
-    // Get default face for fallback
     Face *default_face = get_face(FACE_DEFAULT);
     Font *default_font = default_face ? get_face_font(default_face) : NULL;
     if (!default_font) return;
     
-    // Get base colors from active theme
     Color base_bg = theme_cache->base_bg;
     Color base_fg = theme_cache->base_fg;
     
-    float line_height = default_font->ascent + default_font->descent;
+    // Use cached frame metrics
+    float line_height = selected_frame->line_height;
     float max_x = start_x + (win->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width));
     
-    // Get truncate-lines buffer-local variable
     SCM truncate_lines_sym = scm_from_utf8_symbol("truncate-lines");
     SCM truncate_lines_val = buffer_local_value(truncate_lines_sym, buffer);
     bool truncate_lines = scm_is_true(truncate_lines_val);
@@ -792,6 +850,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     
     size_t point = win ? win->point : buffer->pt;
     bool is_selected = win && win->is_selected;
+    bool mark_is_set = (buffer->region.mark >= 0);
     
     float scroll_offset_y = 0;
     size_t start_pos = 0;
@@ -800,7 +859,6 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
         start_pos = find_start_position(buffer, win, &scroll_offset_y);
     }
     
-    // Apply horizontal scroll offset for truncate-lines
     float scroll_offset_x = (win && !win->is_minibuffer && truncate_lines) ? win->scrollx : 0;
     float line_start_x = start_x - scroll_offset_x;
     
@@ -815,18 +873,27 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     bool visible_mark_mode = scm_get_bool("visible-mark-mode", false);
     bool crystal_point_mode = scm_get_bool("crystal-point-mode", false);
     
-    // Check if mark is actually set (mark is int, so negative means unset)
-    bool mark_is_set = (buffer->region.mark >= 0);
-    
     float current_line_height = line_height;
     
-    // Track cursor position for drawing later
+    // Cursor tracking
     float cursor_x = 0, cursor_y = 0;
     float cursor_width = 0, cursor_height = 0;
     bool cursor_found = false;
     Color cursor_color;
     
+    // Determine if we should draw filled cursor
+    bool should_draw_filled = is_selected && selected_frame && selected_frame->focused;
+    
+    // Background batching
+    float bg_span_start_x = 0;
+    float bg_span_width = 0;
+    float bg_span_y = 0;
+    float bg_span_height = 0;
+    Color bg_span_color = {0, 0, 0, 0};
+    bool has_bg_span = false;
+    
     while (rope_iter_next_char(&iter, &ch)) {
+        // Get face info once
         int face_id = get_text_property_face(buffer, i);
         Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
         if (!face) face = default_face;
@@ -839,45 +906,59 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             current_line_height = font_height;
         }
         
+        float char_width = character_width(char_font, ch);
+        
+        // Check state
+        bool at_cursor = (i == point);
+        bool at_mark = mark_is_set && is_selected && visible_mark_mode && 
+                       i == (size_t)buffer->region.mark && (size_t)buffer->region.mark != point;
+        
+        // Check visibility
         if (y < window_bottom - current_line_height) {
             break;
         }
         
         if (ch == '\n') {
-            // Check if cursor is at newline position
-            if (i == point) {
+            // Flush any pending background span
+            if (has_bg_span) {
+                draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
+                has_bg_span = false;
+            }
+            
+            // Handle cursor at newline
+            if (at_cursor) {
                 cursor_x = x;
                 cursor_y = y - (char_font->descent * 2);
                 Character *space = font_get_character(char_font, ' ');
                 cursor_width = space ? space->ax : char_font->ascent;
-                cursor_height = char_font->ascent + char_font->descent;
-                cursor_color = face_cache->faces[FACE_CURSOR]->bg;
+                cursor_height = font_height;
+                cursor_color = get_face(FACE_CURSOR)->bg;
                 cursor_found = true;
             }
             
-            // Check if mark is at newline position (only if mark is set)
-            if (mark_is_set && is_selected && visible_mark_mode && 
-                i == (size_t)buffer->region.mark && (size_t)buffer->region.mark != point && 
-                y >= window_bottom && y <= window_top) {
+            // Handle mark at newline
+            if (at_mark && y >= window_bottom && y <= window_top) {
                 Character *space = font_get_character(char_font, ' ');
                 float mark_width = space ? space->ax : char_font->ascent;
-                float mark_height = char_font->ascent + char_font->descent;
                 quad2D((vec2){x, y - (char_font->descent * 2)},
-                       (vec2){mark_width, mark_height}, 
-                       face_cache->faces[FACE_VISIBLE_MARK]->bg);
+                       (vec2){mark_width, font_height}, 
+                       get_face(FACE_VISIBLE_MARK)->bg);
             }
             
             x = line_start_x;
             y -= current_line_height;
             current_line_height = line_height;
-
         } else {
-            float char_width = character_width(char_font, ch);
-            
-            // Check for truncation or wrapping based on truncate-lines
+            // Handle truncation/wrapping
             if (truncate_lines) {
                 if (x > max_x) {
-                    // Skip rest of line until newline when truncating
+                    // Flush background span
+                    if (has_bg_span) {
+                        draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
+                        has_bg_span = false;
+                    }
+                    
+                    // Skip to next line
                     while (rope_iter_next_char(&iter, &ch) && ch != '\n') {
                         i++;
                     }
@@ -890,7 +971,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     continue;
                 }
                 
-                // NEW: Skip characters that are off the left edge of the window
+                // Skip chars off left edge
                 if (x + char_width < start_x) {
                     x += char_width;
                     i++;
@@ -898,6 +979,12 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 }
             } else {
                 if (x + char_width > max_x) {
+                    // Flush background span
+                    if (has_bg_span) {
+                        draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
+                        has_bg_span = false;
+                    }
+                    
                     x = start_x;
                     y -= current_line_height;
                     current_line_height = line_height;
@@ -907,70 +994,90 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     }
                 }
             }
-
-            if (y >= window_bottom && y <= window_top) {
-                Color char_color = face->fg;
-                Color bg_color = face->bg;
+            
+            // Determine colors
+            Color char_color = face->fg;
+            Color bg_color = face->bg;
+            bool needs_bg = false;
+            
+            // Save cursor info if at cursor position
+            if (at_cursor) {
+                cursor_x = x;
+                cursor_y = y - (char_font->descent * 2);
+                Character *char_info = font_get_character(char_font, ch);
+                cursor_width = char_info ? char_info->ax : char_width;
+                cursor_height = font_height;
                 
-                // Check if we're at the cursor position (regardless of selection)
-                bool at_cursor = (i == point);
+                if (crystal_point_mode && ch != '\n' && ch != ' ' && ch != '\t') {
+                    cursor_color = face->fg;
+                } else {
+                    cursor_color = get_face(FACE_CURSOR)->bg;
+                }
+                cursor_found = true;
                 
-                // Check if we're at the mark position (but NOT the cursor, and mark must be set)
-                bool at_mark = mark_is_set && is_selected && visible_mark_mode && 
-                               i == (size_t)buffer->region.mark && (size_t)buffer->region.mark != point;
-                
-                // Check if both window is selected AND frame is focused
-                bool should_draw_filled = is_selected && selected_frame && selected_frame->focused;
-
-                if (at_cursor) {
-                    // Save cursor position and properties for later drawing
-                    cursor_x = x;
-                    cursor_y = y - (char_font->descent * 2);
-                    Character *char_info = font_get_character(char_font, ch);
-                    cursor_width = char_info ? char_info->ax : char_width;
-                    cursor_height = char_font->ascent + char_font->descent;
-    
-                    // Determine cursor color based on crystal-point-mode
-                    if (crystal_point_mode && ch != '\n' && ch != ' ' && ch != '\t') {
-                        cursor_color = face->fg;
-                    } else {
-                        cursor_color = face_cache->faces[FACE_CURSOR]->bg;
-                    }
-                    cursor_found = true;
-    
-                    // Only modify character appearance if window is selected, frame is focused, and cursor is visible
-                    if (should_draw_filled && buffer->cursor.visible) {
-                        char_color = base_bg;
-                    }
-                } else if (at_mark) {
-                    // Draw mark background
-                    bg_color = face_cache->faces[FACE_VISIBLE_MARK]->bg;
+                // Modify character appearance if cursor should be drawn filled
+                if (should_draw_filled && buffer->cursor.visible) {
                     char_color = base_bg;
                 }
-
-                
-                // Draw background if needed
-                bool needs_bg = (!at_cursor || !is_selected || !buffer->cursor.visible) && 
-                                (!color_equals(bg_color, base_bg) || at_mark);
-                
-                if (needs_bg) {
-                    Character *char_info = font_get_character(char_font, ch);
-                    float bg_width = char_info ? char_info->ax : char_width;
-                    float bg_height = char_font->ascent + char_font->descent;
-                    quad2D((vec2){x, y - char_font->descent * 2},
-                           (vec2){bg_width, bg_height}, bg_color);
-                }
-                
-                float advance = character(char_font, ch, x, y, char_color);
-                x += advance;
+            } else if (at_mark) {
+                bg_color = get_face(FACE_VISIBLE_MARK)->bg;
+                char_color = base_bg;
+                needs_bg = true;
             } else {
-                if (y >= window_bottom) {
-                    float advance = character_width(char_font, ch);
-                    x += advance;
+                needs_bg = !color_equals(bg_color, base_bg);
+            }
+            
+            // Draw character if visible
+            if (y >= window_bottom && y <= window_top) {
+                // Handle background batching
+                if (needs_bg && (!at_cursor || !should_draw_filled || !buffer->cursor.visible)) {
+                    float bg_y = y - char_font->descent * 2;
+                    float bg_height = font_height;
+                    
+                    // Check if we can extend the current background span
+                    if (has_bg_span && 
+                        color_equals(bg_color, bg_span_color) &&
+                        bg_y == bg_span_y &&
+                        bg_height == bg_span_height &&
+                        x == bg_span_start_x + bg_span_width) {
+                        // Extend the span
+                        Character *char_info = font_get_character(char_font, ch);
+                        bg_span_width += char_info ? char_info->ax : char_width;
+                    } else {
+                        // Flush previous span and start new one
+                        if (has_bg_span) {
+                            draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
+                        }
+                        
+                        Character *char_info = font_get_character(char_font, ch);
+                        bg_span_start_x = x;
+                        bg_span_y = bg_y;
+                        bg_span_width = char_info ? char_info->ax : char_width;
+                        bg_span_height = bg_height;
+                        bg_span_color = bg_color;
+                        has_bg_span = true;
+                    }
+                } else {
+                    // Flush any pending background span
+                    if (has_bg_span) {
+                        draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
+                        has_bg_span = false;
+                    }
                 }
+                
+                // Draw character with underline if needed
+                float advance = draw_character_with_face(ch, x, y, face, char_font, char_color, face->underline);
+                x += advance;
+            } else if (y >= window_bottom) {
+                x += char_width;
             }
         }
         i++;
+    }
+    
+    // Flush any remaining background span
+    if (has_bg_span) {
+        draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
     }
     
     rope_iter_destroy(&iter);
@@ -986,36 +1093,30 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
         Character *space = font_get_character(char_font, ' ');
         cursor_width = space ? space->ax : char_font->ascent;
         cursor_height = char_font->ascent + char_font->descent;
-        cursor_color = face_cache->faces[FACE_CURSOR]->bg;
+        cursor_color = get_face(FACE_CURSOR)->bg;
         cursor_found = true;
     }
     
-    // Update cursor position in buffer
+    // Update cursor position
     buffer->cursor.x = cursor_x;
     buffer->cursor.y = cursor_y;
     
-    // Draw cursor based on window selection state
-    // Draw cursor based on window selection state
+    // Draw cursor
     if (cursor_found) {
-        // Skip drawing if minibuffer is not active
         if (win && win->is_minibuffer && !selected_frame->wm.minibuffer_active) {
             return;
         }
-
-        // Check if both window is selected AND frame is focused
-        bool should_draw_filled = is_selected && selected_frame && selected_frame->focused;
-
+        
         if (should_draw_filled) {
-            // Draw filled cursor with optional blinking for selected window in focused frame
             bool blink_cursor_mode = scm_get_bool("blink-cursor-mode", true);
             size_t blink_cursor_blinks = scm_get_size_t("blink-cursor-blinks", 0);
             float blink_cursor_interval = scm_get_float("blink-cursor-interval", 0.1);
             float blink_cursor_delay = scm_get_float("blink-cursor-delay", 0.1);
-
+            
             if (blink_cursor_mode && buffer->cursor.blink_count < blink_cursor_blinks) {
                 double currentTime = getTime();
                 double interval = buffer->cursor.visible ? blink_cursor_interval : blink_cursor_delay;
-        
+                
                 if (currentTime - buffer->cursor.last_blink >= interval) {
                     buffer->cursor.visible = !buffer->cursor.visible;
                     buffer->cursor.last_blink = currentTime;
@@ -1023,7 +1124,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                         buffer->cursor.blink_count++;
                     }
                 }
-        
+                
                 if (buffer->cursor.visible) {
                     quad2D((vec2){cursor_x, cursor_y},
                            (vec2){cursor_width, cursor_height}, cursor_color);
@@ -1033,31 +1134,21 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                        (vec2){cursor_width, cursor_height}, cursor_color);
             }
         } else {
-            // Reset blink state when frame loses focus or window is not selected
             if (is_selected) {
-                // Only reset for the selected window to avoid affecting other windows
                 buffer->cursor.visible = true;
                 buffer->cursor.blink_count = 0;
             }
-    
-            // Draw hollow cursor for non-selected windows OR unfocused frame
+            
             float border_width = 1.0f;
-    
-            // Bottom border
             quad2D((vec2){cursor_x, cursor_y + cursor_height - border_width},
                    (vec2){cursor_width, border_width}, cursor_color);
-    
-            // Top border
             quad2D((vec2){cursor_x, cursor_y},
                    (vec2){cursor_width, border_width}, cursor_color);
-    
-            // Left border
             quad2D((vec2){cursor_x, cursor_y},
                    (vec2){border_width, cursor_height}, cursor_color);
-    
-            // Right border
             quad2D((vec2){cursor_x + cursor_width - border_width, cursor_y},
                    (vec2){border_width, cursor_height}, cursor_color);
         }
     }
 }
+

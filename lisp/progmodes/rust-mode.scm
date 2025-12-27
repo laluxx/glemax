@@ -191,5 +191,4 @@
   "Major mode for editing Rust code."
   (use-local-map rust-mode-map)
   (setq-local tab-width 4)
-  ;; Initialize tree-sitter if available
   (rust-mode-setup-treesitter))

@@ -910,6 +910,18 @@ size_t scm_get_size_t(const char *name, size_t default_value) {
     return default_value;
 }
 
+int scm_get_int(const char *name, int default_value) {
+    SCM var = scm_c_lookup(name);
+    if (scm_is_false(var)) {
+        return default_value;
+    }
+    SCM val = scm_variable_ref(var);
+    if (scm_is_integer(val)) {
+        return scm_to_int(val);
+    }
+    return default_value;
+}
+
 float scm_get_float(const char *name, float default_value) {
     SCM var = scm_c_lookup(name);
     if (scm_is_false(var)) {

@@ -53,6 +53,8 @@ typedef enum {
 
     FACE_MINIBUFFER_PROMPT,
 
+    FACE_UNDERLINE,
+
 
     FACE_BUILTIN_COUNT,
 } FaceId;

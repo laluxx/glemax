@@ -61,6 +61,7 @@ static struct {
     {"font-lock-warning-face",              FACE_FONT_LOCK_WARNING},
 
     {"minibuffer-prompt",                   FACE_MINIBUFFER_PROMPT},
+    {"underline",                           FACE_UNDERLINE},
     {NULL, -1}
 };
 
@@ -99,22 +100,22 @@ Font *fontconfig_load_font(const char *family, int size, bool bold, bool italic)
 Font *get_font_variant(bool bold, bool italic) {
     if (bold && italic) {
         if (!cached_font_bold_italic) {
-            cached_font_bold_italic = fontconfig_load_font("Adwaita Mono", 22, true, true);
+            cached_font_bold_italic = fontconfig_load_font("Adwaita Mono", 44, true, true);
         }
         return cached_font_bold_italic;
     } else if (bold) {
         if (!cached_font_bold) {
-            cached_font_bold = fontconfig_load_font("Adwaita Mono", 22, true, false);
+            cached_font_bold = fontconfig_load_font("Adwaita Mono", 44, true, false);
         }
         return cached_font_bold;
     } else if (italic) {
         if (!cached_font_italic) {
-            cached_font_italic = fontconfig_load_font("Adwaita Mono", 22, false, true);
+            cached_font_italic = fontconfig_load_font("Adwaita Mono", 44, false, true);
         }
         return cached_font_italic;
     } else {
         if (!cached_font_regular) {
-            cached_font_regular = fontconfig_load_font("Adwaita Mono", 22, false, false);
+            cached_font_regular = fontconfig_load_font("Adwaita Mono", 44, false, false);
         }
         return cached_font_regular;
     }
@@ -389,6 +390,12 @@ void init_faces(void) {
             case FACE_MINIBUFFER_PROMPT:
                 face->fg = parse_color("medium blue");
                 face->fg_set = true;
+                break;
+
+            case FACE_UNDERLINE:
+                face->fg = parse_color("black");
+                face->fg_set = true;
+                face->underline = true;
                 break;
             
             

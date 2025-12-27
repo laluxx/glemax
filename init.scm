@@ -262,7 +262,6 @@ See `split-window-preferred-function' for more control of the splitting
 strategy.")
 
 
-;; TODO we don’t have ‘display-buffer’ yet
 (define split-window-preferred-function 'split-window-sensibly)
 (set-var-doc! split-window-preferred-function
 "Function called by `display-buffer' routines to split a window.
@@ -290,6 +289,30 @@ if you intend to split the selected window instead or if you do
 not want to split the selected window.")
 
 
+(define underline-minimum-offset 1)
+(set-var-doc! underline-minimum-offset
+"Minimum distance between baseline and underline.
+This can improve legibility of underlined text at small font sizes,
+particularly when using variable `use-underline-position-properties'
+with fonts that specify an UNDERLINE_POSITION relatively close to the
+baseline.  The default value is 1.")
+
+(define underline-at-descent-line #f)
+(set-var-doc! underline-at-descent-line
+"#t means to draw the underline at the same place as the descent line.
+(If `line-spacing' is in effect, that moves the underline lower by
+that many pixels.)
+A value of #f means to draw the underline according to the value of the
+variable `use-underline-position-properties', which is usually at the
+baseline level.  The default value is nil.")
+
+(define use-underline-position-properties #t)
+(set-var-doc! use-underline-position-properties
+"#t means make use of UNDERLINE_POSITION font properties.
+A value of #f means ignore them.  If you encounter fonts with bogus
+UNDERLINE_POSITION font properties, set this to #f.  You can also use
+`underline-minimum-offset' to override the font's UNDERLINE_POSITION for
+small font display sizes.")
 
 
 
@@ -298,6 +321,7 @@ not want to split the selected window.")
 (set-var-doc! inhibit-cursor-blink-on-frame-resize
 "When #t, disable cursor blinking while the frame is being resized.
 This has only effect if `blink-cursor-mode' is #t.")
+
 
 
 ;; TODO Support this!
@@ -520,8 +544,7 @@ the variable `message-log-max'."
 
 
 
-(load-theme 'modus-vivendi)
-
+;; (load-theme 'modus-vivendi)
 
 
 

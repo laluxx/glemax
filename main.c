@@ -20,6 +20,8 @@
 uint32_t sw = 500;
 uint32_t sh = 500;
 
+
+
 // Helper function to check if there are unmatched closing characters of a specific type after point
 // Uses scan_lists for efficient balance checking
 static bool has_unmatched_closing_after(Buffer *buffer, size_t point, char opening, char closing) {

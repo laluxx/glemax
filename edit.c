@@ -2297,6 +2297,7 @@ static bool is_symbol_char(uint32_t c) {
 }
 
 // TODO It behaves bad with arg
+// TODO It's wrong with complex lists
 size_t scan_lists(Buffer *buffer, size_t from, int count, int depth, bool sexpflag) {
     size_t text_len = rope_char_length(buffer->rope);
     int min_depth = depth;
