@@ -17,9 +17,9 @@
 
 (custom-theme-set-faces 'modus-vivendi-tritanopia
   '(default             ((t (:foreground "#ffffff" :background "#000000"))))
-  '(mode-line           ((t (:foreground "#f0f0f0" :background "#5f8fb4"))))
-  '(mode-line-active    ((t (:foreground "#f0f0f0" :background "#003c52"))))
-  '(mode-line-inactive  ((t (:foreground "#969696" :background "#2d2d2d"))))
+  '(mode-line           ((t (:foreground "#f0f0f0" :background "#003c52" :box "#5f8fb4"))))
+  '(mode-line-active    ((t (:foreground "#f0f0f0" :background "#003c52" :box "#5f8fb4"))))
+  '(mode-line-inactive  ((t (:foreground "#969696" :background "#2d2d2d" :box "#606060"))))
   '(window-divider      ((t (                      :background "#646464"))))
   '(fringe              ((t (:foreground "#ffffff" :background "#1e1e1e"))))
   '(cursor              ((t (:foreground "#ffffff" :background "#ff5f5f"))))

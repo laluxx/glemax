@@ -69,8 +69,11 @@ typedef struct Face {
     bool bold;
     bool italic;
     bool underline;
+    Color underline_color;
     bool strike_through;
+    Color strike_through_color;
     bool box;
+    Color box_color;
     bool fg_set;        // True if foreground explicitly set
     bool bg_set;        // True if background explicitly set
     int inherit_from;   // face ID to inherit from, -1 for none

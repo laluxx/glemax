@@ -17,9 +17,9 @@
 
 (custom-theme-set-faces 'modus-vivendi
   '(default             ((t (:foreground "#ffffff" :background "#000000"))))
-  '(mode-line           ((t (:foreground "#ffffff" :background "#505050"))))
-  '(mode-line-active    ((t (:foreground "#ffffff" :background "#505050"))))
-  '(mode-line-inactive  ((t (:foreground "#969696" :background "#2d2d2d"))))
+  '(mode-line           ((t (:foreground "#ffffff" :background "#505050" :box "#959595"))))
+  '(mode-line-active    ((t (:foreground "#ffffff" :background "#505050" :box "#959595"))))
+  '(mode-line-inactive  ((t (:foreground "#969696" :background "#2d2d2d" :box "#606060"))))
   '(window-divider      ((t (                      :background "#646464"))))
   '(fringe              ((t (:foreground "#ffffff" :background "#1e1e1e"))))
   '(cursor              ((t (:foreground "#000000" :background "#ffffff"))))

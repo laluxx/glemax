@@ -17,9 +17,9 @@
 
 (custom-theme-set-faces 'modus-operandi-tinted
   '(default             ((t (:foreground "#000000" :background "#fbf7f0"))))
-  '(mode-line           ((t (:foreground "#000000" :background "#cab9b2"))))
-  '(mode-line-active    ((t (:foreground "#000000" :background "#cab9b2"))))
-  '(mode-line-inactive  ((t (:foreground "#585858" :background "#dfd9cf"))))
+  '(mode-line           ((t (:foreground "#000000" :background "#cab9b2" :box "#545454"))))
+  '(mode-line-active    ((t (:foreground "#000000" :background "#cab9b2" :box "#545454"))))
+  '(mode-line-inactive  ((t (:foreground "#585858" :background "#dfd9cf" :box "#a59a94"))))
   '(window-divider      ((t (                      :background "#9f9690"))))
   '(fringe              ((t (:foreground "#000000" :background "#efe9dd"))))
   '(cursor              ((t (:foreground "#fbf7f0" :background "#d00000"))))

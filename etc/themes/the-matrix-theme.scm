@@ -17,9 +17,9 @@
 
 (custom-theme-set-faces 'the-matrix
   '(default             ((t (:foreground "#00b25f" :background "#000000"))))
-  '(mode-line           ((t (:foreground "#00733d" :background "#000000"))))
-  '(mode-line-active    ((t (:inherit mode-line))))
-  '(mode-line-inactive  ((t (:foreground "#00733d" :background "#000000"))))
+  '(mode-line           ((t (:foreground "#00733d" :background "#000000" :box "#00b25f"))))
+  '(mode-line-active    ((t (:foreground "#00733d" :background "#000000" :box "#00b25f"))))
+  '(mode-line-inactive  ((t (:foreground "#00733d" :background "#000000" :box "#004022"))))
   '(window-divider      ((t (                      :background "#000000"))))
   '(fringe              ((t (:foreground "#00b25f" :background "#01120a"))))
   '(cursor              ((t (:foreground "#000000" :background "#00e57a"))))

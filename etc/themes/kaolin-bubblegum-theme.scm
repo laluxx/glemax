@@ -10,9 +10,9 @@
 
 (custom-theme-set-faces 'kaolin-bubblegum
   '(default             ((t (:foreground "#D4D4D6" :background "#14171E"))))
-  '(mode-line           ((t (:foreground "#bebec4" :background "#191D26"))))
-  '(mode-line-active    ((t (:foreground "#bebec4" :background "#191D26"))))
-  '(mode-line-inactive  ((t (:foreground "#454459" :background "#191D26"))))
+  '(mode-line           ((t (:foreground "#bebec4" :background "#191D26" :box "#202430")))); TODO :line-width 2
+  '(mode-line-active    ((t (:foreground "#bebec4" :background "#191D26" :box "#202430")))); TODO :line-width 2
+  '(mode-line-inactive  ((t (:foreground "#454459" :background "#191D26" :box "#202430")))); TODO :line-width 2
   '(window-divider      ((t (                      :background "#202430"))))
   '(fringe              ((t (:foreground "#e6e6e8" :background "#14171e"))))
   '(cursor              ((t (:foreground "#14171E" :background "#D6A0D1"))))

@@ -10,9 +10,9 @@
 
 (custom-theme-set-faces 'kaolin-temple
   '(default             ((t (:foreground "#EEDCC1" :background "#2B2B2F"))))
-  '(mode-line           ((t (:foreground "#bebec4" :background "#303035"))))
-  '(mode-line-active    ((t (:foreground "#bebec4" :background "#303035"))))
-  '(mode-line-inactive  ((t (:foreground "#697375" :background "#303035"))))
+  '(mode-line           ((t (:foreground "#bebec4" :background "#303035" :box "#303035")))); TODO :line-width 2
+  '(mode-line-active    ((t (:foreground "#bebec4" :background "#303035" :box "#303035")))); TODO :line-width 2
+  '(mode-line-inactive  ((t (:foreground "#697375" :background "#303035" :box "#303035")))); TODO :line-width 2
   '(window-divider      ((t (                      :background "#353b3c"))))
   '(fringe              ((t (:foreground "#EEDCC1" :background "#2B2B2F"))))
   '(cursor              ((t (:foreground "#2B2B2F" :background "#EEDCC1"))))

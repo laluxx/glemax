@@ -12,6 +12,14 @@ typedef struct FaceSpec {
     bool bold;
     bool italic;
     bool underline;
+    Color underline_color;
+    bool strike_through;
+    Color strike_through_color;
+    bool box;
+    Color box_color;
+    bool has_underline_color;
+    bool has_strike_through_color;
+    bool has_box_color;
     int inherit_from;
     bool has_inherit;
     struct FaceSpec *next;

@@ -17,9 +17,9 @@
 
 (custom-theme-set-faces 'modus-operandi-tritanopia
   '(default             ((t (:foreground "#000000" :background "#ffffff"))))
-  '(mode-line           ((t (:foreground "#0f0f0f" :background "#afe0f2"))))
-  '(mode-line-active    ((t (:foreground "#0f0f0f" :background "#afe0f2"))))
-  '(mode-line-inactive  ((t (:foreground "#585858" :background "#e6e6e6"))))
+  '(mode-line           ((t (:foreground "#0f0f0f" :background "#afe0f2" :box "#2f4f44"))))
+  '(mode-line-active    ((t (:foreground "#0f0f0f" :background "#afe0f2" :box "#2f4f44"))))
+  '(mode-line-inactive  ((t (:foreground "#585858" :background "#e6e6e6" :box "#a3a3a3"))))
   '(window-divider      ((t (                      :background "#9f9f9f"))))
   '(fringe              ((t (:foreground "#000000" :background "#f2f2f2"))))
   '(cursor              ((t (:foreground "#ffffff" :background "#d00000"))))

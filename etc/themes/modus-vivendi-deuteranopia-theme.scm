@@ -17,9 +17,9 @@
 
 (custom-theme-set-faces 'modus-vivendi-deuteranopia
   '(default             ((t (:foreground "#ffffff" :background "#000000"))))
-  '(mode-line           ((t (:foreground "#f0f0f0" :background "#2a2a6a"))))
-  '(mode-line-active    ((t (:foreground "#f0f0f0" :background "#2a2a6a"))))
-  '(mode-line-inactive  ((t (:foreground "#969696" :background "#2d2d2d"))))
+  '(mode-line           ((t (:foreground "#f0f0f0" :background "#2a2a6a" :box "#8080a7"))))
+  '(mode-line-active    ((t (:foreground "#f0f0f0" :background "#2a2a6a" :box "#8080a7"))))
+  '(mode-line-inactive  ((t (:foreground "#969696" :background "#2d2d2d" :box "#606060"))))
   '(window-divider      ((t (                      :background "#646464"))))
   '(fringe              ((t (:foreground "#ffffff" :background "#1e1e1e"))))
   '(cursor              ((t (:foreground "#ffffff" :background "#efef00"))))

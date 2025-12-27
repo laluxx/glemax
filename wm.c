@@ -799,17 +799,43 @@ static void draw_modeline(Window *win) {
     // If minibuffer is active and this is the previous window, keep it highlighted
     bool is_active = win->is_selected || 
                     (selected_frame->wm.minibuffer_active && win == selected_frame->wm.previous_window);
-
-    Color bg_color = is_active ? face_cache->faces[FACE_MODE_LINE_ACTIVE]->bg :
-        face_cache->faces[FACE_MODE_LINE_INACTIVE]->bg;
     
-    Color fg_color = is_active ? face_cache->faces[FACE_MODE_LINE_ACTIVE]->fg :
-        face_cache->faces[FACE_MODE_LINE_INACTIVE]->fg;
+    Face *modeline_face = is_active ? face_cache->faces[FACE_MODE_LINE_ACTIVE] :
+                                      face_cache->faces[FACE_MODE_LINE_INACTIVE];
+    
+    Color bg_color = modeline_face->bg;
+    Color fg_color = modeline_face->fg;
     
     // Draw background over entire window width
     quad2D((vec2){win->x, modeline_y},
            (vec2){win->width, modeline_height},
            bg_color);
+    
+    // Draw box if the face has one
+    if (modeline_face->box) {
+        Color box_color = modeline_face->box_color;
+        float box_thickness = 1.0f;  // You might want to make this configurable
+        
+        // Top edge
+        quad2D((vec2){win->x, modeline_y},
+               (vec2){win->width, box_thickness},
+               box_color);
+        
+        // Bottom edge
+        quad2D((vec2){win->x, modeline_y + modeline_height - box_thickness},
+               (vec2){win->width, box_thickness},
+               box_color);
+        
+        // Left edge
+        quad2D((vec2){win->x, modeline_y},
+               (vec2){box_thickness, modeline_height},
+               box_color);
+        
+        // Right edge
+        quad2D((vec2){win->x + win->width - box_thickness, modeline_y},
+               (vec2){box_thickness, modeline_height},
+               box_color);
+    }
     
     // Get formatted mode-line text
     char *mode_line_text = format_mode_line(win);

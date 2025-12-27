@@ -15,6 +15,8 @@ typedef struct {
     bool bold;
     bool italic;
     bool underline;
+    bool strike_through;
+    bool box;
     int inherit_from;
 } BaseFace;
 
@@ -40,6 +42,8 @@ void init_themes(void) {
                 base_faces[i].bold = face->bold;
                 base_faces[i].italic = face->italic;
                 base_faces[i].underline = face->underline;
+                base_faces[i].strike_through = face->strike_through;
+                base_faces[i].box = face->box;
                 base_faces[i].inherit_from = face->inherit_from;
             }
         }
@@ -154,6 +158,8 @@ static void reapply_all_themes(void) {
             face->bold = base_faces[i].bold;
             face->italic = base_faces[i].italic;
             face->underline = base_faces[i].underline;
+            face->strike_through = base_faces[i].strike_through;
+            face->box = base_faces[i].box;
             face->inherit_from = base_faces[i].inherit_from;
         }
     }
@@ -206,8 +212,33 @@ static void reapply_all_themes(void) {
                         face->bold = true;
                     if (spec->italic)
                         face->italic = true;
-                    if (spec->underline)
+                    /* if (spec->underline) */
+                    /*     face->underline = true; */
+                    if (spec->underline) {
                         face->underline = true;
+                        if (spec->has_underline_color) {
+                            face->underline_color = spec->underline_color;
+                        } else {
+                            face->underline_color = face->fg; // Default to foreground
+                        }
+                    }
+                    if (spec->strike_through) {
+                        face->strike_through = true;
+                        if (spec->has_strike_through_color) {
+                            face->strike_through_color = spec->strike_through_color;
+                        } else {
+                            face->strike_through_color = face->fg; // Default to foreground
+                        }
+                    }
+                    if (spec->box) {
+                        face->box = true;
+                        if (spec->has_box_color) {
+                            face->box_color = spec->box_color;
+                        } else {
+                            face->box_color = face->fg; // Default to foreground
+                        }
+                    }
+
                     
                     // UPDATE THE FONT if bold or italic changed
                     if (spec->bold || spec->italic) {
@@ -505,9 +536,47 @@ static SCM scm_custom_theme_set_faces(SCM theme_name, SCM rest) {
                                     free(slant);
                                 }
                             }
+                            /* else if (strcmp(key_name, "underline") == 0) { */
+                            /*     fspec->underline = scm_is_true(value); */
+                            /* } */
                             else if (strcmp(key_name, "underline") == 0) {
-                                fspec->underline = scm_is_true(value);
+                                if (scm_is_true(value)) {
+                                    fspec->underline = true;
+                                    if (scm_is_string(value)) {
+                                        // :underline "green"
+                                        char *color_str = scm_to_locale_string(value);
+                                        fspec->underline_color = parse_color(color_str);
+                                        fspec->has_underline_color = true;
+                                        free(color_str);
+                                    }
+                                }
                             }
+                            else if (strcmp(key_name, "strike-through") == 0) {
+                                if (scm_is_true(value)) {
+                                    fspec->strike_through = true;
+                                    if (scm_is_string(value)) {
+                                        // :strike-through "maroon"
+                                        char *color_str = scm_to_locale_string(value);
+                                        fspec->strike_through_color = parse_color(color_str);
+                                        fspec->has_strike_through_color = true;
+                                        free(color_str);
+                                    }
+                                }
+                            }
+                            else if (strcmp(key_name, "box") == 0) {
+                                if (scm_is_true(value)) {
+                                    fspec->box = true;
+                                    if (scm_is_string(value)) {
+                                        // :box "blue"
+                                        char *color_str = scm_to_locale_string(value);
+                                        fspec->box_color = parse_color(color_str);
+                                        fspec->has_box_color = true;
+                                        free(color_str);
+                                    }
+                                }
+                            }
+
+
                             else if (strcmp(key_name, "inherit") == 0) {
                                 if (scm_is_symbol(value) || scm_is_string(value)) {
                                     char *inherit_name = scm_to_c_string(value);

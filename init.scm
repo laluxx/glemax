@@ -544,7 +544,7 @@ the variable `message-log-max'."
 
 
 
-;; (load-theme 'modus-vivendi)
+(load-theme 'modus-vivendi)
 
 
 
