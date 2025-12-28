@@ -23,8 +23,14 @@ void read_only_mode();
 void save_buffer();
 void forward_char();
 void backward_char();
+
+void line_move();
+void line_move_logical();
+void line_move_visual();
 void next_line();
 void previous_line();
+void next_logical_line();
+void previous_logical_line();
 void end_of_line();
 void beginning_of_line();
 void beginning_of_buffer();

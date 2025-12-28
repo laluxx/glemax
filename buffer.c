@@ -44,7 +44,7 @@ Buffer* buffer_create(const char *name) {
     buffer->cursor.visible = true;
     buffer->cursor.last_blink = 0.0;
     buffer->cursor.blink_count = 0;
-    buffer->cursor.goal_column = 0;
+    /* buffer->cursor.goal_column = 0; */
     buffer->region.active = false;
     buffer->region.mark = -1;
     buffer->props = NULL;

@@ -342,9 +342,6 @@ inline int clip_to_bounds (int lower, int num, int upper) {
 
 
 
-
-
-
 /// SCHEME BINDINGS
 
 
@@ -405,53 +402,6 @@ static SCM scm_insert(SCM rest) {
     
     return SCM_UNSPECIFIED;
 }
-
-/* static SCM scm_insert(SCM text_or_char) { */
-/*     if (scm_is_integer(text_or_char)) { */
-/*         // Single character (codepoint) - convert to string */
-/*         uint32_t codepoint = scm_to_uint32(text_or_char); */
-/*         char utf8[5] = {0}; */
-/*         size_t len = 0; */
-        
-/*         if (codepoint < 0x80) { */
-/*             utf8[0] = (char)codepoint; */
-/*             len = 1; */
-/*         } else if (codepoint < 0x800) { */
-/*             utf8[0] = 0xC0 | (codepoint >> 6); */
-/*             utf8[1] = 0x80 | (codepoint & 0x3F); */
-/*             len = 2; */
-/*         } else if (codepoint < 0x10000) { */
-/*             utf8[0] = 0xE0 | (codepoint >> 12); */
-/*             utf8[1] = 0x80 | ((codepoint >> 6) & 0x3F); */
-/*             utf8[2] = 0x80 | (codepoint & 0x3F); */
-/*             len = 3; */
-/*         } else if (codepoint < 0x110000) { */
-/*             utf8[0] = 0xF0 | (codepoint >> 18); */
-/*             utf8[1] = 0x80 | ((codepoint >> 12) & 0x3F); */
-/*             utf8[2] = 0x80 | ((codepoint >> 6) & 0x3F); */
-/*             utf8[3] = 0x80 | (codepoint & 0x3F); */
-/*             len = 4; */
-/*         } */
-        
-/*         if (len > 0) { */
-/*             utf8[len] = '\0'; */
-/*             insert(utf8); */
-/*         } */
-/*     } else if (scm_is_string(text_or_char)) { */
-/*         char *text = scm_to_utf8_string(text_or_char); */
-/*         insert(text); */
-/*         free(text); */
-/*     } else { */
-/*         scm_wrong_type_arg("insert", 1, text_or_char); */
-/*     } */
-    
-/*     return SCM_UNSPECIFIED; */
-/* } */
-
-/* static SCM scm_insert(SCM codepoint) { */
-/*     insert(scm_to_uint32(codepoint)); */
-/*     return SCM_UNSPECIFIED; */
-/* } */
 
 static SCM scm_delete_blank_lines(void) {
     delete_blank_lines();
@@ -639,10 +589,98 @@ DEFINE_SCM_COMMAND(scm_mark_sexp, mark_sexp,
 "This command assumes point is not in a string or comment.");
 
 
-DEFINE_SCM_COMMAND(scm_forward_char,                   forward_char,                   NULL);
-DEFINE_SCM_COMMAND(scm_backward_char,                  backward_char,                  NULL);
-DEFINE_SCM_COMMAND(scm_next_line,                      next_line,                      NULL);
-DEFINE_SCM_COMMAND(scm_previous_line,                  previous_line,                  NULL);
+DEFINE_SCM_COMMAND(scm_forward_char, forward_char,
+"Move point N characters forward (backward if N is negative)."
+"\n"
+"On reaching end or beginning of buffer, stop and signal error."
+"Interactively, N is the numeric prefix argument."
+"If N is omitted, move point 1 character forward."
+"\n"
+"Depending on the bidirectional context, the movement may be to the"
+"right or to the left on the screen.  This is in contrast with"
+"`right-char', which see.");
+
+DEFINE_SCM_COMMAND(scm_backward_char, backward_char,
+"Move point N characters backward (forward if N is negative)."
+"\n"
+"On attempt to pass beginning or end of buffer, stop and signal error."
+"Interactively, N is the numeric prefix argument."
+"If N is omitted, move point 1 character backward."
+"\n"
+"Depending on the bidirectional context, the movement may be to the"
+"right or to the left on the screen.  This is in contrast with"
+"left-char, which see.");
+
+DEFINE_SCM_COMMAND(scm_next_line, next_line,
+"Move cursor vertically down ARG lines."
+"ARG defaults to 1."
+"\n"
+"If there is no character in the target line exactly under the current column,"
+"the cursor is positioned after the character in that line that spans this"
+"column, or at the end of the line if it is not long enough."
+"If there is no line in the buffer after this one, behavior depends on the"
+"value of `next-line-add-newlines'.  If #t, it inserts a newline character"
+"to create a line, and moves the cursor to that line.  Otherwise it moves the"
+"cursor to the end of the buffer."
+"\n"
+"If the variable `line-move-visual' is #t, this command moves"
+"by display lines.  Otherwise, it moves by buffer lines, without"
+"taking (TODO variable-width characters) or continued lines into account."
+"See \\[next-logical-line] for a command that always moves by buffer lines."
+"\n"
+"The command \\[set-goal-column] can be used to create"
+"a semipermanent goal column for this command."
+"Then instead of trying to move exactly vertically (or as close as possible),"
+"this command moves to the specified goal column (or as close as possible)."
+"The goal column is stored in the variable `goal-column', which is #f"
+"when there is no goal column.  TODO Note that setting `goal-column'"
+"overrides `line-move-visual' and causes this command to move by buffer"
+"lines rather than by display lines.");
+
+DEFINE_SCM_COMMAND(scm_previous_line, previous_line,
+"Move cursor vertically up ARG lines."
+"ARG defaults to 1."
+"\n"
+"If there is no character in the target line exactly over the current column,"
+"the cursor is positioned after the character in that line that spans this"
+"column, or at the end of the line if it is not long enough."
+""
+"If the variable `line-move-visual' is #t, this command moves"
+"by display lines.  Otherwise, it moves by buffer lines, without"
+"taking (TODO variable-width characters) or continued lines into account."
+"See \\[previous-logical-line] for a command that always moves by buffer lines."
+"\n"
+"The command \\[set-goal-column] can be used to create"
+"a semipermanent goal column for this command."
+"Then instead of trying to move exactly vertically (or as close as possible),"
+"this command moves to the specified goal column (or as close as possible)."
+"The goal column is stored in the variable `goal-column', which is #f"
+"when there is no goal column.  TODO Note that setting `goal-column'"
+"overrides `line-move-visual' and causes this command to move by buffer"
+"lines rather than by display lines.");
+
+DEFINE_SCM_COMMAND(scm_line_move, line_move,
+"Move forward ARG lines.");
+
+DEFINE_SCM_COMMAND(scm_line_move_logical, line_move_logical,
+"Move forward ARG lines logically.");
+
+DEFINE_SCM_COMMAND(scm_line_move_visual, line_move_visual,
+"Move ARG lines forward visually.");
+
+DEFINE_SCM_COMMAND(scm_next_logical_line, next_logical_line,
+"Move cursor vertically down ARG lines."
+"This is identical to `next-line', except that it always moves"
+"by logical lines instead of visual lines, ignoring the value of"
+"the variable `line-move-visual'.");
+
+DEFINE_SCM_COMMAND(scm_previous_logical_line, previous_logical_line,
+"Move cursor vertically up ARG lines."
+"This is identical to `previous-line', except that it always moves"
+"by logical lines instead of visual lines, ignoring the value of"
+"the variable `line-move-visual'.");
+
+
 DEFINE_SCM_COMMAND(scm_forward_word,                   forward_word,                   NULL);
 DEFINE_SCM_COMMAND(scm_backward_word,                  backward_word,                  NULL);
 DEFINE_SCM_COMMAND(scm_forward_paragraph,              forward_paragraph,              NULL);
@@ -686,10 +724,6 @@ static SCM scm_mark(void) {
 static SCM scm_mark_active_p(void) {
     return scm_from_bool(current_buffer->region.active);
 }
-
-/* static SCM scm_buffer_size(void) { */
-/*     return scm_from_size_t(rope_char_length(current_buffer->rope)); */
-/* } */
 
 static SCM scm_current_column(void) {
     return scm_from_size_t(current_column());
@@ -1332,9 +1366,7 @@ static SCM scm_set(SCM symbol, SCM newval) {
 }
 
 
-
-// The actual implementation (now takes an unevaluated symbol)
-static SCM scm_setq_impl(SCM symbol, SCM value) {
+SCM scm_setq_impl(SCM symbol, SCM value) {
     if (!scm_is_symbol(symbol)) {
         scm_wrong_type_arg("setq", 1, symbol);
     }
@@ -1382,42 +1414,6 @@ static SCM scm_setq_impl(SCM symbol, SCM value) {
     return value;
 }
 
-/* static SCM scm_setq_impl(SCM symbol, SCM value) { */
-/*     if (!scm_is_symbol(symbol)) { */
-/*         scm_wrong_type_arg("setq", 1, symbol); */
-/*     } */
-    
-/*     if (!current_buffer) { */
-/*         // No current buffer, set globally */
-/*         SCM symbol_str = scm_symbol_to_string(symbol); */
-/*         char *c_str = scm_to_locale_string(symbol_str); */
-/*         scm_c_module_define(scm_current_module(), c_str, value); */
-/*         free(c_str); */
-/*         return value; */
-/*     } */
-    
-/*     // Check if variable is already buffer-local in current buffer */
-/*     if (local_variable_p(symbol, current_buffer)) { */
-/*         return buffer_set(symbol, value, current_buffer); */
-/*     } */
-    
-/*     // Check if variable is marked as automatically buffer-local */
-/*     if (is_automatically_buffer_local(symbol)) { */
-/*         if (!local_variable_p(symbol, current_buffer)) { */
-/*             SCM def_val = default_value(symbol); */
-/*             buffer_set(symbol, def_val, current_buffer); */
-/*         } */
-/*         return buffer_set(symbol, value, current_buffer); */
-/*     } */
-    
-/*     // Not buffer-local, set globally */
-/*     SCM symbol_str = scm_symbol_to_string(symbol); */
-/*     char *c_str = scm_to_locale_string(symbol_str); */
-/*     scm_c_module_define(scm_current_module(), c_str, value); */
-/*     free(c_str); */
-/*     return value; */
-/* } */
-
 // Register as a macro/syntax, not a regular procedure
 void init_setq() {
     // Define the macro in Scheme that calls our C implementation
@@ -1430,43 +1426,6 @@ void init_setq() {
     
     // Register the implementation function
 }
-
-/* static SCM scm_setq(SCM symbol, SCM value) { */
-/*     if (!scm_is_symbol(symbol)) { */
-/*         scm_wrong_type_arg("setq", 1, symbol); */
-/*     } */
-    
-/*     if (!current_buffer) { */
-/*         // No current buffer, set globally */
-/*         SCM symbol_str = scm_symbol_to_string(symbol); */
-/*         char *c_str = scm_to_locale_string(symbol_str); */
-/*         scm_c_module_define(scm_current_module(), c_str, value); */
-/*         free(c_str); */
-/*         return value; */
-/*     } */
-    
-/*     // Check if variable is already buffer-local in current buffer */
-/*     if (local_variable_p(symbol, current_buffer)) { */
-/*         return buffer_set(symbol, value, current_buffer); */
-/*     } */
-    
-/*     // Check if variable is marked as automatically buffer-local */
-/*     if (is_automatically_buffer_local(symbol)) { */
-/*         // Make it local first, then set it */
-/*         if (!local_variable_p(symbol, current_buffer)) { */
-/*             SCM def_val = default_value(symbol); */
-/*             buffer_set(symbol, def_val, current_buffer); */
-/*         } */
-/*         return buffer_set(symbol, value, current_buffer); */
-/*     } */
-    
-/*     // Not buffer-local, set globally */
-/*     SCM symbol_str = scm_symbol_to_string(symbol); */
-/*     char *c_str = scm_to_locale_string(symbol_str); */
-/*     scm_c_module_define(scm_current_module(), c_str, value); */
-/*     free(c_str); */
-/*     return value; */
-/* } */
 
 static SCM scm_local_variable_p(SCM symbol, SCM buffer_obj) {
     if (!scm_is_symbol(symbol)) {
@@ -2488,10 +2447,16 @@ void lisp_init(void) {
     scm_c_define_gsubr("keychord-bindings",              0, 0, 0, scm_keychord_bindings);    
 
     // Movement
-    scm_c_define_gsubr("forward-char",                   0, 1, 0, scm_forward_char);
-    scm_c_define_gsubr("backward-char",                  0, 1, 0, scm_backward_char);
-    scm_c_define_gsubr("next-line",                      0, 1, 0, scm_next_line);
-    scm_c_define_gsubr("previous-line",                  0, 1, 0, scm_previous_line);
+    REGISTER_COMMAND("forward-char",          scm_forward_char);
+    REGISTER_COMMAND("backward-char",         scm_backward_char);
+    REGISTER_COMMAND("line-move",             scm_line_move);
+    REGISTER_COMMAND("line-move-logical",     scm_line_move_logical);
+    REGISTER_COMMAND("line-move-visual",      scm_line_move_visual);
+    REGISTER_COMMAND("next-line",             scm_next_line);
+    REGISTER_COMMAND("previous-line",         scm_previous_line);
+    REGISTER_COMMAND("next-logical-line",     scm_next_logical_line);
+    REGISTER_COMMAND("previous-logical-line", scm_previous_logical_line);
+
 
     scm_c_define_gsubr("forward-word",                   0, 1, 0, scm_forward_word);
     scm_c_define_gsubr("backward-word",                  0, 1, 0, scm_backward_word);

@@ -7,8 +7,6 @@
 
 ;;; Code:
 
-;; TODO call the function automatically
-;; when we setq `frame-resize-pixelwise'
 (define-syntax setq
   (syntax-rules ()
     ((setq var val)

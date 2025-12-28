@@ -1,13 +1,13 @@
 #include "edit.h"
 #include "buffer.h"
 #include "lisp.h"
+#include "faces.h"
+#include "frame.h"
 #include <ctype.h>
-
 
 void read_only_mode() {
     current_buffer->read_only = !current_buffer->read_only;
 }
-
 
 void insert(const char *text) {
     if (!text) return;
@@ -114,124 +114,6 @@ void insert(const char *text) {
     reset_cursor_blink(current_buffer);
     current_buffer->modified = true;
 }
-
-/* void insert(uint32_t codepoint) { */
-/*     char utf8[5] = {0}; */
-/*     size_t len = 0; */
-    
-/*     // Convert Unicode codepoint to UTF-8 */
-/*     if (codepoint < 0x80) { */
-/*         utf8[0] = (char)codepoint; */
-/*         len = 1; */
-/*     } else if (codepoint < 0x800) { */
-/*         utf8[0] = 0xC0 | (codepoint >> 6); */
-/*         utf8[1] = 0x80 | (codepoint & 0x3F); */
-/*         len = 2; */
-/*     } else if (codepoint < 0x10000) { */
-/*         utf8[0] = 0xE0 | (codepoint >> 12); */
-/*         utf8[1] = 0x80 | ((codepoint >> 6) & 0x3F); */
-/*         utf8[2] = 0x80 | (codepoint & 0x3F); */
-/*         len = 3; */
-/*     } else if (codepoint < 0x110000) { */
-/*         utf8[0] = 0xF0 | (codepoint >> 18); */
-/*         utf8[1] = 0x80 | ((codepoint >> 12) & 0x3F); */
-/*         utf8[2] = 0x80 | ((codepoint >> 6) & 0x3F); */
-/*         utf8[3] = 0x80 | (codepoint & 0x3F); */
-/*         len = 4; */
-/*     } */
-    
-/*     if (len == 0) return; */
-
-/*     if (current_buffer->read_only) { */
-/*         message("Buffer is read-only: #<buffer %s>", current_buffer->name); */
-/*         return;  */
-/*     } */
-    
-/*     size_t insert_pos = current_buffer->pt; */
-    
-/*     // Check if we're trying to insert at a read-only position */
-/*     SCM readonly = get_text_property(current_buffer, insert_pos, scm_from_locale_symbol("read-only")); */
-/*     if (scm_is_true(readonly)) { */
-/*         message("Text is read-only"); */
-/*         return; */
-/*     } */
-    
-/*     // Check if tree-sitter is active */
-/*     bool has_treesit = current_buffer->ts_state && current_buffer->ts_state->tree; */
-    
-/*     // Capture tree-sitter state BEFORE modification */
-/*     size_t start_byte = 0; */
-/*     TSPoint start_point = {0, 0}; */
-/*     TSPoint new_end_point = {0, 0}; */
-    
-/*     if (has_treesit) { */
-/*         start_byte = rope_char_to_byte(current_buffer->rope, insert_pos); */
-/*         start_point = treesit_char_to_point(current_buffer, insert_pos); */
-        
-/*         // Calculate new_end_point based on inserted content */
-/*         new_end_point = start_point; */
-        
-/*         // Scan inserted bytes for newlines */
-/*         size_t bytes_after_last_newline = 0; */
-/*         for (size_t i = 0; i < len; i++) { */
-/*             if (utf8[i] == '\n') { */
-/*                 new_end_point.row++; */
-/*                 new_end_point.column = 0; */
-/*                 bytes_after_last_newline = 0; */
-/*             } else { */
-/*                 bytes_after_last_newline++; */
-/*             } */
-/*         } */
-        
-/*         // Update column based on whether we had newlines */
-/*         if (bytes_after_last_newline > 0 || new_end_point.row == start_point.row) { */
-/*             new_end_point.column += bytes_after_last_newline; */
-/*         } */
-/*     } */
-    
-/*     // Update region mark */
-/*     if (current_buffer->region.mark >= 0 && (size_t)current_buffer->region.mark > insert_pos) { */
-/*         current_buffer->region.mark++; */
-/*     } */
-    
-/*     // Perform the rope insertion */
-/*     current_buffer->rope = rope_insert_chars( */
-/*         current_buffer->rope, */
-/*         insert_pos, */
-/*         utf8, */
-/*         len */
-/*     ); */
-    
-/*     // Update tree-sitter if active */
-/*     if (has_treesit) { */
-/*         size_t new_end_byte = start_byte + len; */
-        
-/*         treesit_update_tree( */
-/*             current_buffer, */
-/*             start_byte, */
-/*             start_byte,      // old_end_byte = start_byte (nothing was there before) */
-/*             new_end_byte, */
-/*             start_point, */
-/*             start_point,     // old_end_point = start_point (nothing was there before) */
-/*             new_end_point */
-/*         ); */
-        
-/*         treesit_reparse_if_needed(current_buffer); */
-/*         treesit_apply_highlights(current_buffer); */
-/*     } */
-    
-/*     // Only adjust text properties if tree-sitter is NOT active */
-/*     if (!has_treesit) { */
-/*         adjust_text_properties(current_buffer, insert_pos, 1); */
-/*     } */
-    
-/*     adjust_all_window_points_after_modification(insert_pos, 1); */
-/*     set_point(current_buffer->pt + 1); */
-/*     update_goal_column(); */
-/*     reset_cursor_blink(current_buffer); */
-/*     current_buffer->modified = true; */
-/* } */
-
 
 #include <setjmp.h>
 
@@ -622,11 +504,70 @@ size_t current_column() {
     return current_buffer->pt - line_start;
 }
 
-void update_goal_column() {
-    current_buffer->cursor.goal_column = current_column();
+static size_t get_effective_goal_column() {
+    // First check if goal-column is set (semipermanent)
+    SCM goal_col_sym = scm_from_utf8_symbol("goal-column");
+    SCM goal_col_val = buffer_local_value(goal_col_sym, current_buffer);
+    
+    if (scm_is_true(goal_col_val) && scm_is_integer(goal_col_val)) {
+        return scm_to_size_t(goal_col_val);
+    }
+    
+    // Fall back to temporary-goal-column
+    SCM temp_sym = scm_from_utf8_symbol("temporary-goal-column");
+    SCM temp_val = buffer_local_value(temp_sym, current_buffer);
+    if (scm_is_integer(temp_val)) {
+        return scm_to_size_t(temp_val);
+    }
+    
+    return 0;
 }
 
-void next_line() {
+static void set_temporary_goal_column(size_t column) {
+    SCM sym = scm_from_utf8_symbol("temporary-goal-column");
+    SCM val = scm_from_size_t(column);
+    scm_setq_impl(sym, val);
+}
+
+void update_goal_column() {
+    set_temporary_goal_column(current_column());
+}
+
+
+// MAYBE TODO in emacs it check if `goal-column' is set to decide whether to use
+// visual movement, i don't think it makes much sense to disable visual movement
+// if `goal-column' is set, I'll not do it for now..
+void line_move() {
+    int arg = get_prefix_arg();
+    if (arg == 0) return;
+    
+    // Check if goal-column is set (overrides line-move-visual)
+    SCM goal_col_sym = scm_from_utf8_symbol("goal-column");
+    SCM goal_col_val = buffer_local_value(goal_col_sym, current_buffer);
+    bool has_goal_column = scm_is_true(goal_col_val);
+    
+    // Check if we should use visual line movement
+    bool line_move_visual_enabled = scm_get_bool("line-move-visual", true);
+    
+    // Check truncate-lines using buffer-local value
+    SCM truncate_lines_sym = scm_from_utf8_symbol("truncate-lines");
+    SCM truncate_lines_val = buffer_local_value(truncate_lines_sym, current_buffer);
+    bool truncate_lines = scm_is_true(truncate_lines_val);
+    
+    // Determine if we should use visual movement
+    // goal-column overrides line-move-visual
+    bool use_visual = !has_goal_column && 
+                     line_move_visual_enabled && 
+                     !truncate_lines;
+    
+    if (use_visual) {
+        line_move_visual();
+    } else {
+        line_move_logical();
+    }
+}
+
+void line_move_logical() {
     int arg = get_prefix_arg();
     if (arg == 0) return;
     
@@ -634,7 +575,7 @@ void next_line() {
     int count = abs(arg);
     
     size_t text_len = rope_char_length(current_buffer->rope);
-    size_t starting_pt = current_buffer->pt;  // Remember where we started
+    size_t starting_pt = current_buffer->pt;
     
     for (int i = 0; i < count; i++) {
         if (direction > 0) {
@@ -646,11 +587,17 @@ void next_line() {
             
             if (pos >= text_len) {
                 // Can't move any further - we're at the last line
-                if (current_buffer->pt == starting_pt) {
-                    // We didn't move at all
+                bool add_newlines = scm_get_bool("next-line-add-newlines", false);
+                
+                if (add_newlines) {
+                    set_point(text_len);
+                    insert("\n");
+                    text_len++;
+                } else {
+                    end_of_buffer();
                     message("End of buffer");
                 }
-                break; // At end of buffer
+                return;
             }
             
             pos++; // Move past newline
@@ -662,8 +609,8 @@ void next_line() {
             }
             
             size_t line_length = line_end - line_start;
-            if (current_buffer->cursor.goal_column <= line_length) {
-                set_point(line_start + current_buffer->cursor.goal_column);
+            if (get_effective_goal_column() <= line_length) {
+                set_point(line_start + get_effective_goal_column());
             } else {
                 set_point(line_end);
             }
@@ -675,12 +622,10 @@ void next_line() {
             }
             
             if (pos == 0) {
-                // Can't move any further - we're at the first line
                 if (current_buffer->pt == starting_pt) {
-                    // We didn't move at all
                     message("Beginning of buffer");
                 }
-                break; // At first line
+                return;
             }
             
             pos--; // Move before newline
@@ -691,8 +636,8 @@ void next_line() {
             }
             
             size_t line_length = pos - line_start;
-            if (current_buffer->cursor.goal_column <= line_length) {
-                set_point(line_start + current_buffer->cursor.goal_column);
+            if (get_effective_goal_column() <= line_length) {
+                set_point(line_start + get_effective_goal_column());
             } else {
                 set_point(pos);
             }
@@ -700,13 +645,447 @@ void next_line() {
     }
 }
 
+void line_move_visual() {
+    int arg = get_prefix_arg();
+    if (arg == 0) return;
+    
+    Window *win = selected_frame->wm.selected;
+    if (!win) {
+        line_move_logical();
+        return;
+    }
+    
+    Face *default_face = get_face(FACE_DEFAULT);
+    Font *default_font = default_face ? get_face_font(default_face) : NULL;
+    if (!default_font) {
+        line_move_logical();
+        return;
+    }
+    
+    float start_x = win->x + selected_frame->left_fringe_width;
+    float max_x = start_x + (win->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width));
+    
+    int direction = arg > 0 ? 1 : -1;
+    int count = abs(arg);
+    
+    size_t text_len = rope_char_length(current_buffer->rope);
+    size_t starting_pt = current_buffer->pt;
+    
+    // Get the goal column to maintain across movements
+    size_t goal_column = get_effective_goal_column();
+    
+    for (int iter = 0; iter < count; iter++) {
+        size_t pos = current_buffer->pt;
+        
+        // Find start of current logical line
+        size_t logical_line_start = pos;
+        while (logical_line_start > 0 && rope_char_at(current_buffer->rope, logical_line_start - 1) != '\n') {
+            logical_line_start--;
+        }
+        
+        // Find end of current logical line
+        size_t logical_line_end = pos;
+        while (logical_line_end < text_len && rope_char_at(current_buffer->rope, logical_line_end) != '\n') {
+            logical_line_end++;
+        }
+        
+        // Build array of all visual line starts in current logical line
+        size_t visual_starts[1024];
+        int num_visual_lines = 0;
+        visual_starts[num_visual_lines++] = logical_line_start;
+        
+        float x = start_x;
+        size_t i = logical_line_start;
+        
+        while (i < logical_line_end) {
+            uint32_t ch = rope_char_at(current_buffer->rope, i);
+            
+            int face_id = get_text_property_face(current_buffer, i);
+            Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
+            if (!face) face = default_face;
+            Font *char_font = get_face_font(face);
+            if (!char_font) char_font = default_font;
+            
+            float char_width = character_width(char_font, ch);
+            
+            if (x + char_width > max_x) {
+                // Wrap point
+                if (num_visual_lines < 1024) {
+                    visual_starts[num_visual_lines++] = i;
+                }
+                x = start_x;
+            }
+            
+            x += char_width;
+            i++;
+        }
+        
+        // Find which visual line contains pos
+        int current_visual_line_idx = 0;
+        for (int j = 0; j < num_visual_lines; j++) {
+            if (visual_starts[j] <= pos) {
+                current_visual_line_idx = j;
+            } else {
+                break;
+            }
+        }
+        
+        // Calculate goal_x from goal_column
+        float goal_x = start_x;
+        x = start_x;
+        size_t chars_from_logical_start = 0;
+        i = logical_line_start;
+        
+        while (i < logical_line_end && chars_from_logical_start < goal_column) {
+            uint32_t ch = rope_char_at(current_buffer->rope, i);
+            
+            int face_id = get_text_property_face(current_buffer, i);
+            Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
+            if (!face) face = default_face;
+            Font *char_font = get_face_font(face);
+            if (!char_font) char_font = default_font;
+            
+            float char_width = character_width(char_font, ch);
+            
+            if (x + char_width > max_x) {
+                x = start_x + char_width;
+            } else {
+                x += char_width;
+            }
+            
+            i++;
+            chars_from_logical_start++;
+        }
+        
+        goal_x = x;
+        
+        if (direction > 0) {
+            // Move down one visual line
+            int target_visual_line_idx = current_visual_line_idx + 1;
+            
+            // Check if target is in the same logical line
+            if (target_visual_line_idx < num_visual_lines) {
+                // Target is in same logical line - use goal_x
+                size_t target_visual_start = visual_starts[target_visual_line_idx];
+                size_t target_visual_end;
+                
+                if (target_visual_line_idx + 1 < num_visual_lines) {
+                    target_visual_end = visual_starts[target_visual_line_idx + 1];
+                } else {
+                    target_visual_end = logical_line_end;
+                }
+                
+                // Find position at goal_x in target visual line
+                x = start_x;
+                size_t target_pos = target_visual_start;
+                
+                while (target_pos < target_visual_end) {
+                    uint32_t ch = rope_char_at(current_buffer->rope, target_pos);
+                    
+                    int face_id = get_text_property_face(current_buffer, target_pos);
+                    Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
+                    if (!face) face = default_face;
+                    Font *char_font = get_face_font(face);
+                    if (!char_font) char_font = default_font;
+                    
+                    float char_width = character_width(char_font, ch);
+                    
+                    if (x + char_width > max_x) {
+                        break;
+                    }
+                    
+                    if (x >= goal_x) {
+                        break;
+                    }
+                    
+                    x += char_width;
+                    target_pos++;
+                }
+                
+                set_point(target_pos);
+            } else {
+                // Need to move to next logical line
+                if (logical_line_end >= text_len) {
+                    // At end of buffer
+                    bool add_newlines = scm_get_bool("next-line-add-newlines", false);
+                    
+                    if (add_newlines) {
+                        set_point(text_len);
+                        insert("\n");
+                    } else {
+                        end_of_buffer();
+                        message("End of buffer");
+                    }
+                    return;
+                }
+                
+                // Move to first visual line of next logical line
+                size_t next_logical_start = logical_line_end + 1;
+                size_t next_logical_end = next_logical_start;
+                
+                while (next_logical_end < text_len && rope_char_at(current_buffer->rope, next_logical_end) != '\n') {
+                    next_logical_end++;
+                }
+                
+                // Calculate goal_x from goal_column for the next logical line
+                x = start_x;
+                size_t chars_from_next_start = 0;
+                i = next_logical_start;
+                float next_goal_x = start_x;
+                
+                while (i < next_logical_end && chars_from_next_start < goal_column) {
+                    uint32_t ch = rope_char_at(current_buffer->rope, i);
+                    
+                    int face_id = get_text_property_face(current_buffer, i);
+                    Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
+                    if (!face) face = default_face;
+                    Font *char_font = get_face_font(face);
+                    if (!char_font) char_font = default_font;
+                    
+                    float char_width = character_width(char_font, ch);
+                    
+                    if (x + char_width > max_x) {
+                        x = start_x + char_width;
+                    } else {
+                        x += char_width;
+                    }
+                    
+                    i++;
+                    chars_from_next_start++;
+                }
+                next_goal_x = x;
+                
+                // Find first wrap point in next logical line
+                x = start_x;
+                i = next_logical_start;
+                size_t first_wrap = next_logical_end;
+                
+                while (i < next_logical_end) {
+                    uint32_t ch = rope_char_at(current_buffer->rope, i);
+                    
+                    int face_id = get_text_property_face(current_buffer, i);
+                    Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
+                    if (!face) face = default_face;
+                    Font *char_font = get_face_font(face);
+                    if (!char_font) char_font = default_font;
+                    
+                    float char_width = character_width(char_font, ch);
+                    
+                    if (x + char_width > max_x) {
+                        first_wrap = i;
+                        break;
+                    }
+                    
+                    x += char_width;
+                    i++;
+                }
+                
+                // Find position at next_goal_x in first visual line
+                x = start_x;
+                size_t target_pos = next_logical_start;
+                
+                while (target_pos < first_wrap) {
+                    uint32_t ch = rope_char_at(current_buffer->rope, target_pos);
+                    
+                    int face_id = get_text_property_face(current_buffer, target_pos);
+                    Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
+                    if (!face) face = default_face;
+                    Font *char_font = get_face_font(face);
+                    if (!char_font) char_font = default_font;
+                    
+                    float char_width = character_width(char_font, ch);
+                    
+                    if (x + char_width > max_x) {
+                        break;
+                    }
+                    
+                    if (x >= next_goal_x) {
+                        break;
+                    }
+                    
+                    x += char_width;
+                    target_pos++;
+                }
+                
+                set_point(target_pos);
+            }
+        } else {
+            // Move up one visual line
+            if (pos == 0) {
+                message("Beginning of buffer");
+                return;
+            }
+            
+            int target_visual_line_idx = current_visual_line_idx - 1;
+            
+            // Check if target is in the same logical line
+            if (target_visual_line_idx >= 0) {
+                // Target is in same logical line - use goal_x
+                size_t target_visual_start = visual_starts[target_visual_line_idx];
+                size_t target_visual_end;
+                
+                if (target_visual_line_idx + 1 < num_visual_lines) {
+                    target_visual_end = visual_starts[target_visual_line_idx + 1];
+                } else {
+                    target_visual_end = logical_line_end;
+                }
+                
+                // Find position at goal_x in target visual line
+                x = start_x;
+                size_t target_pos = target_visual_start;
+                
+                while (target_pos < target_visual_end) {
+                    uint32_t ch = rope_char_at(current_buffer->rope, target_pos);
+                    
+                    int face_id = get_text_property_face(current_buffer, i);
+                    Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
+                    if (!face) face = default_face;
+                    Font *char_font = get_face_font(face);
+                    if (!char_font) char_font = default_font;
+                    
+                    float char_width = character_width(char_font, ch);
+                    
+                    if (x >= goal_x) {
+                        break;
+                    }
+                    
+                    x += char_width;
+                    target_pos++;
+                }
+                
+                set_point(target_pos);
+            } else {
+                // Need to move to previous logical line
+                if (logical_line_start == 0) {
+                    message("Beginning of buffer");
+                    return;
+                }
+                
+                // Find previous logical line
+                size_t prev_logical_end = logical_line_start - 1;
+                size_t prev_logical_start = prev_logical_end;
+                
+                while (prev_logical_start > 0 && rope_char_at(current_buffer->rope, prev_logical_start - 1) != '\n') {
+                    prev_logical_start--;
+                }
+                
+                // Build visual lines array for previous logical line
+                num_visual_lines = 0;
+                visual_starts[num_visual_lines++] = prev_logical_start;
+                
+                x = start_x;
+                i = prev_logical_start;
+                
+                while (i < prev_logical_end) {
+                    uint32_t ch = rope_char_at(current_buffer->rope, i);
+                    
+                    int face_id = get_text_property_face(current_buffer, i);
+                    Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
+                    if (!face) face = default_face;
+                    Font *char_font = get_face_font(face);
+                    if (!char_font) char_font = default_font;
+                    
+                    float char_width = character_width(char_font, ch);
+                    
+                    if (x + char_width > max_x) {
+                        if (num_visual_lines < 1024) {
+                            visual_starts[num_visual_lines++] = i;
+                        }
+                        x = start_x;
+                    }
+                    
+                    x += char_width;
+                    i++;
+                }
+                
+                // Move to last visual line of previous logical line
+                size_t target_visual_start = visual_starts[num_visual_lines - 1];
+                size_t target_visual_end = prev_logical_end;
+                
+                // Calculate goal_x from goal_column for the previous logical line
+                x = start_x;
+                size_t chars_from_prev_start = 0;
+                i = prev_logical_start;
+                float prev_goal_x = start_x;
+                
+                while (i < prev_logical_end && chars_from_prev_start < goal_column) {
+                    uint32_t ch = rope_char_at(current_buffer->rope, i);
+                    
+                    int face_id = get_text_property_face(current_buffer, i);
+                    Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
+                    if (!face) face = default_face;
+                    Font *char_font = get_face_font(face);
+                    if (!char_font) char_font = default_font;
+                    
+                    float char_width = character_width(char_font, ch);
+                    
+                    if (x + char_width > max_x) {
+                        x = start_x + char_width;
+                    } else {
+                        x += char_width;
+                    }
+                    
+                    i++;
+                    chars_from_prev_start++;
+                }
+                prev_goal_x = x;
+                
+                // Now find position at prev_goal_x in the last visual line
+                x = start_x;
+                size_t target_pos = target_visual_start;
+                
+                while (target_pos < target_visual_end) {
+                    uint32_t ch = rope_char_at(current_buffer->rope, target_pos);
+                    
+                    int face_id = get_text_property_face(current_buffer, target_pos);
+                    Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
+                    if (!face) face = default_face;
+                    Font *char_font = get_face_font(face);
+                    if (!char_font) char_font = default_font;
+                    
+                    float char_width = character_width(char_font, ch);
+                    
+                    if (x + char_width > max_x) {
+                        break;
+                    }
+                    
+                    if (x >= prev_goal_x) {
+                        break;
+                    }
+                    
+                    x += char_width;
+                    target_pos++;
+                }
+                
+                set_point(target_pos);
+            }
+        }
+    }
+}
+
+void next_line() {
+    line_move();
+}
+
 void previous_line() {
     int arg = get_prefix_arg();
     arg = -arg;
     set_prefix_arg(arg);
-    next_line();
+    line_move();
 }
 
+void next_logical_line() {
+    line_move_logical();
+}
+
+void previous_logical_line() {
+    int arg = get_prefix_arg();
+    arg = -arg;
+    set_prefix_arg(arg);
+    line_move_logical();
+}
+
+// TODO beginning_of_visual_line
 void beginning_of_line() {
     int arg = get_prefix_arg();
     if (arg == 0) return;
@@ -720,6 +1099,7 @@ void beginning_of_line() {
     set_point(target);
 }
 
+// TODO end_of_visual_line
 void end_of_line() {
     int arg = get_prefix_arg();
     if (arg == 0) return;
@@ -1343,6 +1723,7 @@ void kill_region() {
 }
 
 // TODO Support ARG to yank N times
+// (Who even thinks let me yank the think i've killed 4 kills before)
 // TODO Don’t adjust the syntax if treesit
 // TODO parse if treesit
 void yank() {
@@ -1377,13 +1758,10 @@ bool isWordChar(uint32_t c) {
     return isalnum((unsigned char)c);
 }
 
-
 bool isPunctuationChar(uint32_t c) {
     if (c >= 128) return false;
     return strchr(",.;:!?'\"(){}[]<>-+*/=&|^%$#@~_", (char)c) != NULL;
 }
-
-
 
 size_t end_of_word(Buffer *buffer, size_t pos) {
     size_t text_len = rope_char_length(buffer->rope);
@@ -1422,7 +1800,6 @@ size_t end_of_word(Buffer *buffer, size_t pos) {
     rope_iter_destroy(&iter);
     return result;
 }
-
 
 size_t beginning_of_word(Buffer *buffer, size_t pos) {
     if (pos == 0) return 0;

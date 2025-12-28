@@ -1061,7 +1061,8 @@ void draw_window_dividers(WindowManager wm) {
 }
 
 
-// Count actual visual lines including wraps
+// TODO if it contains a face with a box the height
+// should count the top and bottom edge width of the box
 float calculate_minibuffer_height() {
     if (!selected_frame->wm.minibuffer_window || !selected_frame->wm.minibuffer_window->buffer) return 0.0f;
     

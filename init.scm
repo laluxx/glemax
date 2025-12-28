@@ -315,6 +315,24 @@ UNDERLINE_POSITION font properties, set this to #f.  You can also use
 small font display sizes.")
 
 
+(define next-line-add-newlines #f)
+(set-var-doc! next-line-add-newlines
+"If #t, `next-line' inserts newline to avoid `end of buffer' error.")
+
+
+;; TODO Support this!
+(define line-move-visual #t)
+(set-var-doc! line-move-visual
+"When #t, `line-move' moves point by visual lines.
+This movement is based on where the cursor is displayed on the
+screen, instead of relying on buffer contents alone.  It takes
+into account variable-width characters and line continuation.
+If #f, `line-move' moves point by logical lines.
+A non #f setting of `goal-column' overrides the value of this variable
+and forces movement by logical lines.
+A window that is horizontally scrolled also forces movement by logical
+lines.")
+
 
 ;; TODO Support this!
 (define inhibit-cursor-blink-on-frame-resize #t)
@@ -561,6 +579,29 @@ the variable `message-log-max'."
 When truncating is off, long lines are folded.")
 
 
+(defvar-local temporary-goal-column 0
+  "Current goal column for vertical motion.
+It is the column where point was at the start of the current run
+of vertical motion commands.")
+
+;; TODO Support this!
+(defvar-local goal-column #f
+  "Semipermanent goal column for vertical motion, as set by
+\\[set-goal-column], or #f.
+A non #f setting overrides the variable `line-move-visual', which see.")
+
+(define (set-goal-column)
+  (if raw-prefix-arg
+      (begin
+        (setq goal-column #f)
+        (message "No goal column"))
+      (let ((col (current-column)))
+        (setq goal-column col)
+        (message "Goal column ~a (use C-u C-x C-n to unset it)" col))))
+
+(keymap-global-set "C-x C-n" set-goal-column)
+
+
 (define (toggle-truncate-lines)
   "Toggle truncating of long lines for the current buffer.
 When truncating is off, long lines are folded."
@@ -571,9 +612,9 @@ When truncating is off, long lines are folded."
 
 (keymap-global-set "C-x x t" toggle-truncate-lines)
 
-;; TODO Support this
+;; TODO Support this!
 (defvar-local lerp-scroll #f
-  "Non-false means lerp when scrolling.")
+  "#t means lerp when scrolling.")
 
 (define (toggle-lerp-scroll)
   "Toggle lerping of scroll for the current buffer."

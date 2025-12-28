@@ -9,7 +9,7 @@ typedef struct {
     bool visible;
     double last_blink;
     size_t blink_count;
-    size_t goal_column;
+    /* size_t goal_column; */
 } Cursor;
 
 typedef struct {
@@ -32,7 +32,7 @@ typedef struct Buffer {
     SCM local_var_alist; // Alist of (SYMBOL . VALUE) pairs
     KeyChordMap *keymap;  // Buffer-local keymap (can be NULL)
     TreeSitterState *ts_state; // (NULL if not using tree-sitter)
-    bool read_only; // true if buffer is read-only
+    bool read_only;
     bool modified;
 } Buffer;
 
