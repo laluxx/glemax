@@ -447,6 +447,11 @@ to set the size of a frame in pixels, to maximize frames or to make them
 fullscreen.  To resize your initial frame pixelwise, set this option to
 a #t value in your init file, non pixelwise resizing doesn't work on wayland.")
 
+;; NOTE Defined in C
+;; (define gcs-done 0)
+;; (set-var-doc! gcs-done
+;; "Accumulated number of garbage collections done.")
+
 
 (define prefix-arg 1)
 (define raw-prefix-arg #f)
@@ -629,7 +634,6 @@ When truncating is off, long lines are folded."
 
 (defvar-local mode-line-format " -:%+%*-  %b       %p   L%l"
   "TODO.")
-
 
 
 (define text-mode-map (make-sparse-keymap))

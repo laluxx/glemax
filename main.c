@@ -817,9 +817,9 @@ void mouse_button_callback(int button, int action, int mods) {
             
             // Check if clicked on inactive minibuffer area (bottom line of frame)
             if (!selected_frame->wm.minibuffer_active && y < line_height) {
-                SCM view_echo_func = scm_c_lookup("view-echo-area-messages");
-                if (scm_is_true(scm_variable_bound_p(view_echo_func))) {
-                    scm_call_0(scm_variable_ref(view_echo_func));
+                SCM update_gcs_func = scm_c_lookup("view-echo-area-messages");
+                if (scm_is_true(scm_variable_bound_p(update_gcs_func))) {
+                    scm_call_0(scm_variable_ref(update_gcs_func));
                 }
                 return;
             }
@@ -1227,24 +1227,8 @@ static void inner_main (void *data, int argc, char **argv) {
     sw = context.swapChainExtent.width;  // Resize callback
     printf("sw: %u, sh: %u\n", sw, sh);
 
-
     // Create the one and only frame (for now)
-    selected_frame = malloc(sizeof(Frame));
-    selected_frame->x = 0;
-    selected_frame->y = 0;
-    selected_frame->width = 800;  // Default width
-    selected_frame->height = 600; // Default height
-    selected_frame->focused = true;
-    selected_frame->left_fringe_width = 8;  // TODO Those could 
-    selected_frame->right_fringe_width = 8; // be scm variable
-    Face *default_face = get_face(FACE_DEFAULT);
-    Font *default_font = get_face_font(default_face);
-    selected_frame->line_height = default_font->ascent + default_font->descent;
-    // What character does emacs check for the column width ?
-    // Do they do an avarage for non monospace fonts ?
-    Character *space = font_get_character(default_font, ' ');
-    selected_frame->column_width = space->ax;
-
+    selected_frame = create_frame(0, 0, 800, 600);
     wm_init(&selected_frame->wm, scratch_buffer, minibuf, 0, 0, sw, sh);
     
     init_faces();
@@ -1255,21 +1239,18 @@ static void inner_main (void *data, int argc, char **argv) {
         setWindowResizeIncrements(selected_frame->column_width, selected_frame->line_height, selected_frame->left_fringe_width, selected_frame->right_fringe_width);
     }
     
-    
     while (!windowShouldClose()) {
         beginFrame();
         
         clear_background(face_cache->faces[FACE_DEFAULT]->bg);
-        
         fps(face_cache->faces[FACE_DEFAULT]->font, sw - 400, 200, RED);
-        
         wm_draw(&selected_frame->wm);
         
         endFrame();
    }
     
-    wm_cleanup(&selected_frame->wm);
-    buffer_destroy(scratch_buffer);
+    destroy_frame(selected_frame);
+    destroy_all_buffers();
     cleanup(&context);
 }
 

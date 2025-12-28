@@ -1,5 +1,6 @@
 #include "frame.h"
 #include "lisp.h"
+#include "faces.h"
 #include <obsidian/window.h>
 #include <libguile.h>
 
@@ -8,6 +9,51 @@ static SCM frame_object_cache;
 
 // NOTE Currently we only support one frame
 Frame *selected_frame = NULL;
+
+
+Frame* create_frame(int x, int y, int width, int height) {
+    Frame *frame = malloc(sizeof(Frame));
+    if (!frame) return NULL;
+    
+    frame->x = x;
+    frame->y = y;
+    frame->width = width;
+    frame->height = height;
+    frame->focused = true;
+    frame->left_fringe_width = 8;
+    frame->right_fringe_width = 8;
+    
+    // Get default font metrics
+    Face *default_face = get_face(FACE_DEFAULT);
+    Font *default_font = get_face_font(default_face);
+    frame->line_height = default_font->ascent + default_font->descent;
+    
+    Character *space = font_get_character(default_font, ' ');
+    frame->column_width = space->ax;
+    
+    // CRITICAL: Initialize saved_config to prevent segfault
+    frame->wm.saved_config.windows = NULL;
+    frame->wm.saved_config.count = 0;
+    frame->wm.minibuffer_active = false;
+    frame->wm.previous_window = NULL;
+    frame->wm.minibuffer_message_start = 0;
+    
+    return frame;
+}
+
+void destroy_frame(Frame *frame) {
+    if (!frame) return;
+    
+    // Clean up window manager
+    wm_cleanup(&frame->wm);
+    
+    // Free saved config if it exists
+    if (frame->wm.saved_config.windows) {
+        free_window_configuration(&frame->wm.saved_config);
+    }
+    
+    free(frame);
+}
 
 static SCM frame_to_scm(Frame *frame) {
     if (!frame) return SCM_BOOL_F;

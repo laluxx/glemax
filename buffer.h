@@ -9,7 +9,6 @@ typedef struct {
     bool visible;
     double last_blink;
     size_t blink_count;
-    /* size_t goal_column; */
 } Cursor;
 
 typedef struct {
@@ -53,6 +52,7 @@ extern bool argument_manually_set;
 
 Buffer* buffer_create(const char *name);
 void buffer_destroy(Buffer *buffer);
+void destroy_all_buffers(void);
 Buffer *get_buffer(const char *name);
 Buffer *get_buffer_create(const char *name);
 void switch_to_buffer(Buffer *buf);

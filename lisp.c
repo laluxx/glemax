@@ -2296,7 +2296,23 @@ static SCM scm_set_buffer(SCM buffer_or_name) {
 }
 
 
+static void* gc_after_hook(void *hook_data, void *fn_data, void *data) {
+    SCM gcs_done_var = (SCM)fn_data;
+    SCM gc_times = scm_cdr(scm_assq(scm_from_utf8_symbol("gc-times"), scm_gc_stats()));
+    scm_variable_set_x(gcs_done_var, gc_times);
+    return hook_data;
+}
+
+static SCM scm_garbage_collect(void) {
+    scm_gc();
+    return scm_gc_stats();
+}
+
 void lisp_init(void) {
+
+    scm_c_define("gcs-done", scm_from_size_t(0));
+    SCM gcs_done_var = scm_c_lookup("gcs-done");
+    scm_c_hook_add(&scm_after_gc_c_hook, gc_after_hook, (void *)gcs_done_var, 0);
 
     setup_load_paths();
 
@@ -2338,6 +2354,9 @@ void lisp_init(void) {
     
 
     init_treesit_bindings();
+
+
+    scm_c_define_gsubr("garbage-collect",               0, 0, 0, scm_garbage_collect);
 
     scm_c_define_gsubr("set-buffer",                    1, 0, 0, scm_set_buffer);
     scm_c_define_gsubr("goto-char",                     1, 0, 0, scm_goto_char);

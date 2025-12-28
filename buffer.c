@@ -44,7 +44,6 @@ Buffer* buffer_create(const char *name) {
     buffer->cursor.visible = true;
     buffer->cursor.last_blink = 0.0;
     buffer->cursor.blink_count = 0;
-    /* buffer->cursor.goal_column = 0; */
     buffer->region.active = false;
     buffer->region.mark = -1;
     buffer->props = NULL;
@@ -58,7 +57,6 @@ Buffer* buffer_create(const char *name) {
     buffer->keymap = NULL;
     buffer->read_only = false;
     buffer->modified = false;
-
 
     // Add to circular buffer list
     if (all_buffers == NULL) {
@@ -122,6 +120,27 @@ void buffer_destroy(Buffer *buffer) {
     rope_free(buffer->rope);
     clear_text_properties(buffer);
     free(buffer);
+}
+
+void destroy_all_buffers(void) {
+    if (!all_buffers) return;
+    
+    // Keep destroying until no buffers left
+    while (all_buffers) {
+        Buffer *to_destroy = all_buffers;
+        
+        // If this is the last buffer, all_buffers will become NULL
+        if (to_destroy->next == to_destroy) {
+            all_buffers = NULL;
+        } else {
+            // Move all_buffers pointer to next buffer before destroying
+            all_buffers = to_destroy->next;
+        }
+        
+        buffer_destroy(to_destroy);
+    }
+    
+    current_buffer = NULL;
 }
 
 Buffer *get_buffer(const char *name) {
