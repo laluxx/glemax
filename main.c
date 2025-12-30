@@ -6,6 +6,7 @@
 #include <obsidian/obsidian.h>
 #include <obsidian/renderer.h>
 #include <obsidian/window.h>
+#include <sys/select.h>
 #include "buffer.h"
 #include "faces.h"
 #include "wm.h"
@@ -196,12 +197,52 @@ void before_keychord_hook(const char *notation, KeyChordBinding *binding) {
 
 }
 
+// TODO Could probably be streamlined
+void update_region_highlight(Buffer *buf) {
+    // First, remove any existing region face properties
+    // We'll use a special key to track region highlighting
+    SCM region_key = scm_from_locale_symbol("region-overlay");
+    
+    // Clear old region highlighting
+    if (buf->props) {
+        TextProp *prop = buf->props;
+        while (prop) {
+            SCM has_region = get_text_property(buf, prop->start, region_key);
+            if (scm_is_true(has_region)) {
+                // Remove the face property from this interval
+                remove_text_properties(buf, prop->start, prop->end);
+            }
+            prop = prop->next;
+        }
+    }
+    
+    // Apply new region highlighting if region is active
+    if (buf->region.active && buf->region.mark >= 0) {
+        size_t start, end;
+        if (buf->region.mark < buf->pt) {
+            start = buf->region.mark;
+            end = buf->pt;
+        } else {
+            start = buf->pt;
+            end = buf->region.mark;
+        }
+        
+        if (start != end) {
+            SCM face_sym = scm_from_locale_symbol("face");
+            SCM face_val = scm_from_int(FACE_REGION);
+            put_text_property(buf, start, end, face_sym, face_val);
+            // Mark this as region overlay so we can clean it up later
+            put_text_property(buf, start, end, region_key, SCM_BOOL_T);
+        }
+    }
+}
+
 void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
     reset_cursor_blink(current_buffer);
     update_windows_scroll();
     int arg = get_prefix_arg();
     
-    
+    update_region_highlight(current_buffer);
     
     if (!is_scm_proc(binding->action.scheme_proc, "recenter-top-bottom") &&
         !is_scm_proc(binding->action.scheme_proc, "move-to-window-line-top-bottom"))
@@ -293,246 +334,7 @@ void key_callback(int key, int action, int mods) {
 }
 
 
-// Find which window contains the given screen coordinates
-static Window* find_window_at_point_recursive(Window *win, float x, float y) {
-    if (!win) return NULL;
-    
-    // Check if point is within this window's bounds
-    if (x >= win->x && x < win->x + win->width &&
-        y >= win->y && y < win->y + win->height) {
-        
-        // If it's a leaf window, we found it
-        if (is_leaf_window(win)) {
-            return win;
-        }
-        
-        // Otherwise, check children
-        Window *result = find_window_at_point_recursive(win->left, x, y);
-        if (result) return result;
-        
-        result = find_window_at_point_recursive(win->right, x, y);
-        if (result) return result;
-    }
-    
-    return NULL;
-}
 
-Window* find_window_at_point(float x, float y) {
-    // Check minibuffer first if active
-    if (selected_frame->wm.minibuffer_active && selected_frame->wm.minibuffer_window) {
-        Window *mb = selected_frame->wm.minibuffer_window;
-        if (x >= mb->x && x < mb->x + mb->width &&
-            y >= mb->y && y < mb->y + mb->height) {
-            return mb;
-        }
-    }
-    
-    // Then check regular windows
-    return find_window_at_point_recursive(selected_frame->wm.root, x, y);
-}
-
-size_t point_at_window_position(Window *win, float click_x, float click_y) {
-    if (!win || !win->buffer) return 0;
-    
-    Buffer *buffer = win->buffer;
-    
-    // Get default face font
-    Face *default_face = get_face(FACE_DEFAULT);
-    Font *default_font = default_face ? default_face->font : NULL;
-    if (!default_font) return 0;
-    
-    float line_height = default_font->ascent + default_font->descent;
-    float max_x = win->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width);
-    
-    // Get truncate-lines setting
-    SCM truncate_lines_sym = scm_from_utf8_symbol("truncate-lines");
-    SCM truncate_lines_val = buffer_local_value(truncate_lines_sym, buffer);
-    bool truncate_lines = scm_is_true(truncate_lines_val);
-    
-    // Calculate starting position (same as draw_buffer)
-    float scroll_offset_y = 0;
-    size_t start_pos = 0;
-    if (!win->is_minibuffer) {
-        start_pos = find_start_position(buffer, win, &scroll_offset_y);
-    }
-    
-    // Apply horizontal scroll offset for truncate-lines
-    float scroll_offset_x = (!win->is_minibuffer && truncate_lines) ? win->scrollx : 0;
-    
-    // Calculate buffer coordinates (matching draw_buffer exactly)
-    float start_x = win->x + selected_frame->left_fringe_width;
-    float start_y = win->y + win->height - default_font->ascent + default_font->descent;
-    
-    float line_start_x = start_x - scroll_offset_x;
-    float x = line_start_x;
-    float y = start_y + (!win->is_minibuffer ? win->scrolly : 0) - scroll_offset_y;
-    
-    float window_bottom = win->y;
-    if (!win->is_minibuffer) {
-        window_bottom += line_height;
-    }
-    
-    rope_iter_t iter;
-    rope_iter_init(&iter, buffer->rope, start_pos);
-    
-    uint32_t ch;
-    size_t i = start_pos;
-    size_t best_pos = start_pos;
-    float current_line_height = line_height;
-    bool on_target_line = false;
-    size_t current_line_end = start_pos;
-    size_t last_visible_pos = start_pos;  // ADD THIS: track the last position we saw
-    
-    while (rope_iter_next_char(&iter, &ch)) {
-        // Get face and font for this character
-        int face_id = get_text_property_face(buffer, i);
-        Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
-        if (!face) face = default_face;
-        
-        Font *char_font = get_face_font(face);
-        if (!char_font) char_font = default_font;
-        
-        // Track maximum line height
-        float font_height = char_font->ascent + char_font->descent;
-        if (font_height > current_line_height) {
-            current_line_height = font_height;
-        }
-        
-        // Stop if we've scrolled past the visible area
-        if (y < window_bottom - current_line_height) {
-            break;
-        }
-        
-        last_visible_pos = i;  // ADD THIS: update last visible position
-        
-        if (ch == '\n') {
-            // Calculate line bounds
-            float line_top = y - (char_font->descent * 2) + (char_font->ascent + char_font->descent);
-            float line_bottom = y - (char_font->descent * 2);
-            
-            // Check if click is on this line (past end of line content)
-            if (click_y >= line_bottom && click_y <= line_top) {
-                rope_iter_destroy(&iter);
-                // Return the position BEFORE the newline if we're on target line
-                return on_target_line ? current_line_end : i;
-            }
-            
-            // Move to next line
-            x = line_start_x;
-            y -= current_line_height;
-            current_line_height = line_height;
-            best_pos = i + 1;
-            on_target_line = false;
-            current_line_end = i + 1;
-            
-        } else {
-            // Get character metrics
-            Character *char_info = font_get_character(char_font, ch);
-            float char_width = character_width(char_font, ch);
-            float char_advance = char_info ? char_info->ax : char_width;
-            
-            // Handle truncation mode
-            if (truncate_lines) {
-                // Skip rest of line if we're past the right edge
-                if (x > start_x + max_x) {
-                    while (rope_iter_next_char(&iter, &ch) && ch != '\n') {
-                        i++;
-                        last_visible_pos = i;  // ADD THIS
-                    }
-                    if (ch == '\n') {
-                        x = line_start_x;
-                        y -= current_line_height;
-                        current_line_height = line_height;
-                        best_pos = i + 1;
-                        current_line_end = i + 1;
-                    }
-                    i++;
-                    continue;
-                }
-                
-                // Skip characters off the left edge
-                if (x + char_advance < start_x) {
-                    x += char_advance;
-                    i++;
-                    continue;
-                }
-            } else {
-                // Handle line wrapping
-                if (x + char_advance > start_x + max_x) {
-                    // Calculate line bounds before wrapping
-                    float line_top = y - (char_font->descent * 2) + (char_font->ascent + char_font->descent);
-                    float line_bottom = y - (char_font->descent * 2);
-                    
-                    // If click was on the line we just finished
-                    if (on_target_line && click_y >= line_bottom && click_y <= line_top) {
-                        rope_iter_destroy(&iter);
-                        return current_line_end;
-                    }
-                    
-                    // Wrap to next line
-                    x = start_x;
-                    y -= current_line_height;
-                    current_line_height = line_height;
-                    on_target_line = false;
-                    current_line_end = i;
-                    
-                    // Stop if wrapped past visible area
-                    if (y < window_bottom - current_line_height) {
-                        break;
-                    }
-                }
-            }
-            
-            // Calculate character bounds
-            float char_top = y - (char_font->descent * 2) + (char_font->ascent + char_font->descent);
-            float char_bottom = y - (char_font->descent * 2);
-            
-            // Check if click Y is on this line
-            if (click_y >= char_bottom && click_y <= char_top) {
-                on_target_line = true;
-                current_line_end = i + 1;
-                
-                // Character region is from x (left edge) to x + char_advance (right edge)
-                float char_left = x;
-                float char_right = x + char_advance;
-                float char_mid = char_left + (char_advance / 2.0f);
-                
-                // If click is within this character's bounds, return position i
-                if (click_x >= char_left && click_x < char_right) {
-                    rope_iter_destroy(&iter);
-                    return i;
-                }
-            }
-            
-            // Advance X position
-            x += char_advance;
-        }
-        
-        i++;
-    }
-    
-    rope_iter_destroy(&iter);
-    
-    // If we were on the target line, return the end of that line
-    if (on_target_line) {
-        return current_line_end;
-    }
-    
-    // CHANGED THIS: If click is below all content, go to end of buffer
-    // Check if we've reached the end of the buffer
-    size_t buf_len = rope_char_length(buffer->rope);
-    if (last_visible_pos >= buf_len - 1 || i >= buf_len) {
-        // We've seen the end of the buffer, so clicking below should go to the end
-        return buf_len;
-    }
-    
-    // Otherwise, clamp best position to buffer length
-    if (best_pos > buf_len) {
-        best_pos = buf_len;
-    }
-    
-    return best_pos;
-}
 
 
 static GLFWcursor* arrow_cursor = NULL;
@@ -825,15 +627,15 @@ void mouse_button_callback(int button, int action, int mods) {
             }
             
             // Find window at this position
-            Window *clicked_window = find_window_at_point(x, y);
+            Window *clicked_window = window_at_pos(x, y);
             
             if (clicked_window) {
                 // Check if click is on the modeline
                 float modeline_y = clicked_window->y;
                 float modeline_height = line_height;
                 
-                bool clicked_on_modeline = !clicked_window->is_minibuffer && 
-                                           y >= modeline_y && 
+                bool clicked_on_modeline = !clicked_window->is_minibuffer &&
+                                           y >= modeline_y &&
                                            y < modeline_y + modeline_height;
                 
                 // Handle modeline click - just switch window, don't move cursor
@@ -873,10 +675,8 @@ void mouse_button_callback(int button, int action, int mods) {
                 }
                 
                 // Normal click - set point to clicked position within the window
-                size_t new_point = point_at_window_position(clicked_window, x, y);
-                set_point(new_point);
-                clicked_window->point = new_point;
-                update_goal_column();
+                mouse_set_point(clicked_window, x, y);
+                update_region_highlight(clicked_window->buffer);
             }
         } else if (action == RELEASE) {
             // Stop dragging
@@ -906,7 +706,7 @@ void scroll_callback(double xoffset, double yoffset) {
     float y = (float)(context.swapChainExtent.height - ypos);
     
     // Find window at this position
-    Window *scroll_window = find_window_at_point(x, y);
+    Window *scroll_window = window_at_pos(x, y);
     
     if (!scroll_window) return;
     
@@ -950,6 +750,8 @@ void scroll_callback(double xoffset, double yoffset) {
         current_buffer = original_buffer;
         current_buffer->pt = original_point;
     }
+
+    reset_cursor_blink(current_buffer);
 }
 
 double lastX = WIDTH / 2.0f, lastY = HEIGHT / 2.0f;
@@ -1154,6 +956,7 @@ void cursor_pos_callback(double xpos, double ypos) {
     lastY = ypos;
 }
 
+
 void window_resize_callback(int width, int height) {
     sw = width;
     sh = height;
@@ -1229,9 +1032,10 @@ static void inner_main (void *data, int argc, char **argv) {
 
     // Create the one and only frame (for now)
     selected_frame = create_frame(0, 0, 800, 600);
-    wm_init(&selected_frame->wm, scratch_buffer, minibuf, 0, 0, sw, sh);
-    
+   
     init_faces();
+    wm_init(&selected_frame->wm, scratch_buffer, minibuf, 0, 0, sw, sh, selected_frame->line_height);
+
     lisp_init(); // IMPORTANT After initializing the windowManager
 
     bool resize_pixelwise = scm_get_bool("frame-resize-pixelwise", false);
@@ -1243,7 +1047,7 @@ static void inner_main (void *data, int argc, char **argv) {
         beginFrame();
         
         clear_background(face_cache->faces[FACE_DEFAULT]->bg);
-        fps(face_cache->faces[FACE_DEFAULT]->font, sw - 400, 200, RED);
+        fps(face_cache->faces[FACE_DEFAULT]->font, sw - 400, 200, face_cache->faces[FACE_ERROR]->fg);
         wm_draw(&selected_frame->wm);
         
         endFrame();

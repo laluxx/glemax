@@ -1085,7 +1085,6 @@ void previous_logical_line() {
     line_move_logical();
 }
 
-// TODO beginning_of_visual_line
 void beginning_of_line() {
     int arg = get_prefix_arg();
     if (arg == 0) return;
@@ -1099,7 +1098,6 @@ void beginning_of_line() {
     set_point(target);
 }
 
-// TODO end_of_visual_line
 void end_of_line() {
     int arg = get_prefix_arg();
     if (arg == 0) return;
@@ -1107,6 +1105,109 @@ void end_of_line() {
     // end-of-line doesn't respect field property
     size_t target = line_end_position(arg);
     set_point(target);
+}
+
+void beginning_of_visual_line() {
+    size_t pos = current_buffer->pt;
+    size_t text_len = rope_char_length(current_buffer->rope);
+    
+    // Find start of logical line
+    size_t logical_start = pos;
+    while (logical_start > 0 && rope_char_at(current_buffer->rope, logical_start - 1) != '\n') {
+        logical_start--;
+    }
+    
+    // Find end of logical line
+    size_t logical_end = pos;
+    while (logical_end < text_len && rope_char_at(current_buffer->rope, logical_end) != '\n') {
+        logical_end++;
+    }
+    
+    Window *win = selected_frame->wm.selected;
+    float start_x = win->x + selected_frame->left_fringe_width;
+    float max_x = start_x + (win->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width));
+    float char_width = selected_frame->column_width;
+    
+    // Find all visual line wrap points
+    size_t visual_starts[1024];
+    int num_visual = 0;
+    visual_starts[num_visual++] = logical_start;
+    
+    float x = start_x;
+    for (size_t i = logical_start; i < logical_end; i++) {
+        if (x + char_width > max_x) {
+            visual_starts[num_visual++] = i;
+            x = start_x;
+        }
+        x += char_width;
+    }
+    
+    // Find which visual line contains pos
+    size_t visual_start = logical_start;
+    for (int j = num_visual - 1; j >= 0; j--) {
+        if (visual_starts[j] <= pos) {
+            visual_start = visual_starts[j];
+            break;
+        }
+    }
+    
+    set_point(visual_start);
+}
+
+void end_of_visual_line() {
+    size_t pos = current_buffer->pt;
+    size_t text_len = rope_char_length(current_buffer->rope);
+    
+    // Find start of logical line
+    size_t logical_start = pos;
+    while (logical_start > 0 && rope_char_at(current_buffer->rope, logical_start - 1) != '\n') {
+        logical_start--;
+    }
+    
+    // Find end of logical line
+    size_t logical_end = pos;
+    while (logical_end < text_len && rope_char_at(current_buffer->rope, logical_end) != '\n') {
+        logical_end++;
+    }
+    
+    Window *win = selected_frame->wm.selected;
+    float start_x = win->x + selected_frame->left_fringe_width;
+    float max_x = start_x + (win->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width));
+    float char_width = selected_frame->column_width;
+    
+    // Find all visual line wrap points
+    size_t visual_starts[1024];
+    int num_visual = 0;
+    visual_starts[num_visual++] = logical_start;
+    
+    float x = start_x;
+    for (size_t i = logical_start; i < logical_end; i++) {
+        if (x + char_width > max_x) {
+            visual_starts[num_visual++] = i;
+            x = start_x;
+        }
+        x += char_width;
+    }
+    
+    // Find which visual line contains pos
+    int visual_idx = 0;
+    for (int j = 0; j < num_visual; j++) {
+        if (visual_starts[j] <= pos) {
+            visual_idx = j;
+        } else {
+            break;
+        }
+    }
+    
+    // End of this visual line is one before the next visual line start (or logical end)
+    size_t visual_end;
+    if (visual_idx + 1 < num_visual) {
+        visual_end = visual_starts[visual_idx + 1] - 1;
+    } else {
+        visual_end = logical_end;
+    }
+    
+    set_point(visual_end);
 }
 
 // TODO Support ARG
@@ -1460,15 +1561,16 @@ void delete_indentation() {
 
 /// REGION
 
+bool transient_mark_mode_should_be_disabled = false;
+
 void set_mark_command() {
     current_buffer->region.mark = current_buffer->pt;
     bool transient_mark_mode = scm_get_bool("transient-mark-mode", false);
+    message("Mark set");
     if (transient_mark_mode) {
         current_buffer->region.active = true;
-    } else {
-        if (is_scm_proc(last_command, "set-mark-command")) {
-            current_buffer->region.active = true;
-        }
+    } else if (is_scm_proc(last_command, "set-mark-command")) {
+        activate_mark();
     }
 }
 
@@ -1479,10 +1581,22 @@ void set_mark(size_t pos) {
 }
 
 void activate_mark() {
+    bool transient_mark_mode = scm_get_bool("transient-mark-mode", false);
+    if (!transient_mark_mode) {
+        transient_mark_mode_should_be_disabled = true;
+        SCM var = scm_c_lookup("transient-mark-mode");
+        scm_variable_set_x(var, scm_from_bool(true));
+    }
     current_buffer->region.active = true;
+    message("Mark activated");
 }
 
 void deactivate_mark() {
+    if (transient_mark_mode_should_be_disabled) {
+        SCM var = scm_c_lookup("transient-mark-mode");
+        scm_variable_set_x(var, scm_from_bool(false));
+        transient_mark_mode_should_be_disabled = false;
+    }
     current_buffer->region.active = false;
 }
 
@@ -1719,7 +1833,8 @@ void kill_region() {
     
     rkill(start, end, false);
     set_point(start);
-    current_buffer->region.active = false;
+
+    deactivate_mark();
 }
 
 // TODO Support ARG to yank N times

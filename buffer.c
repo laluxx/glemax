@@ -545,9 +545,6 @@ void set_raw_prefix_arg(bool value) {
 }
 
 
-
-
-
 /// Buffer local variables
 
 
@@ -890,6 +887,28 @@ static void flush_box_span(float box_span_start_x, float box_span_y,
                   box_span_color, thickness, !no_left, !no_right);
 }
 
+// Helper to draw face extension to the right edge of the window
+static void draw_face_extension(float x, float y, float max_x, 
+                                Face *face, Font *font,
+                                Color bg_color, float box_thickness,
+                                bool face_has_box) {
+    if (!face->extend || !face->bg_set) return;
+    
+    float extend_width = max_x - x;
+    if (extend_width <= 0) return;
+    
+    float extend_y = y - (font->descent * 2);
+    float extend_height = font->ascent + font->descent;
+    
+    // Apply box offset if the face has a box
+    if (face_has_box) {
+        extend_y -= box_thickness;
+        extend_height += (box_thickness * 2);
+    }
+    
+    draw_background_span(x, extend_y, extend_width, extend_height, bg_color);
+}
+
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     Face *default_face = get_face(FACE_DEFAULT);
     Font *default_font = default_face ? get_face_font(default_face) : NULL;
@@ -934,14 +953,15 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     
     uint32_t ch;
     size_t i = start_pos;
-    bool visible_mark_mode = scm_get_bool("visible-mark-mode", false);
-    bool crystal_point_mode = scm_get_bool("crystal-point-mode", false);
+    bool visible_mark_mode   = scm_get_bool("visible-mark-mode", false);
+    bool transient_mark_mode = scm_get_bool("transient-mark-mode", false);
+    bool crystal_point_mode  = scm_get_bool("crystal-point-mode", false);
     
     float current_line_height = line_height;
-    float box_line_thickness = 1.0f; // TODO This 1 should come from the face
+    float box_line_thickness = 1.0f;
     
     bool current_line_has_box = false;
-    bool previous_line_had_wrapped_box = false;  // Track if previous line was a wrapped box continuation
+    bool previous_line_had_wrapped_box = false;
     
     // Cursor tracking
     float cursor_x = 0, cursor_y = 0;
@@ -959,16 +979,22 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     Color bg_span_color = {0, 0, 0, 0};
     bool has_bg_span = false;
     
-    // Box batching - improved tracking
+    // Box batching
     float box_span_start_x = 0;
     float box_span_width = 0;
     float box_span_y = 0;
     float box_span_height = 0;
     Color box_span_color = {0, 0, 0, 0};
     bool has_box_span = false;
-    bool box_span_no_left = false;   // Current span has no left border
-    bool box_span_no_right = false;  // Current span has no right border
-    bool was_in_box = false;         // Previous char was in a box
+    bool box_span_no_left = false;
+    bool box_span_no_right = false;
+    bool was_in_box = false;
+    
+    // Track the last face for extension purposes
+    Face *last_drawn_face = NULL;
+    Font *last_drawn_font = NULL;
+    Color last_drawn_bg = base_bg;
+    bool last_face_had_box = false;
     
     while (rope_iter_next_char(&iter, &ch)) {
         int face_id = get_text_property_face(buffer, i);
@@ -996,7 +1022,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
         float char_width = character_width(char_font, ch);
         
         bool at_cursor = (i == point);
-        bool at_mark = mark_is_set && is_selected && visible_mark_mode &&
+        bool at_mark = mark_is_set && is_selected && visible_mark_mode && !transient_mark_mode &&
                        i == (size_t)buffer->region.mark && (size_t)buffer->region.mark != point;
         
         if (y < window_bottom - current_line_height) {
@@ -1008,6 +1034,12 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             if (has_bg_span) {
                 draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
                 has_bg_span = false;
+            }
+            
+            // Draw extension if the current face requires it
+            if (y >= window_bottom && y <= window_top) {
+                draw_face_extension(x, y, max_x, face, char_font, 
+                                   face->bg, box_line_thickness, face->box);
             }
             
             // Flush box - newline always closes the box completely
@@ -1055,7 +1087,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             
             // If the line that just ended had a wrapped box, add extra spacing for the box borders
             if (previous_line_had_wrapped_box) {
-                y -= box_line_thickness * 2;  // Add space for top and bottom borders
+                y -= box_line_thickness * 2;
             }
             
             current_line_height = line_height;
@@ -1064,6 +1096,12 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             box_span_no_left = false;
             box_span_no_right = false;
             previous_line_had_wrapped_box = false;
+            
+            // Reset tracking for next line
+            last_drawn_face = NULL;
+            last_drawn_font = NULL;
+            last_drawn_bg = base_bg;
+            last_face_had_box = false;
         } else {
             // Handle truncation/wrapping
             if (truncate_lines) {
@@ -1071,6 +1109,12 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     if (has_bg_span) {
                         draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
                         has_bg_span = false;
+                    }
+                    
+                    // Draw extension for truncated line
+                    if (last_drawn_face && y >= window_bottom && y <= window_top) {
+                        draw_face_extension(x, y, max_x, last_drawn_face, last_drawn_font,
+                                          last_drawn_bg, box_line_thickness, last_face_had_box);
                     }
                     
                     if (has_box_span) {
@@ -1086,7 +1130,6 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                         x = line_start_x;
                         y -= current_line_height;
                         
-                        // Add extra spacing if previous line had wrapped box
                         if (previous_line_had_wrapped_box) {
                             y -= box_line_thickness * 2;
                         }
@@ -1097,6 +1140,11 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                         box_span_no_left = false;
                         box_span_no_right = false;
                         previous_line_had_wrapped_box = false;
+                        
+                        last_drawn_face = NULL;
+                        last_drawn_font = NULL;
+                        last_drawn_bg = base_bg;
+                        last_face_had_box = false;
                     }
                     i += 2;
                     continue;
@@ -1116,34 +1164,33 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                         has_bg_span = false;
                     }
                     
+                    // Draw extension before wrapping if face extends
+                    if (last_drawn_face && y >= window_bottom && y <= window_top) {
+                        draw_face_extension(x, y, max_x, last_drawn_face, last_drawn_font,
+                                          last_drawn_bg, box_line_thickness, last_face_had_box);
+                    }
+                    
                     // Handle box wrapping
                     if (has_box_span) {
-                        // Flush current span without right border if box continues
                         flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height,
                                      box_span_color, box_line_thickness, box_span_no_left, will_continue_box);
                         has_box_span = false;
                     }
                     
-                    // Move to next line with proper vertical offset for boxes
                     x = start_x;
                     y -= current_line_height;
                     current_line_height = line_height;
                     
-                    // If box continues, next line needs adjustment
                     if (will_continue_box) {
-                        // Mark that we're in a wrapped box continuation
                         previous_line_had_wrapped_box = true;
-                        
                         current_line_has_box = true;
-                        // Apply offset:
                         y -= 2 * box_line_thickness;
-                        // IMPORTANT: Don't set was_in_box yet - let the next character's logic handle it
-                        // This ensures the first character after wrap properly starts a new span without left border
-                        box_span_no_left = true;  // Next span should not have left border
+                        box_span_no_left = true;
                     } else {
                         current_line_has_box = false;
                         was_in_box = false;
                         box_span_no_left = false;
+                        previous_line_had_wrapped_box = false;
                     }
                     box_span_no_right = false;
                     
@@ -1158,7 +1205,6 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             bool needs_bg = false;
             
             if (at_cursor) {
-                // Check if the previous character had a box (cursor appears after it)
                 int prev_face_id = (i > 0) ? get_text_property_face(buffer, i - 1) : FACE_DEFAULT;
                 Face *prev_face = (prev_face_id == FACE_DEFAULT) ? default_face : get_face(prev_face_id);
                 if (!prev_face) prev_face = default_face;
@@ -1176,13 +1222,11 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 }
                 cursor_found = true;
                 
-                // If previous character had a box, cursor needs to be after the right border
                 if (prev_face->box && i > 0) {
-                    cursor_x += box_line_thickness;  // Move right by border thickness
-                    cursor_y -= box_line_thickness;  // Move down by border thickness
+                    cursor_x += box_line_thickness;
+                    cursor_y -= box_line_thickness;
                 }
                 
-                // Modify character appearance if cursor should be drawn filled
                 if (should_draw_filled && buffer->cursor.visible) {
                     char_color = base_bg;
                 }
@@ -1235,7 +1279,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     }
                 }
                 
-                // Box batching - simplified logic
+                // Box batching
                 if (face->box) {
                     Character *char_info = font_get_character(char_font, ch);
                     float actual_char_width = char_info ? char_info->ax : char_width;
@@ -1244,37 +1288,29 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     float box_y = draw_y - char_font->descent * 2 - box_line_thickness;
                     float box_height = font_height + (box_line_thickness * 2);
                     
-                    // Determine if this is the first character in a new box span
                     if (!was_in_box) {
-                        // Flush any existing box span (shouldn't exist but just in case)
                         if (has_box_span) {
                             flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height,
                                          box_span_color, box_line_thickness, box_span_no_left, box_span_no_right);
                             has_box_span = false;
                         }
                         
-                        // Capture the no_left state BEFORE we potentially modify x
                         bool this_span_no_left = box_span_no_left;
                         
-                        // Add left border spacing ONLY if we have a left border
                         if (!this_span_no_left) {
                             x += box_line_thickness;
                             draw_x = x;
                         }
-                        // If we don't have a left border (wrapped continuation), don't add spacing
-                        // draw_x already equals x, which is correct
                         
-                        // Start new box span - use the captured no_left flag
                         box_span_start_x = this_span_no_left ? x : (x - box_line_thickness);
                         box_span_y = box_y;
                         box_span_width = actual_char_width + box_line_thickness + (this_span_no_left ? 0 : box_line_thickness);
                         box_span_height = box_height;
                         box_span_color = current_box_color;
-                        box_span_no_left = this_span_no_left;  // Preserve for this span
+                        box_span_no_left = this_span_no_left;
                         box_span_no_right = false;
                         has_box_span = true;
                     } else {
-                        // Check if we can extend the current span
                         bool can_extend = has_box_span &&
                                           color_equals(current_box_color, box_span_color) &&
                                           box_y == box_span_y &&
@@ -1283,13 +1319,11 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                         if (can_extend) {
                             box_span_width += actual_char_width;
                         } else {
-                            // Different properties - flush and start new
                             if (has_box_span) {
                                 flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height,
                                              box_span_color, box_line_thickness, box_span_no_left, box_span_no_right);
                             }
                             
-                            // When starting a new box mid-line (not after wrap), use normal borders
                             box_span_start_x = x - box_line_thickness;
                             box_span_y = box_y;
                             box_span_width = actual_char_width + (box_line_thickness * 2);
@@ -1306,8 +1340,13 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                                            face->strike_through, face->strike_through_color);
                     x += actual_char_width;
                     was_in_box = true;
+                    
+                    // Track for extension
+                    last_drawn_face = face;
+                    last_drawn_font = char_font;
+                    last_drawn_bg = bg_color;
+                    last_face_had_box = true;
                 } else {
-                    // Not in a box
                     if (was_in_box) {
                         if (has_box_span) {
                             flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height,
@@ -1323,6 +1362,12 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                                                            face->underline, face->underline_color,
                                                            face->strike_through, face->strike_through_color);
                     x += advance;
+                    
+                    // Track for extension
+                    last_drawn_face = face;
+                    last_drawn_font = char_font;
+                    last_drawn_bg = bg_color;
+                    last_face_had_box = false;
                 }
             } else if (y >= window_bottom) {
                 // Off-screen x position updates
@@ -1343,15 +1388,29 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     }
                     x += char_width;
                 }
+                
+                // Still track face for potential extension
+                last_drawn_face = face;
+                last_drawn_font = char_font;
+                last_drawn_bg = bg_color;
+                last_face_had_box = face->box;
             }
         }
         i++;
     }
     
+    // Flush any remaining background span
     if (has_bg_span) {
         draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
     }
     
+    // Draw extension at end of buffer if needed
+    if (last_drawn_face && y >= window_bottom && y <= window_top) {
+        draw_face_extension(x, y, max_x, last_drawn_face, last_drawn_font,
+                          last_drawn_bg, box_line_thickness, last_face_had_box);
+    }
+    
+    // Flush any remaining box span
     if (has_box_span) {
         flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height,
                      box_span_color, box_line_thickness, box_span_no_left, false);
@@ -1359,6 +1418,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     
     rope_iter_destroy(&iter);
     
+    // Handle cursor at end of buffer
     if (point >= rope_char_length(buffer->rope)) {
         int face_id = get_text_property_face(buffer, point);
         Face *face = get_face(face_id);
@@ -1426,4 +1486,3 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
         }
     }
 }
-

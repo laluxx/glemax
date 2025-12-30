@@ -17,6 +17,9 @@ typedef struct {
     bool underline;
     bool strike_through;
     bool box;
+    Color underline_color;
+    Color strike_through_color;
+    Color box_color;
     int inherit_from;
 } BaseFace;
 
@@ -44,6 +47,9 @@ void init_themes(void) {
                 base_faces[i].underline = face->underline;
                 base_faces[i].strike_through = face->strike_through;
                 base_faces[i].box = face->box;
+                base_faces[i].underline_color = face->underline_color;
+                base_faces[i].strike_through_color = face->strike_through_color;
+                base_faces[i].box_color = face->box_color;
                 base_faces[i].inherit_from = face->inherit_from;
             }
         }
@@ -160,6 +166,9 @@ static void reapply_all_themes(void) {
             face->underline = base_faces[i].underline;
             face->strike_through = base_faces[i].strike_through;
             face->box = base_faces[i].box;
+            face->underline_color = base_faces[i].underline_color;
+            face->strike_through_color = base_faces[i].strike_through_color;
+            face->box_color = base_faces[i].box_color;
             face->inherit_from = base_faces[i].inherit_from;
         }
     }
@@ -212,33 +221,32 @@ static void reapply_all_themes(void) {
                         face->bold = true;
                     if (spec->italic)
                         face->italic = true;
-                    /* if (spec->underline) */
-                    /*     face->underline = true; */
+
                     if (spec->underline) {
                         face->underline = true;
                         if (spec->has_underline_color) {
                             face->underline_color = spec->underline_color;
-                        } else {
-                            face->underline_color = face->fg; // Default to foreground
                         }
+                        // Don't set default here - let it be set after fg is resolved
                     }
                     if (spec->strike_through) {
                         face->strike_through = true;
                         if (spec->has_strike_through_color) {
                             face->strike_through_color = spec->strike_through_color;
-                        } else {
-                            face->strike_through_color = face->fg; // Default to foreground
                         }
+                        // Don't set default here
                     }
                     if (spec->box) {
                         face->box = true;
                         if (spec->has_box_color) {
                             face->box_color = spec->box_color;
-                        } else {
-                            face->box_color = face->fg; // Default to foreground
                         }
+                        // Don't set default here
                     }
 
+                    if (spec->has_extend) {
+                        face->extend = spec->extend;
+                    }
                     
                     // UPDATE THE FONT if bold or italic changed
                     if (spec->bold || spec->italic) {
@@ -448,6 +456,8 @@ static SCM scm_custom_theme_set_faces(SCM theme_name, SCM rest) {
         fspec->underline = false;
         fspec->inherit_from = -1;
         fspec->has_inherit = false;
+        fspec->extend = false;
+        fspec->has_extend = false;
 
         // Navigate: (face-name ((t (:foreground ...))))
         SCM rest_of_spec = scm_cdr(face_spec);
@@ -587,6 +597,11 @@ static SCM scm_custom_theme_set_faces(SCM theme_name, SCM rest) {
                                     }
                                     free(inherit_name);
                                 }
+                            }
+
+                            else if (strcmp(key_name, "extend") == 0) {
+                                fspec->extend = scm_is_true(value);
+                                fspec->has_extend = true;
                             }
                             
                             free(key_name);

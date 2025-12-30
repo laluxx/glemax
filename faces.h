@@ -56,6 +56,7 @@ typedef enum {
     FACE_UNDERLINE,
     FACE_STRIKE_THROUGH,
     FACE_BOX,
+    FACE_REGION,
 
 
     FACE_BUILTIN_COUNT,
@@ -76,6 +77,7 @@ typedef struct Face {
     Color box_color;
     bool fg_set;        // True if foreground explicitly set
     bool bg_set;        // True if background explicitly set
+    bool extend;
     int inherit_from;   // face ID to inherit from, -1 for none
     struct Face *next;
 } Face;

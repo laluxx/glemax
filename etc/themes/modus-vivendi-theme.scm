@@ -57,4 +57,5 @@
   '(font-lock-warning-face                    ((t (:foreground "#fec43f" :weight bold))))
 
   '(minibuffer-prompt                         ((t (:foreground "#6ae4b9")))
+  '(region                                    ((t (:foreground "#ffffff" :background "#5a5a5a"))))
 ))

@@ -3,8 +3,9 @@
 #include "buffer.h"
 #include <stddef.h>
 
+extern bool transient_mark_mode_should_be_disabled;
+
 void message(const char *format, ...);
-/* void insert(uint32_t codepoint); // TODO it should take a string */
 void insert(const char *text);
 void delete_backward_char();
 void delete_char();
@@ -31,8 +32,10 @@ void next_line();
 void previous_line();
 void next_logical_line();
 void previous_logical_line();
-void end_of_line();
 void beginning_of_line();
+void end_of_line();
+void beginning_of_visual_line();
+void end_of_visual_line();
 void beginning_of_buffer();
 void end_of_buffer();
 void delete_blank_lines();

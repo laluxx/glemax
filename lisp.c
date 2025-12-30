@@ -687,6 +687,9 @@ DEFINE_SCM_COMMAND(scm_forward_paragraph,              forward_paragraph,       
 DEFINE_SCM_COMMAND(scm_backward_paragraph,             backward_paragraph,             NULL);
 DEFINE_SCM_COMMAND(scm_beginning_of_line,              beginning_of_line,              NULL);
 DEFINE_SCM_COMMAND(scm_end_of_line,                    end_of_line,                    NULL);
+DEFINE_SCM_COMMAND(scm_beginning_of_visual_line,       beginning_of_visual_line,       NULL);
+DEFINE_SCM_COMMAND(scm_end_of_visual_line,             end_of_visual_line,             NULL);
+
 DEFINE_SCM_COMMAND(scm_beginning_of_buffer,            beginning_of_buffer,            NULL);
 DEFINE_SCM_COMMAND(scm_end_of_buffer,                  end_of_buffer,                  NULL);
 DEFINE_SCM_COMMAND(scm_split_window_below,             split_window_below,             NULL);
@@ -2481,8 +2484,11 @@ void lisp_init(void) {
     scm_c_define_gsubr("backward-word",                  0, 1, 0, scm_backward_word);
     scm_c_define_gsubr("forward-paragraph",              0, 1, 0, scm_forward_paragraph);
     scm_c_define_gsubr("backward-paragraph",             0, 1, 0, scm_backward_paragraph);
-    scm_c_define_gsubr("beginning-of-line",              0, 1, 0, scm_beginning_of_line);
-    scm_c_define_gsubr("end-of-line",                    0, 1, 0, scm_end_of_line);
+
+    REGISTER_COMMAND("beginning-of-line",        scm_beginning_of_line);
+    REGISTER_COMMAND("end-of-line",              scm_end_of_line);
+    REGISTER_COMMAND("beginning-of-visual-line", scm_beginning_of_visual_line);
+    REGISTER_COMMAND("end-of-visual-line",       scm_end_of_visual_line);
     scm_c_define_gsubr("end-of-buffer",                  0, 1, 0, scm_end_of_buffer);
     scm_c_define_gsubr("beginning-of-buffer",            0, 1, 0, scm_beginning_of_buffer);
     

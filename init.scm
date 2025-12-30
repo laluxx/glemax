@@ -16,6 +16,8 @@
 (keymap-global-set "M-d" kill-word)
 (keymap-global-set "C-e" end-of-line)
 (keymap-global-set "C-a" beginning-of-line)
+(keymap-global-set "C-A" beginning-of-visual-line)
+(keymap-global-set "C-E" end-of-visual-line)
 (keymap-global-set "M-<" beginning-of-buffer)
 (keymap-global-set "C-c p" beginning-of-buffer)
 (keymap-global-set "M->" end-of-buffer)
@@ -62,7 +64,6 @@
 (keymap-global-set "C-9" digit-argument)
 (keymap-global-set "M-x" execute-extended-command)
 (keymap-global-set "M-:" eval-expression)
-
 (keymap-global-set "C-g" keyboard-quit)
 (keymap-global-set "C-x C-e" eval-last-sexp)
 (keymap-global-set "C-x C-b" eval-buffer)
@@ -71,8 +72,6 @@
 (keymap-global-set "M-t" transpose-words)
 (keymap-global-set "C-T" (lambda () (transpose-chars -1)))
 (keymap-global-set "M-T" (lambda () (transpose-words -1)))
-
-
 (keymap-global-set "C-M-n" forward-list)
 (keymap-global-set "C-M-p" backward-list)
 (keymap-global-set "C-v" scroll-up-command)
@@ -90,17 +89,11 @@
 (keymap-global-set "C-M-b" backward-sexp)
 (keymap-global-set "C-M-k" kill-sexp)
 (keymap-global-set "C-M-SPC" mark-sexp)
-
 (keymap-global-set "C-M-e" end-of-defun)
 (keymap-global-set "C-M-a" beginning-of-defun)
-
 (keymap-global-set "C-M-d" treesit-debug-tree)
 (keymap-global-set "C-x C-q" read-only-mode)
 (keymap-global-set "C-x C-s" save-buffer)
-
-
-
-
 
 (define (mark-whole-buffer)
   "Put point at beginning and mark at end of buffer."
@@ -315,7 +308,7 @@ UNDERLINE_POSITION font properties, set this to #f.  You can also use
 small font display sizes.")
 
 
-(define next-line-add-newlines #f)
+(define next-line-add-newlines #t)
 (set-var-doc! next-line-add-newlines
 "If #t, `next-line' inserts newline to avoid `end of buffer' error.")
 
@@ -369,7 +362,7 @@ delimiters are inserted around the region instead.")
 This variable also affects `kill-visual-line' in the same way as
 it does `kill-line'.")
 
-(define transient-mark-mode #f)
+(define transient-mark-mode #t)
 (set-var-doc! transient-mark-mode
 "Toggle Transient Mark mode.
 
@@ -567,7 +560,7 @@ the variable `message-log-max'."
 
 
 
-(load-theme 'modus-vivendi)
+;; (load-theme 'modus-vivendi)
 
 
 

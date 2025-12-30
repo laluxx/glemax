@@ -64,6 +64,7 @@ static struct {
     {"underline",                           FACE_UNDERLINE},
     {"strike-through",                      FACE_STRIKE_THROUGH},
     {"box",                                 FACE_BOX},
+    {"region",                              FACE_REGION},
 
     {NULL, -1}
 };
@@ -139,7 +140,12 @@ static Face *create_face(int id) {
     face->box = false;
     face->fg_set = false;
     face->bg_set = false;
+    face->extend = false;
     face->next = NULL;
+
+    face->underline_color = (Color){0, 0, 0, 1};      // Default to black
+    face->strike_through_color = (Color){0, 0, 0, 1}; // Default to black
+    face->box_color = (Color){0, 0, 0, 1};            // Default to black
     
     return face;
 }
@@ -192,6 +198,27 @@ void resolve_face_inheritance(void) {
             }
         }
         
+        // If underline is enabled but color is unset (still black), default to fg
+        if (face->underline && 
+            face->underline_color.r == 0 && face->underline_color.g == 0 && 
+            face->underline_color.b == 0) {
+            face->underline_color = face->fg;
+        }
+        
+        // Same for strike-through
+        if (face->strike_through && 
+            face->strike_through_color.r == 0 && face->strike_through_color.g == 0 && 
+            face->strike_through_color.b == 0) {
+            face->strike_through_color = face->fg;
+        }
+        
+        // Same for box
+        if (face->box && 
+            face->box_color.r == 0 && face->box_color.g == 0 && 
+            face->box_color.b == 0) {
+            face->box_color = face->fg;
+        }
+
         // TODO Should also inherit bold/italic/underline/strike_through/box
     }
 }
@@ -224,6 +251,7 @@ void init_faces(void) {
                 face->bg = parse_color("white");
                 face->fg_set = true;
                 face->bg_set = true;
+                /* face->box = true; */
                 break;
             case FACE_BOLD:
                 face->bold = true;
@@ -406,8 +434,11 @@ void init_faces(void) {
             case FACE_BOX:
                 face->box = true;
                 break;
-            
-            
+            case FACE_REGION:
+                face->bg = parse_color("LightGoldenrod2");
+                face->bg_set = true;
+                face->extend = true;
+                break;
         }
         
         face_cache->faces[i] = face;

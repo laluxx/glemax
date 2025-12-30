@@ -1,5 +1,6 @@
 #include "minibuf.h"
 #include "buffer.h"
+#include "edit.h"
 #include "wm.h"
 #include "rope.h"
 #include "frame.h"
@@ -49,11 +50,12 @@ void deactivate_minibuffer() {
 }
 
 void keyboard_quit() {
-    current_buffer->region.active = false;
+    deactivate_mark();
     if (selected_frame->wm.selected == selected_frame->wm.minibuffer_window) {
         deactivate_minibuffer();
     }
 }
+
 
 void read_from_minibuffer(const char *prompt) {
     activate_minibuffer();

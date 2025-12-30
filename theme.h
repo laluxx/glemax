@@ -22,6 +22,8 @@ typedef struct FaceSpec {
     bool has_box_color;
     int inherit_from;
     bool has_inherit;
+    bool extend;
+    bool has_extend;  // Track if extend was explicitly set
     struct FaceSpec *next;
 } FaceSpec;
 

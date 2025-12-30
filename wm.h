@@ -67,9 +67,11 @@ typedef struct {
     WindowConfiguration saved_config;
 } WindowManager;
 
-
 void wm_init(WindowManager *wm, Buffer *initial_buffer, Buffer *minibuffer,
-	     float x, float y, float width, float height);
+             float x, float y, float width, float height, float line_height);
+
+/* void wm_init(WindowManager *wm, Buffer *initial_buffer, Buffer *minibuffer, */
+/* 	     float x, float y, float width, float height); */
 
 void wm_cleanup(WindowManager *wm);
 
@@ -148,6 +150,9 @@ void restore_window_configuration(WindowConfiguration *config);
 void free_window_configuration(WindowConfiguration *config);
 void recalculate_window_geometry(Window *win);
 
+Window* window_at_pos(float x, float y);
+size_t point_at_window_pos(Window *win, float click_x, float click_y);
+void mouse_set_point(Window *window, int x, int y);
 
 /// SCM
 
