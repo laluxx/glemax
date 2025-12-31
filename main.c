@@ -22,159 +22,6 @@ uint32_t sw = 500;
 uint32_t sh = 500;
 
 
-
-// Helper function to check if there are unmatched closing characters of a specific type after point
-// Uses scan_lists for efficient balance checking
-static bool has_unmatched_closing_after(Buffer *buffer, size_t point, char opening, char closing) {
-    size_t buf_len = rope_char_length(buffer->rope);
-    if (point >= buf_len) return false;
-    
-    int balance = 0;
-    
-    // Scan from beginning to current point to get initial balance
-    rope_iter_t iter;
-    rope_iter_init(&iter, buffer->rope, 0);
-    uint32_t ch;
-    
-    while (iter.char_pos < point) {
-        if (!rope_iter_next_char(&iter, &ch)) break;
-        
-        if (ch == (uint32_t)opening) {
-            balance++;
-        } else if (ch == (uint32_t)closing) {
-            balance--;
-        }
-    }
-    
-    // Now scan from point to end, checking if balance ever goes negative
-    while (iter.char_pos < buf_len) {
-        if (!rope_iter_next_char(&iter, &ch)) break;
-        
-        if (ch == (uint32_t)opening) {
-            balance++;
-        } else if (ch == (uint32_t)closing) {
-            balance--;
-            // If balance goes negative, we found an unmatched closing char
-            if (balance < 0) {
-                rope_iter_destroy(&iter);
-                return true;
-            }
-        }
-    }
-    
-    rope_iter_destroy(&iter);
-    return false;
-}
-
-void text_callback(unsigned int codepoint) {
-    clear_minibuffer_message();
-    
-    // Encode the codepoint to UTF-8
-    char utf8_buf[5] = {0};  // Max 4 bytes + null terminator
-    size_t len = utf8_encode(codepoint, utf8_buf);
-    
-    bool electric_pair_mode = scm_get_bool("electric-pair-mode", false);
-    
-    // Handle electric pairing
-    if (electric_pair_mode && len == 1) {  // Only for single-byte characters
-        char ch = utf8_buf[0];
-        char closing_char = 0;
-        bool should_pair = false;
-        bool is_closing = false;
-        
-        switch (ch) {
-            case '(': closing_char = ')'; should_pair = true; break;
-            case '[': closing_char = ']'; should_pair = true; break;
-            case '{': closing_char = '}'; should_pair = true; break;
-            case '<': closing_char = '>'; should_pair = true; break;
-            case '"': closing_char = '"'; should_pair = true; break;
-            case '\'': closing_char = '\''; should_pair = true; break;
-            case '`': closing_char = '`'; should_pair = true; break;
-            
-            // Check if typed character is a closing character
-            case ')':
-            case ']':
-            case '}':
-            case '>':
-                is_closing = true;
-                break;
-        }
-        
-        // If we typed a closing character, check if it matches the next character
-        if (is_closing) {
-            // Get the character at current point
-            size_t buf_len = rope_char_length(current_buffer->rope);
-            if (current_buffer->pt < buf_len) {
-                uint32_t next_char = rope_char_at(current_buffer->rope, current_buffer->pt);
-                
-                // If the next character matches what we typed, just skip over it
-                if (next_char == (uint32_t)ch) {
-                    set_point(current_buffer->pt + 1);
-                    update_windows_scroll();
-                    
-                    // Only hide if the feature is enabled and pointer is currently visible
-                    if (scm_get_bool("make-pointer-invisible", true) &&
-                        scm_get_bool("pointer-visible", true)) {
-                        hideCursor();
-                        scm_c_define("pointer-visible", SCM_BOOL_F);
-                    }
-                    
-                    return;
-                }
-            }
-        }
-        
-        if (should_pair) {
-            // Check if there are unmatched closing characters ahead
-            bool has_unmatched = has_unmatched_closing_after(current_buffer, current_buffer->pt, ch, closing_char);
-            
-            if (has_unmatched) {
-                // There's an unmatched closing char, so just insert the opening char
-                insert(utf8_buf);
-                update_windows_scroll();
-                
-                // Only hide if the feature is enabled and pointer is currently visible
-                if (scm_get_bool("make-pointer-invisible", true) &&
-                    scm_get_bool("pointer-visible", true)) {
-                    hideCursor();
-                    scm_c_define("pointer-visible", SCM_BOOL_F);
-                }
-                
-                return;
-            }
-            
-            // Insert both characters at once
-            char pair_str[3] = {ch, closing_char, '\0'};
-            insert(pair_str);
-            
-            // Move point back one position (between the pair)
-            set_point(current_buffer->pt - 1);
-            update_windows_scroll();
-            
-            // Only hide if the feature is enabled and pointer is currently visible
-            if (scm_get_bool("make-pointer-invisible", true) &&
-                scm_get_bool("pointer-visible", true)) {
-                hideCursor();
-                scm_c_define("pointer-visible", SCM_BOOL_F);
-            }
-            
-            return;
-        }
-    }
-    
-    // Normal insertion (no pairing)
-    insert(utf8_buf);
-    update_windows_scroll();
-    
-    // Only hide if the feature is enabled and pointer is currently visible
-    if (scm_get_bool("make-pointer-invisible", true) &&
-        scm_get_bool("pointer-visible", true)) {
-        hideCursor();
-        scm_c_define("pointer-visible", SCM_BOOL_F);
-    }
-}
-
-
 bool is_vertical_motion(SCM proc) {
     return is_scm_proc(proc, "next-line") ||
         is_scm_proc(proc, "previous-line");
@@ -189,15 +36,20 @@ bool is_argument_function(SCM proc) {
 
 void before_keychord_hook(const char *notation, KeyChordBinding *binding) {
     clear_minibuffer_message();
+    
+    // Store notation for self-insert-command to use
+    if (is_scm_proc(binding->action.scheme_proc, "self-insert-command")) {
+        last_notation = notation;
+    }
+    
     if (scm_get_bool("make-pointer-invisible-on-keychords", true) && 
         scm_get_bool("pointer-visible", true)) {
         hideCursor();
         scm_c_define("pointer-visible", SCM_BOOL_F);
     }
-
 }
 
-// TODO Could probably be streamlined
+// TODO This is bad we should not *really* apply the face, just render it
 void update_region_highlight(Buffer *buf) {
     // First, remove any existing region face properties
     // We'll use a special key to track region highlighting
@@ -318,23 +170,6 @@ void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
     last_command_was_kill = is_kill_command(binding->action.scheme_proc);
     last_command = binding->action.scheme_proc;
 }
-
-void key_callback(int key, int action, int mods) {
-    shift = mods & MOD_SHIFT;
-    ctrl  = mods & MOD_CONTROL;
-    alt   = mods & MOD_ALT;
-    
-    
-    if (action == PRESS || action == REPEAT) {
-        switch (key) {
-        }
-        
-        reset_cursor_blink(current_buffer);
-    }
-}
-
-
-
 
 
 static GLFWcursor* arrow_cursor = NULL;
@@ -1010,8 +845,6 @@ static void inner_main (void *data, int argc, char **argv) {
 
     init_cursors();
 
-    registerKeyCallback(key_callback);
-    registerTextCallback(text_callback);
     registerMouseButtonCallback(mouse_button_callback);
     registerCursorPosCallback(cursor_pos_callback);
     registerWindowResizeCallback(window_resize_callback);

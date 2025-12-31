@@ -35,6 +35,7 @@
 (keymap-global-set "C-x C-x" exchange-point-and-mark)
 (keymap-global-set "S-<backspace>" delete-region)
 (keymap-global-set "C-w" kill-region)
+(keymap-global-set "M-w" copy-region-as-kill)
 (keymap-global-set "C-y" yank)
 (keymap-global-set "C-k" kill-line)
 (keymap-global-set "M-}" forward-paragraph)
@@ -94,6 +95,35 @@
 (keymap-global-set "C-M-d" treesit-debug-tree)
 (keymap-global-set "C-x C-q" read-only-mode)
 (keymap-global-set "C-x C-s" save-buffer)
+
+
+(define (setup-self-insert-keys)
+  "Bind all printable characters to self-insert-command in global keymap."
+  
+  ;; Printable ASCII characters (space through tilde)
+  (let loop ((code 32))  ; Start from space (ASCII 32)
+    (when (<= code 126)  ; Up to ~ (ASCII 126)
+      (keymap-global-set (string (integer->char code)) self-insert-command)
+      (loop (+ code 1))))
+  
+  ;; Common extended ASCII / Latin-1 printable characters (160-255)
+  ;; These include accented characters, currency symbols, etc.
+  (let loop ((code 160))
+    (when (<= code 255)
+      (keymap-global-set (string (integer->char code)) self-insert-command)
+      (loop (+ code 1))))
+  
+  ;; TAB as self-insert (some modes override this for indentation)
+  (keymap-global-set "TAB" self-insert-command)
+  (keymap-global-set "SPC" self-insert-command)
+  
+  )
+
+;; Call it during initialization
+(setup-self-insert-keys)
+
+
+
 
 (define (mark-whole-buffer)
   "Put point at beginning and mark at end of buffer."
@@ -384,11 +414,30 @@ in effect and the mark is active, by acting on the region instead
 of their usual default part of the buffer's text.  Examples of
 such commands include `backward-delete-char`.")
 
-(define initial-mark-visible #f)
-(set-var-doc! initial-mark-visible
-"Non-false means display the mark at the beginning of the buffer initially.
-When non-false, the mark is shown at buffer start before it is set manually
-via `set-mark-command`.")
+;; I know it should be a minor mode
+(define delete-selection-mode #f)
+(set-var-doc! delete-selection-mode
+"Toggle Delete Selection mode.
+
+When Delete Selection mode is enabled, typed text replaces the selection
+if the selection is active.  Otherwise, typed text is just inserted at
+point regardless of any selection.
+
+See `delete-selection-helper' and `delete-selection-pre-hook' for
+information on adapting behavior of commands in Delete Selection mode.")
+
+(defvar-local tab-width 8
+"Distance between tab stops (for display of tab characters), in columns.
+
+This controls the width of a TAB character on display.
+The value should be a positive integer.")
+
+(define stretch-cursor nil)
+(set-var-doc! stretch-cursor
+"Non-nil means draw block cursor as wide as the glyph under it.
+
+For example, if a block cursor is over a tab, it will be drawn as
+wide as that tab on the display.")
 
 (define window-resize-pixelwise #f)
 (set-var-doc! window-resize-pixelwise
@@ -440,11 +489,6 @@ With some window managers you may have to set this to #t in order
 to set the size of a frame in pixels, to maximize frames or to make them
 fullscreen.  To resize your initial frame pixelwise, set this option to
 a #t value in your init file, non pixelwise resizing doesn't work on wayland.")
-
-;; NOTE Defined in C
-;; (define gcs-done 0)
-;; (set-var-doc! gcs-done
-;; "Accumulated number of garbage collections done.")
 
 
 (define prefix-arg 1)
@@ -638,7 +682,6 @@ INTERVAL-LENGTH specifies how many characters each face segment should be."
                            'face 
                            (if use-error? 'error 'warning))
           (loop end-pos (not use-error?)))))))
-
 
 
 (load-theme 'modus-vivendi)

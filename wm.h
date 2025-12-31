@@ -69,10 +69,6 @@ typedef struct {
 
 void wm_init(WindowManager *wm, Buffer *initial_buffer, Buffer *minibuffer,
              float x, float y, float width, float height, float line_height);
-
-/* void wm_init(WindowManager *wm, Buffer *initial_buffer, Buffer *minibuffer, */
-/* 	     float x, float y, float width, float height); */
-
 void wm_cleanup(WindowManager *wm);
 
 void split_window_below();
@@ -82,27 +78,19 @@ bool window_try_vertical_split(Window *win);
 Window* split_window_sensibly();
 Window* display_buffer(Buffer *buffer);
 
-
-
 void delete_window();
 void delete_other_windows();
 void other_window();
 Window* next_window(Window *current);
 Window* previous_window(Window *current);
 
-// Minibuffer functions
-void activate_minibuffer();
-void go_inside_minibuffer();
-void deactivate_minibuffer();
-bool is_minibuffer_window(Window *win);
 
 // Window queries
 bool is_leaf_window(Window *win);
+bool is_minibuffer_window(Window *win);
 int count_windows();
 Window* get_selected_window();
 Buffer* get_selected_buffer();
-
-
 float calculate_minibuffer_height();
 
 // Layout and rendering
@@ -119,10 +107,8 @@ void collect_leaf_windows(Window *win, Window **leaves, int *count);
 
 void debug_print_windows();
 
-
 void update_window_scroll(Window *win);
 void update_windows_scroll();
-
 void update_window_scroll_lerp(Window *win);
 
 

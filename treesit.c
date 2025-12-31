@@ -711,10 +711,6 @@ void treesit_apply_highlights(Buffer *buf) {
     span_count = filtered_count;
     
     // Apply filtered spans
-    /* for (size_t i = 0; i < span_count; i++) { */
-    /*     put_text_property(buf, spans[i].start_pos, spans[i].end_pos, spans[i].face_id); */
-    /* } */
-
     for (size_t i = 0; i < span_count; i++) {
         put_text_property(buf, spans[i].start_pos, spans[i].end_pos, 
                           scm_from_locale_symbol("face"), 

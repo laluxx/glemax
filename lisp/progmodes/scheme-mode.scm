@@ -21,7 +21,7 @@
   (list
     .
     (symbol) @keyword
-    (#match? @keyword \"^(use-package|defvar-local|defvar|defun|progn|setq-local|setq|begin|call-with-current-continuation|call/cc|call-with-input-file|call-with-output-file|call-with-port|case|cond|do|else|for-each|if|lambda|λ|let|let\\\\*|let-syntax|letrec|letrec-syntax|letrec\\\\*|export|import|let-values|let\\\\*-values|and|or|delay|force|map|syntax|syntax-rules|when|while|unless|include|include-ci|cond-expand|delay-force|parameterize|guard|case-lambda|syntax-error|only|except|prefix|rename|define-values|define-record-type|define-library|include-library-declarations|receive|quote|quasiquote|unquote|unquote-splicing)$\"))
+    (#match? @keyword \"^(use-package|defvar-local|defvar|defun|progn|setq-local|setq|begin|use-modules|call-with-current-continuation|call/cc|call-with-input-file|call-with-output-file|call-with-port|case|cond|do|else|for-each|if|lambda|λ|let|let\\\\*|let-syntax|letrec|letrec-syntax|letrec\\\\*|export|import|let-values|let\\\\*-values|and|or|delay|force|map|syntax|syntax-rules|when|while|unless|include|include-ci|cond-expand|delay-force|parameterize|guard|case-lambda|syntax-error|only|except|prefix|rename|define-values|define-record-type|define-library|include-library-declarations|receive|quote|quasiquote|unquote|unquote-splicing)$\"))
   
   ; Define forms - highlight the keyword
   (list
@@ -95,16 +95,10 @@
 
 ")
 
+
 (define scheme-mode-map (make-sparse-keymap))
 
-(define (scheme-test-1)
-  (message "Scheme mode binding 1"))
-
-(define (scheme-test-2)
-  (message "Scheme mode binding 2"))
-
-(define-key scheme-mode-map "C-j" scheme-test-1)
-(define-key scheme-mode-map "C-k" scheme-test-2)
+(define-key scheme-mode-map "i" self-insert-command)
 
 (define (scheme-mode-setup-treesitter)
   "Initialize tree-sitter for Scheme mode."

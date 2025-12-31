@@ -1,9 +1,12 @@
- #include "edit.h"
+#include "edit.h"
 #include "buffer.h"
 #include "lisp.h"
 #include "faces.h"
 #include "frame.h"
 #include <ctype.h>
+
+const char *last_notation = NULL;
+
 
 void read_only_mode() {
     current_buffer->read_only = !current_buffer->read_only;
@@ -29,7 +32,11 @@ void insert(const char *text) {
         return;
     }
     
-    // Calculate how many characters (not bytes) we're inserting
+    // Get prefix argument (how many times to insert)
+    int arg = get_prefix_arg();
+    int insert_count = (arg == 0) ? 1 : abs(arg);
+    
+    // Calculate how many characters (not bytes) we're inserting per iteration
     size_t char_count = 0;
     for (size_t i = 0; i < len; ) {
         size_t bytes_read;
@@ -38,7 +45,9 @@ void insert(const char *text) {
         i += bytes_read;
         char_count++;
     }
-
+    
+    size_t total_char_count = char_count * insert_count;
+    
     // Check if tree-sitter is active
     bool has_treesit = current_buffer->ts_state && current_buffer->ts_state->tree;
     
@@ -51,43 +60,47 @@ void insert(const char *text) {
         start_byte = rope_char_to_byte(current_buffer->rope, insert_pos);
         start_point = treesit_char_to_point(current_buffer, insert_pos);
         
-        // Calculate new_end_point based on inserted content
+        // Calculate new_end_point based on inserted content (repeated insert_count times)
         new_end_point = start_point;
         
-        // Scan inserted bytes for newlines
-        size_t bytes_after_last_newline = 0;
-        for (size_t i = 0; i < len; i++) {
-            if (text[i] == '\n') {
-                new_end_point.row++;
-                new_end_point.column = 0;
-                bytes_after_last_newline = 0;
-            } else {
-                bytes_after_last_newline++;
+        for (int repeat = 0; repeat < insert_count; repeat++) {
+            // Scan inserted bytes for newlines
+            size_t bytes_after_last_newline = 0;
+            for (size_t i = 0; i < len; i++) {
+                if (text[i] == '\n') {
+                    new_end_point.row++;
+                    new_end_point.column = 0;
+                    bytes_after_last_newline = 0;
+                } else {
+                    bytes_after_last_newline++;
+                }
             }
-        }
-        
-        // Update column based on whether we had newlines
-        if (bytes_after_last_newline > 0 || new_end_point.row == start_point.row) {
-            new_end_point.column += bytes_after_last_newline;
+            
+            // Update column based on whether we had newlines
+            if (bytes_after_last_newline > 0 || new_end_point.row == start_point.row) {
+                new_end_point.column += bytes_after_last_newline;
+            }
         }
     }
     
     // Update region mark
     if (current_buffer->region.mark >= 0 && (size_t)current_buffer->region.mark > insert_pos) {
-        current_buffer->region.mark += char_count;
+        current_buffer->region.mark += total_char_count;
     }
     
-    // Perform the rope insertion
-    current_buffer->rope = rope_insert_chars(
-        current_buffer->rope,
-        insert_pos,
-        text,
-        len
-    );
+    // Perform the rope insertion (insert_count times)
+    for (int i = 0; i < insert_count; i++) {
+        current_buffer->rope = rope_insert_chars(
+            current_buffer->rope,
+            insert_pos + (i * char_count),
+            text,
+            len
+        );
+    }
     
     // Update tree-sitter if active
     if (has_treesit) {
-        size_t new_end_byte = start_byte + len;
+        size_t new_end_byte = start_byte + (len * insert_count);
         
         treesit_update_tree(
             current_buffer,
@@ -105,14 +118,168 @@ void insert(const char *text) {
     
     // Only adjust text properties if tree-sitter is NOT active
     if (!has_treesit) {
-        adjust_text_properties(current_buffer, insert_pos, char_count);
+        adjust_text_properties(current_buffer, insert_pos, total_char_count);
     }
     
-    adjust_all_window_points_after_modification(insert_pos, char_count);
-    set_point(current_buffer->pt + char_count);
+    adjust_all_window_points_after_modification(insert_pos, total_char_count);
+    set_point(current_buffer->pt + total_char_count);
     update_goal_column();
     reset_cursor_blink(current_buffer);
     current_buffer->modified = true;
+}
+
+// Add this function in main.c or edit.c
+// Helper function to check if there are unmatched closing characters of a specific type after point
+static bool has_unmatched_closing_after(Buffer *buffer, size_t point, char opening, char closing) {
+    size_t buf_len = rope_char_length(buffer->rope);
+    if (point >= buf_len) return false;
+    
+    int balance = 0;
+    
+    // Scan from beginning to current point to get initial balance
+    rope_iter_t iter;
+    rope_iter_init(&iter, buffer->rope, 0);
+    uint32_t ch;
+    
+    while (iter.char_pos < point) {
+        if (!rope_iter_next_char(&iter, &ch)) break;
+        
+        if (ch == (uint32_t)opening) {
+            balance++;
+        } else if (ch == (uint32_t)closing) {
+            balance--;
+        }
+    }
+    
+    // Now scan from point to end, checking if balance ever goes negative
+    while (iter.char_pos < buf_len) {
+        if (!rope_iter_next_char(&iter, &ch)) break;
+        
+        if (ch == (uint32_t)opening) {
+            balance++;
+        } else if (ch == (uint32_t)closing) {
+            balance--;
+            // If balance goes negative, we found an unmatched closing char
+            if (balance < 0) {
+                rope_iter_destroy(&iter);
+                return true;
+            }
+        }
+    }
+    
+    rope_iter_destroy(&iter);
+    return false;
+}
+
+#include "minibuf.h"
+
+// TODO OBSIDIAN Capslock doesn't work
+// CAPS j notation should come as J
+void self_insert_command() {
+    bool delete_selection_mode = scm_get_bool("delete-selection-mode", false);
+    if (delete_selection_mode && current_buffer->region.active) {
+        delete_region();
+    } else {
+        deactivate_mark(); // TODO Replace region if...
+    }
+    
+    clear_minibuffer_message();
+    
+    // Translate special key notations to actual characters
+    const char *text_to_insert = last_notation;
+    char special_char[2] = {0};
+    
+    if (strcmp(last_notation, "SPC") == 0 || strcmp(last_notation, " ") == 0) {
+        special_char[0] = ' ';
+        text_to_insert = special_char;
+    } else if (strcmp(last_notation, "TAB") == 0) {
+        special_char[0] = '\t';
+        text_to_insert = special_char;
+    }
+    
+    bool electric_pair_mode = scm_get_bool("electric-pair-mode", false);
+    
+    // Handle electric pairing (only for single-byte characters)
+    if (electric_pair_mode && text_to_insert[1] == '\0') {
+        char ch = text_to_insert[0];
+        char closing_char = 0;
+        bool should_pair = false;
+        bool is_closing = false;
+        
+        switch (ch) {
+            case '(': closing_char = ')'; should_pair = true; break;
+            case '[': closing_char = ']'; should_pair = true; break;
+            case '{': closing_char = '}'; should_pair = true; break;
+            case '<': closing_char = '>'; should_pair = true; break;
+            case '"': closing_char = '"'; should_pair = true; break;
+            case '\'': closing_char = '\''; should_pair = true; break;
+            case '`': closing_char = '`'; should_pair = true; break;
+            
+            case ')':
+            case ']':
+            case '}':
+            case '>':
+                is_closing = true;
+                break;
+        }
+        
+        // If we typed a closing character, check if it matches the next character
+        if (is_closing) {
+            size_t buf_len = rope_char_length(current_buffer->rope);
+            if (current_buffer->pt < buf_len) {
+                uint32_t next_char = rope_char_at(current_buffer->rope, current_buffer->pt);
+                
+                if (next_char == (uint32_t)ch) {
+                    set_point(current_buffer->pt + 1);
+                    
+                    if (scm_get_bool("make-pointer-invisible", true) &&
+                        scm_get_bool("pointer-visible", true)) {
+                        hideCursor();
+                        scm_c_define("pointer-visible", SCM_BOOL_F);
+                    }
+                    return;
+                }
+            }
+        }
+        
+        if (should_pair) {
+            bool has_unmatched = has_unmatched_closing_after(current_buffer, current_buffer->pt, ch, closing_char);
+            
+            if (has_unmatched) {
+                insert(text_to_insert);
+                
+                if (scm_get_bool("make-pointer-invisible", true) &&
+                    scm_get_bool("pointer-visible", true)) {
+                    hideCursor();
+                    scm_c_define("pointer-visible", SCM_BOOL_F);
+                }
+                return;
+            }
+            
+            // Insert both characters at once
+            char pair_str[3] = {ch, closing_char, '\0'};
+            insert(pair_str);
+            
+            // Move point back one position (between the pair)
+            set_point(current_buffer->pt - 1);
+            
+            if (scm_get_bool("make-pointer-invisible", true) &&
+                scm_get_bool("pointer-visible", true)) {
+                hideCursor();
+                scm_c_define("pointer-visible", SCM_BOOL_F);
+            }
+            return;
+        }
+    }
+    
+    // Normal insertion - insert the (possibly translated) text
+    insert(text_to_insert);
+    
+    if (scm_get_bool("make-pointer-invisible", true) &&
+        scm_get_bool("pointer-visible", true)) {
+        hideCursor();
+        scm_c_define("pointer-visible", SCM_BOOL_F);
+    }
 }
 
 #include <setjmp.h>
@@ -645,6 +812,8 @@ void line_move_logical() {
     }
 }
 
+// TODO we should check tab-width to properly do it,
+// it's wrong when there are tabs in the buffer.
 void line_move_visual() {
     int arg = get_prefix_arg();
     if (arg == 0) return;
@@ -1641,6 +1810,50 @@ void delete_region() {
     current_buffer->region.active = false;
 }
 
+void copy_region_as_kill() {
+    if (current_buffer->region.mark < 0) {
+        message("The mark is not set now, so there is no region");
+        return;
+    }
+    
+    size_t start, end;
+    region_bounds(&start, &end);
+    
+    if (start == end) {
+        current_buffer->region.active = false;
+        return;
+    }
+    
+    size_t length = end - start;
+    size_t buffer_size = length * 4 + 1;
+    char *new_text = (char *)malloc(buffer_size);
+    
+    if (!new_text) return;
+    
+    size_t copied = rope_copy_chars(current_buffer->rope, start, length, new_text, buffer_size - 1);
+    new_text[copied] = '\0';
+    
+    if (last_command_was_kill) {
+        const char *existing = getClipboardString();
+        if (existing && *existing) {
+            size_t total_len = strlen(existing) + copied + 1;
+            char *combined = (char *)malloc(total_len);
+            if (combined) {
+                snprintf(combined, total_len, "%s%s", existing, new_text);
+                setClipboardString(combined);
+                free(combined);
+            }
+        } else {
+            setClipboardString(new_text);
+        }
+    } else {
+        setClipboardString(new_text);
+    }
+    
+    free(new_text);
+    deactivate_mark();
+}
+
 void rkill_impl(size_t start, size_t end, bool prepend) {
     if (start >= end) return;
     
@@ -1841,30 +2054,140 @@ void kill_region() {
 // (Who even thinks let me yank the think i've killed 4 kills before)
 // TODO Don’t adjust the syntax if treesit
 // TODO parse if treesit
+
 void yank() {
     const char *clipboard_text = getClipboardString();
     
-    if (clipboard_text && *clipboard_text) {
-        size_t len = strlen(clipboard_text);
-        size_t old_char_len = rope_char_length(current_buffer->rope);
-        
-
-        current_buffer->region.mark = current_buffer->pt;
-        current_buffer->rope = rope_insert_chars(current_buffer->rope, current_buffer->pt, clipboard_text, len);
-        
-        size_t new_char_len = rope_char_length(current_buffer->rope);
-        size_t chars_inserted = new_char_len - old_char_len;
-        set_point(current_buffer->pt + chars_inserted); // End of inserted text
-        
-        // If C-u was used (raw prefix arg), exchange point and mark
-        // This leaves point at beginning and mark at end of yanked text
-        bool raw_prefix_arg = get_raw_prefix_arg();
-        if (raw_prefix_arg) exchange_point_and_mark();
-
-        adjust_all_window_points_after_modification(current_buffer->pt, chars_inserted);
+    if (!clipboard_text || !*clipboard_text) {
+        message("Kill ring is empty");
+        return;
     }
+    
+    size_t len = strlen(clipboard_text);
+    if (len == 0) return;
+    
+    // Check buffer read-only
+    if (current_buffer->read_only) {
+        message("Buffer is read-only: #<buffer %s>", current_buffer->name);
+        return; 
+    }
+    
+    size_t insert_pos = current_buffer->pt;
+    
+    // Check if we're trying to insert at a read-only position
+    SCM readonly = get_text_property(current_buffer, insert_pos, scm_from_locale_symbol("read-only"));
+    if (scm_is_true(readonly)) {
+        message("Text is read-only");
+        return;
+    }
+    
+    // Get prefix argument (how many times to yank)
+    int arg = get_prefix_arg();
+    bool raw_prefix_arg = get_raw_prefix_arg();
+    
+    // If raw prefix (C-u without number), yank once and exchange point/mark
+    // If numeric arg, yank that many times
+    int yank_count = 1;
+    if (!raw_prefix_arg && arg != 0) {
+        yank_count = abs(arg);
+    }
+    
+    // Calculate how many characters (not bytes) we're inserting per yank
+    size_t char_count = 0;
+    for (size_t i = 0; i < len; ) {
+        size_t bytes_read;
+        uint32_t ch = utf8_decode(&clipboard_text[i], len - i, &bytes_read);
+        if (bytes_read == 0) break;
+        i += bytes_read;
+        char_count++;
+    }
+    
+    size_t total_char_count = char_count * yank_count;
+    
+    // Check if tree-sitter is active
+    bool has_treesit = current_buffer->ts_state && current_buffer->ts_state->tree;
+    
+    // Capture tree-sitter state BEFORE modification
+    size_t start_byte = 0;
+    TSPoint start_point = {0, 0};
+    TSPoint new_end_point = {0, 0};
+    
+    if (has_treesit) {
+        start_byte = rope_char_to_byte(current_buffer->rope, insert_pos);
+        start_point = treesit_char_to_point(current_buffer, insert_pos);
+        
+        // Calculate new_end_point based on inserted content (repeated yank_count times)
+        new_end_point = start_point;
+        
+        for (int repeat = 0; repeat < yank_count; repeat++) {
+            // Scan inserted bytes for newlines
+            size_t bytes_after_last_newline = 0;
+            for (size_t i = 0; i < len; i++) {
+                if (clipboard_text[i] == '\n') {
+                    new_end_point.row++;
+                    new_end_point.column = 0;
+                    bytes_after_last_newline = 0;
+                } else {
+                    bytes_after_last_newline++;
+                }
+            }
+            
+            // Update column based on whether we had newlines
+            if (bytes_after_last_newline > 0 || new_end_point.row == start_point.row) {
+                new_end_point.column += bytes_after_last_newline;
+            }
+        }
+    }
+    
+    // Set mark at beginning of yank
+    current_buffer->region.mark = current_buffer->pt;
+    
+    // Perform the rope insertion (yank_count times)
+    for (int i = 0; i < yank_count; i++) {
+        current_buffer->rope = rope_insert_chars(
+            current_buffer->rope,
+            insert_pos + (i * char_count),
+            clipboard_text,
+            len
+        );
+    }
+    
+    // Update tree-sitter if active
+    if (has_treesit) {
+        size_t new_end_byte = start_byte + (len * yank_count);
+        
+        treesit_update_tree(
+            current_buffer,
+            start_byte,
+            start_byte,      // old_end_byte = start_byte (nothing was there before)
+            new_end_byte,
+            start_point,
+            start_point,     // old_end_point = start_point (nothing was there before)
+            new_end_point
+        );
+        
+        treesit_reparse_if_needed(current_buffer);
+        treesit_apply_highlights(current_buffer);
+    }
+    
+    // Only adjust text properties if tree-sitter is NOT active
+    if (!has_treesit) {
+        adjust_text_properties(current_buffer, insert_pos, total_char_count);
+    }
+    
+    adjust_all_window_points_after_modification(insert_pos, total_char_count);
+    set_point(current_buffer->pt + total_char_count); // End of inserted text
+    
+    // If C-u was used (raw prefix arg), exchange point and mark
+    // This leaves point at beginning and mark at end of yanked text
+    if (raw_prefix_arg) {
+        exchange_point_and_mark();
+    }
+    
+    update_goal_column();
+    reset_cursor_blink(current_buffer);
+    current_buffer->modified = true;
 }
-
 
 /// WORD
 
@@ -2742,7 +3065,7 @@ void transpose_words() {
 
 // NOTE We don’t handle <> because they are used as operators
 // in many languages. We should make list scanning more sophisticated
-// later when we have treesitter
+// later when we have treesitter, Emacs determines this based on the syntax table
 static bool is_opening_paren(uint32_t c) {
     return c == '(' || c == '[' || c == '{';
 }

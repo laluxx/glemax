@@ -456,6 +456,10 @@ static SCM scm_deactivate_mark(void) {
     static const char* scm_name##_doc = doc_string;
 
 
+DEFINE_SCM_COMMAND(scm_self_insert_command, self_insert_command,
+"Insert the character you type.");
+
+
 DEFINE_SCM_COMMAND(my_scm_newline, newline,
 "Insert a newline, and move to left margin of the new line.\n"
 "With prefix argument ARG, insert that many newlines.\n"
@@ -528,6 +532,11 @@ DEFINE_SCM_COMMAND(scm_kill_region, kill_region,
 "TODO If the buffer is read-only, Glemax will beep and refrain from deleting\n"
 "the text, but put the text in the kill ring anyway.  This means that\n"
 "you can use the killing commands to copy text from a read-only buffer.");
+
+DEFINE_SCM_COMMAND(scm_copy_region_as_kill, copy_region_as_kill,
+"Save the region as if killed, but don't kill it."
+"\n"
+"In Transient Mark mode, deactivate the mark.");
 
 DEFINE_SCM_COMMAND(scm_yank, yank,
 "Reinsert (\"paste\") the last stretch of killed text.\n"
@@ -2387,13 +2396,9 @@ void lisp_init(void) {
     scm_c_define_gsubr("automatically-buffer-local?",   1, 0, 0, scm_automatically_buffer_local_p);    
 
     // Set up common buffer-local defaults
-    set_default(scm_from_utf8_symbol("truncate-lines"), SCM_BOOL_F);
     set_default(scm_from_utf8_symbol("fill-column"),    scm_from_int(70));
-    set_default(scm_from_utf8_symbol("tab-width"),      scm_from_int(8));
 
-    mark_automatically_buffer_local(scm_from_utf8_symbol("truncate-lines"));
     mark_automatically_buffer_local(scm_from_utf8_symbol("fill-column"));
-    mark_automatically_buffer_local(scm_from_utf8_symbol("tab-width"));
 
 
     scm_c_define_gsubr("load",                           1, 0, 0, scm_load);
@@ -2483,6 +2488,7 @@ void lisp_init(void) {
     // Editing
     scm_c_define_gsubr("char-or-string?",                1, 0, 0, scm_char_or_string_p);
     scm_c_define_gsubr("insert",                         0, 0, 1, scm_insert);
+    REGISTER_COMMAND("self-insert-command",     scm_self_insert_command);
     scm_c_define_gsubr("delete-backward-char",           0, 1, 0, scm_delete_backward_char);
     scm_c_define_gsubr("delete-char",                    0, 1, 0, scm_delete_char);
     scm_c_define_gsubr("delete-blank-lines",             0, 0, 0, scm_delete_blank_lines);
@@ -2521,10 +2527,11 @@ void lisp_init(void) {
 
     
     // Kill/yank
-    REGISTER_COMMAND("kill-line",   scm_kill_line);
-    REGISTER_COMMAND("kill-word",   scm_kill_word);
-    REGISTER_COMMAND("kill-region", scm_kill_region);
-    REGISTER_COMMAND("yank",        scm_yank);
+    REGISTER_COMMAND("kill-line",           scm_kill_line);
+    REGISTER_COMMAND("kill-word",           scm_kill_word);
+    REGISTER_COMMAND("kill-region",         scm_kill_region);
+    REGISTER_COMMAND("copy-region-as-kill", scm_copy_region_as_kill);
+    REGISTER_COMMAND("yank",                scm_yank);
 
     scm_c_define_gsubr("backward-kill-word",             0, 1, 0, scm_backward_kill_word);
     /* scm_c_define_gsubr("kill-region",                    0, 1, 0, scm_kill_region); */

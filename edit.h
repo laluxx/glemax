@@ -4,9 +4,11 @@
 #include <stddef.h>
 
 extern bool transient_mark_mode_should_be_disabled;
+extern const char *last_notation;
 
 void message(const char *format, ...);
 void insert(const char *text);
+void self_insert_command();
 void delete_backward_char();
 void delete_char();
 void newline();
@@ -51,7 +53,7 @@ void deactivate_mark();
 void exchange_point_and_mark();
 void region_bounds(size_t *start, size_t *end);
 void delete_region();
-
+void copy_region_as_kill();
 void rkill(size_t start, size_t end, bool prepend);
 void kill_line();
 void kill_region();

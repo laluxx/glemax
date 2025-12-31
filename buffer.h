@@ -44,10 +44,6 @@ void use_local_map(KeyChordMap *local_map, Buffer *buf);
 KeyChordMap* current_local_map(Buffer *buf);
 KeyChordMap* current_global_map(void);
 
-
-extern bool shift;
-extern bool ctrl;
-extern bool alt;
 extern bool argument_manually_set;
 
 Buffer* buffer_create(const char *name);
