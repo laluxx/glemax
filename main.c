@@ -67,7 +67,7 @@ static bool has_unmatched_closing_after(Buffer *buffer, size_t point, char openi
 }
 
 void text_callback(unsigned int codepoint) {
-    clear_minibuffer();
+    clear_minibuffer_message();
     
     // Encode the codepoint to UTF-8
     char utf8_buf[5] = {0};  // Max 4 bytes + null terminator
@@ -188,7 +188,7 @@ bool is_argument_function(SCM proc) {
 
 
 void before_keychord_hook(const char *notation, KeyChordBinding *binding) {
-    clear_minibuffer();
+    clear_minibuffer_message();
     if (scm_get_bool("make-pointer-invisible-on-keychords", true) && 
         scm_get_bool("pointer-visible", true)) {
         hideCursor();
@@ -983,6 +983,8 @@ void window_resize_callback(int width, int height) {
     // We might make the modeline bump
     // into the cursor while resizing
     update_windows_scroll();
+    bool inhibit_cursor_blink_on_frame_resize = scm_get_bool("inhibit-cursor-blink-on-frame-resize", true);
+    if (inhibit_cursor_blink_on_frame_resize) reset_cursor_blink(current_buffer);
 
     /* printf("Width: %i, Height: %i\n", width, height); */
 }

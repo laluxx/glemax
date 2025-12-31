@@ -307,13 +307,10 @@ UNDERLINE_POSITION font properties, set this to #f.  You can also use
 `underline-minimum-offset' to override the font's UNDERLINE_POSITION for
 small font display sizes.")
 
-
-(define next-line-add-newlines #t)
+(define next-line-add-newlines #f)
 (set-var-doc! next-line-add-newlines
 "If #t, `next-line' inserts newline to avoid `end of buffer' error.")
 
-
-;; TODO Support this!
 (define line-move-visual #t)
 (set-var-doc! line-move-visual
 "When #t, `line-move' moves point by visual lines.
@@ -326,16 +323,11 @@ and forces movement by logical lines.
 A window that is horizontally scrolled also forces movement by logical
 lines.")
 
-
-;; TODO Support this!
 (define inhibit-cursor-blink-on-frame-resize #t)
 (set-var-doc! inhibit-cursor-blink-on-frame-resize
 "When #t, disable cursor blinking while the frame is being resized.
 This has only effect if `blink-cursor-mode' is #t.")
 
-
-
-;; TODO Support this!
 (define max-mini-window-height 0.25)
 (set-var-doc! max-mini-window-height
 "Maximum height for resizing mini-windows (the minibuffer and the echo area).
@@ -345,7 +337,19 @@ mini-window frame's height.
 If an integer, it specifies the maximum height in units of the
 mini-window frame's default font's height.")
 
+(define resize-mini-windows 'grow-only)
+(set-var-doc! resize-mini-windows
+"How to resize mini-windows (the minibuffer and the echo area).
 
+A value of nil means don't automatically resize mini-windows.
+A value of t means resize them to fit the text displayed in them.
+A value of `grow-only', the default, means let mini-windows grow only;
+they return to their normal size when the minibuffer is closed, or the
+echo area becomes empty.
+
+This variable does not affect resizing of the minibuffer window of
+minibuffer-only frames.  These are handled by `resize-mini-frames'
+only.")
 
 (define electric-pair-mode #t)
 (set-var-doc! electric-pair-mode
@@ -423,9 +427,6 @@ window to a height less than the one specified here, an
 application should instead call `window-resize' with a non-nil
 IGNORE argument.  In order to have `split-window' make a window
 shorter, explicitly specify the SIZE argument of that function.")
-
-
-
 
 (define frame-resize-pixelwise #f)
 (set-var-doc! window-resize-pixelwise
@@ -548,30 +549,6 @@ the variable `message-log-max'."
 
 (keymap-global-set "C-h e" view-echo-area-messages)
 
-
-
-
-(deftheme 'test-theme "test theme that only sets red foreground")
-
-(custom-theme-set-faces 'test-theme
-  '(default            ((t (:foreground "#FF0000" :background "#882200"))))
-  '(cursor             ((t (:inherit default))))
-)
-
-
-
-;; (load-theme 'modus-vivendi)
-
-
-
-;; defvar - define a variable with a default value
-(define-syntax defvar
-  (syntax-rules ()
-    ((_ var default-value)
-     (set-default! 'var default-value))
-    ((_ var default-value docstring)
-     (set-default! 'var default-value))))
-
 (defvar-local truncate-lines #f
   "Non-nil means truncate lines in this buffer.
 When truncating is off, long lines are folded.")
@@ -582,7 +559,6 @@ When truncating is off, long lines are folded.")
 It is the column where point was at the start of the current run
 of vertical motion commands.")
 
-;; TODO Support this!
 (defvar-local goal-column #f
   "Semipermanent goal column for vertical motion, as set by
 \\[set-goal-column], or #f.
@@ -662,3 +638,9 @@ INTERVAL-LENGTH specifies how many characters each face segment should be."
                            'face 
                            (if use-error? 'error 'warning))
           (loop end-pos (not use-error?)))))))
+
+
+
+(load-theme 'modus-vivendi)
+(scheme-mode)
+

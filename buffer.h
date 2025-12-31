@@ -55,6 +55,7 @@ void buffer_destroy(Buffer *buffer);
 void destroy_all_buffers(void);
 Buffer *get_buffer(const char *name);
 Buffer *get_buffer_create(const char *name);
+void set_buffer(Buffer *buf);
 void switch_to_buffer(Buffer *buf);
 Buffer *other_buffer();
 void kill_buffer(Buffer *buf);

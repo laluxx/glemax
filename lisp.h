@@ -3,12 +3,15 @@
 #include <libguile.h>
 #include "wm.h"
 
-
 /* The ubiquitous max and min macros.  */
 #undef min
 #undef max
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
+
+SCM error_handler(void *data, SCM key, SCM args);
+SCM eval_string_body(void *data);
+
 
 int clip_to_bounds(int lower, int num, int upper);
 

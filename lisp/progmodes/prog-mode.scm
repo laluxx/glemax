@@ -1,4 +1,4 @@
-;;; json-mode.scm --- A major-mode for editing json
+;;; prog-mode.scm --- Generic major mode for programming
 
 ;;; Commentary:
 

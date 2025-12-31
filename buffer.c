@@ -164,13 +164,8 @@ Buffer *get_buffer_create(const char *name) {
     return buffer_create(name);
 }
 
-void switch_to_buffer(Buffer *buf) {
-    if (!buf) return;
-
-    if (buf == selected_frame->wm.minibuffer_window->buffer) {
-        message("Can't switch to minibuf buffer");
-        return; 
-    }
+void set_buffer(Buffer *buf) {
+    if (!buf || buf == current_buffer) return;
     
     current_buffer = buf;
     
@@ -179,6 +174,17 @@ void switch_to_buffer(Buffer *buf) {
     if (buf->keymap) {
         keymap_stack_push(buf->keymap);
     }
+}
+
+void switch_to_buffer(Buffer *buf) {
+    if (!buf) return;
+
+    if (buf == selected_frame->wm.minibuffer_window->buffer) {
+        message("Can't switch to minibuf buffer");
+        return; 
+    }
+    
+    set_buffer(buf);
     
     // Update selected window to point to new buffer
     if (selected_frame->wm.selected) {
@@ -186,6 +192,7 @@ void switch_to_buffer(Buffer *buf) {
         selected_frame->wm.selected->point = buf->pt;
     }
 }
+
 
 Buffer* other_buffer() {
     if (!current_buffer || !current_buffer->next) return current_buffer;
@@ -408,6 +415,7 @@ void append_to_buffer(Buffer *buf, const char *text, bool prepend_newline) {
     buf->modified = true;
 }
 
+
 void message(const char *format, ...) {
     va_list args;
     va_start(args, format);
@@ -440,8 +448,8 @@ void message(const char *format, ...) {
             if (current_len > selected_frame->wm.minibuffer_message_start) {
                 size_t msg_len = current_len - selected_frame->wm.minibuffer_message_start;
                 remove_text_properties(minibuf, selected_frame->wm.minibuffer_message_start, current_len);
-                minibuf->rope = rope_delete_chars(minibuf->rope, 
-                                                  selected_frame->wm.minibuffer_message_start, 
+                minibuf->rope = rope_delete_chars(minibuf->rope,
+                                                  selected_frame->wm.minibuffer_message_start,
                                                   msg_len);
             }
         }
@@ -455,7 +463,7 @@ void message(const char *format, ...) {
             sprintf(bracketed, " [%s]", formatted);
             size_t bracket_len = strlen(bracketed);
             
-            minibuf->rope = rope_insert_chars(minibuf->rope, original_len, 
+            minibuf->rope = rope_insert_chars(minibuf->rope, original_len,
                                              bracketed, bracket_len);
             
             // Make the message read-only

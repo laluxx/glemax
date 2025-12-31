@@ -18,7 +18,7 @@
 #include "frame.h"
 
 // Error handler that captures error message with full details
-static SCM error_handler(void *data, SCM key, SCM args) {
+SCM error_handler(void *data, SCM key, SCM args) {
     SCM port = scm_open_output_string();
     
     // args structure: (subr message (arg ...) (extra ...))
@@ -59,12 +59,11 @@ static SCM error_handler(void *data, SCM key, SCM args) {
 }
 
 // Body function wrapper for scm_c_catch
-static SCM eval_string_body(void *data) {
+SCM eval_string_body(void *data) {
     const char *str = (const char *)data;
     return scm_c_eval_string(str);
 }
 
-// Helper to safely evaluate string with error handling
 static SCM safe_eval_string(const char *str, bool *had_error) {
     *had_error = false;
     
@@ -775,21 +774,6 @@ static SCM scm_digit_argument(void) {
     return SCM_UNSPECIFIED;
 }
 
-static SCM scm_execute_extended_command(void) {
-    execute_extended_command();
-    return SCM_UNSPECIFIED;
-}
-
-static SCM scm_eval_expression(void) {
-    eval_expression();
-    return SCM_UNSPECIFIED;
-}
-
-static SCM scm_keyboard_quit(void) {
-    keyboard_quit();
-    return SCM_UNSPECIFIED;
-}
-
 // Eval
 
 static SCM scm_eval_last_sexp(void) {
@@ -819,8 +803,6 @@ static SCM scm_show_cursor(void) {
     scm_c_define("pointer-visible", SCM_BOOL_T);
     return SCM_UNSPECIFIED;
 }
-
-
 
 // Buffer content access
 static SCM scm_buffer_substring(SCM start, SCM end) {
@@ -879,7 +861,6 @@ static SCM scm_char_before(SCM pos) {
     
     return scm_from_uint32(rope_char_at(current_buffer->rope, p - 1));
 }
-
 
 static SCM scm_message(SCM fmt, SCM rest) {
     if (SCM_UNBNDP(fmt)) {
@@ -992,8 +973,6 @@ static char* get_scheme_proc_documentation(SCM proc) {
     }
     return NULL;
 }
-
-
 
 static SCM scm_keymap_global_set(SCM notation_scm, SCM action_scm) {
     if (!scm_is_string(notation_scm)) {
@@ -1243,7 +1222,6 @@ static SCM scm_get_buffer_create(SCM buffer_or_name) {
     }
 }
 
-
 static SCM scm_current_buffer(void) {
     if (!current_buffer) return SCM_EOL;
     return get_or_make_buffer_object(current_buffer);
@@ -1352,9 +1330,21 @@ static SCM scm_buffer_local_value(SCM variable, SCM buffer_obj) {
         scm_wrong_type_arg("buffer-local-value", 1, variable);
     }
     
-    Buffer *buf = scm_to_buffer(buffer_obj);
+    Buffer *buf;
+    
+    // Make buffer argument optional - default to current_buffer
+    if (SCM_UNBNDP(buffer_obj)) {
+        buf = current_buffer;
+    } else {
+        buf = scm_to_buffer(buffer_obj);
+        if (!buf) {
+            scm_wrong_type_arg("buffer-local-value", 2, buffer_obj);
+        }
+    }
+    
     if (!buf) {
-        scm_wrong_type_arg("buffer-local-value", 2, buffer_obj);
+        // No current buffer - return #f or try default value
+        return default_value(variable);
     }
     
     return buffer_local_value(variable, buf);
@@ -2267,9 +2257,6 @@ static SCM scm_load_directory(SCM dirname) {
 
 
 
-#include "theme.h"
-
-
 static SCM scm_set_buffer(SCM buffer_or_name) {
     Buffer *buf = NULL;
     
@@ -2281,7 +2268,7 @@ static SCM scm_set_buffer(SCM buffer_or_name) {
         free(name);
         
         if (!buf) {
-            scm_misc_error("set-buffer", "No buffer named ~S", 
+            scm_misc_error("set-buffer", "No buffer named ~S",
                           scm_list_1(buffer_or_name));
         }
     } else {
@@ -2357,7 +2344,7 @@ void lisp_init(void) {
     
 
     init_treesit_bindings();
-
+    init_minibuf_bindings();
 
     scm_c_define_gsubr("garbage-collect",               0, 0, 0, scm_garbage_collect);
 
@@ -2385,9 +2372,9 @@ void lisp_init(void) {
     scm_c_define_gsubr("set-default!",                  2, 0, 0, scm_set_default);
     scm_c_define_gsubr("setq-default",                  2, 0, 0, scm_set_default);
     scm_c_define_gsubr("default-value",                 1, 0, 0, scm_default_value);
-    scm_c_define_gsubr("buffer-local-value",            2, 0, 0, scm_buffer_local_value);
+    scm_c_define_gsubr("buffer-local-value",            1, 1, 0, scm_buffer_local_value);
+
     scm_c_define_gsubr("set",                           2, 0, 0, scm_set);
-    /* scm_c_define_gsubr("setq",                          2, 0, 0, scm_setq); */
     scm_c_define_gsubr("setq-impl",                     2, 0, 0, scm_setq_impl);
 
     scm_c_define_gsubr("local-variable?",               1, 1, 0, scm_local_variable_p);
@@ -2421,9 +2408,10 @@ void lisp_init(void) {
     scm_c_define_gsubr("universal-argument",             0, 0, 0, scm_universal_argument);
     scm_c_define_gsubr("negative-argument",              0, 0, 0, scm_negative_argument);
     scm_c_define_gsubr("digit-argument",                 0, 0, 0, scm_digit_argument);
-    scm_c_define_gsubr("execute-extended-command",       0, 0, 0, scm_execute_extended_command);
-    scm_c_define_gsubr("eval-expression",                0, 0, 0, scm_eval_expression);
-    scm_c_define_gsubr("keyboard-quit",                  0, 0, 0, scm_keyboard_quit);
+
+    /* scm_c_define_gsubr("execute-extended-command",       0, 0, 0, scm_execute_extended_command); */
+    /* scm_c_define_gsubr("eval-expression",                0, 0, 0, scm_eval_expression); */
+    /* scm_c_define_gsubr("keyboard-quit",                  0, 0, 0, scm_keyboard_quit); */
 
     // Buffer
     scm_c_define_gsubr("buffer?",                        1, 0, 0, buffer_p);

@@ -24,6 +24,13 @@
 
 ;;; Code:
 
+(defvar-local major-mode 'fundamental-mode
+  "Symbol for current buffer's major mode.
+The default value (normally `fundamental-mode') affects new buffers.
+A value of nil means to use the current buffer's major mode, provided
+it is not marked as \"special\".")
+
+
 ;; Symbol property storage for mode relationships
 (define mode-plist (make-hash-table))
 

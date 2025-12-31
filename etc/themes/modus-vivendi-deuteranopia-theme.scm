@@ -54,8 +54,8 @@
   '(font-lock-type-face                       ((t (:foreground "#6ae4b9" :weight bold))))
   '(font-lock-variable-name-face              ((t (:foreground "#00d3d0"))))
   '(font-lock-variable-use-face               ((t (:foreground "#76afbf"))))
-  '(font-lock-warning-face                    ((t (:foreground "#cabf00" :weight bold)))
+  '(font-lock-warning-face                    ((t (:foreground "#cabf00" :weight bold))))
 
   '(minibuffer-prompt                         ((t (:foreground "#2fafff"))))
   '(region                                    ((t (:foreground "#ffffff" :background "#5a5a5a"))))
-))
+)
