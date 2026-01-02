@@ -25,6 +25,8 @@ bool is_kill_command(SCM proc) {
            is_scm_proc(proc, "kill-region");
 }
 
+#include <unistd.h>  // for getcwd
+
 Buffer* buffer_create(const char *name) {
     Buffer *buffer = (Buffer*)malloc(sizeof(Buffer));
     if (!buffer) return NULL;
@@ -41,16 +43,23 @@ Buffer* buffer_create(const char *name) {
     buffer->region.mark = -1;
     buffer->props = NULL;
     buffer->ts_state = NULL;
-
+    
+    // Initialize filename and directory
+    buffer->filename = NULL;
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        buffer->directory = strdup(cwd);
+    } else {
+        buffer->directory = strdup(".");
+    }
+    
     // Initialize buffer-local variables as empty alist
     buffer->local_var_alist = SCM_EOL;
     scm_gc_protect_object(buffer->local_var_alist);
-
     // Initialize keymap as NULL (will use global keymap)
     buffer->keymap = NULL;
     buffer->read_only = false;
     buffer->modified = false;
-
     // Add to circular buffer list
     if (all_buffers == NULL) {
         // First buffer - create circular list of one
@@ -275,7 +284,6 @@ void previous_buffer() {
     set_prefix_arg(arg);
     next_buffer();
 }
-
 
 #include "lisp.h"
 
@@ -930,7 +938,6 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     SCM tab_width_sym = scm_from_utf8_symbol("tab-width");
     SCM tab_width_val = buffer_local_value(tab_width_sym, buffer);
     int tab_width = scm_to_int(tab_width_val);
-    /* int tab_width = scm_get_int("tab-width", 1); */
     float tab_pixel_width = tab_width * selected_frame->column_width;
     
     float window_bottom = win->y;

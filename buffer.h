@@ -23,7 +23,9 @@ typedef struct Buffer {
     struct Buffer *next; // Next buffer in circular list
     struct Buffer *prev; // Previous buffer in circular list
     char *name;
-    rope_t *rope;           
+    char *filename;      // Full path to the file (NULL if no file)
+    char *directory;     // Directory of the file or default-directory
+    rope_t *rope;
     Cursor cursor;
     size_t pt;
     Region region;

@@ -19,6 +19,14 @@
                 '()
                 '()))))
 
+(define (set-var-doc! v doc)
+  (set-object-property! v 'documentation doc))
+
+(define (variable-documentation var)
+  "variable-documentation var
+Return the documentation property associated with `var'."
+  (object-property var 'documentation))
+
 (define-syntax setq
   (syntax-rules ()
     ((setq var val)

@@ -1942,6 +1942,12 @@ size_t point_at_window_pos(Window *win, float click_x, float click_y) {
     SCM truncate_lines_val = buffer_local_value(truncate_lines_sym, buffer);
     bool truncate_lines = scm_is_true(truncate_lines_val);
 
+    // Get tab width from Scheme
+    SCM tab_width_sym = scm_from_utf8_symbol("tab-width");
+    SCM tab_width_val = buffer_local_value(tab_width_sym, buffer);
+    int tab_width = scm_to_int(tab_width_val);
+    float tab_pixel_width = tab_width * selected_frame->column_width;
+
     // Calculate starting position (same as draw_buffer)
     float scroll_offset_y = 0;
     size_t start_pos = 0;
@@ -1974,7 +1980,7 @@ size_t point_at_window_pos(Window *win, float click_x, float click_y) {
     float current_line_height = line_height;
     bool on_target_line = false;
     size_t current_line_end = start_pos;
-    size_t last_visible_pos = start_pos;  // ADD THIS: track the last position we saw
+    size_t last_visible_pos = start_pos;
 
     while (rope_iter_next_char(&iter, &ch)) {
         // Get face and font for this character
@@ -1996,7 +2002,7 @@ size_t point_at_window_pos(Window *win, float click_x, float click_y) {
             break;
         }
 
-        last_visible_pos = i;  // ADD THIS: update last visible position
+        last_visible_pos = i;
 
         if (ch == '\n') {
             // Calculate line bounds
@@ -2019,10 +2025,17 @@ size_t point_at_window_pos(Window *win, float click_x, float click_y) {
             current_line_end = i + 1;
 
         } else {
-            // Get character metrics
-            Character *char_info = font_get_character(char_font, ch);
-            float char_width = character_width(char_font, ch);
-            float char_advance = char_info ? char_info->ax : char_width;
+            // Calculate the actual character width we'll use for advancement
+            // This MUST match what draw_buffer does
+            float char_advance;
+            if (ch == '\t') {
+                // Tabs use the full tab pixel width
+                char_advance = tab_pixel_width;
+            } else {
+                // Regular characters use their actual advance from the font
+                Character *char_info = font_get_character(char_font, ch);
+                char_advance = char_info ? char_info->ax : character_width(char_font, ch);
+            }
 
             // Handle truncation mode
             if (truncate_lines) {
@@ -2030,7 +2043,7 @@ size_t point_at_window_pos(Window *win, float click_x, float click_y) {
                 if (x > start_x + max_x) {
                     while (rope_iter_next_char(&iter, &ch) && ch != '\n') {
                         i++;
-                        last_visible_pos = i;  // ADD THIS
+                        last_visible_pos = i;
                     }
                     if (ch == '\n') {
                         x = line_start_x;
@@ -2088,7 +2101,6 @@ size_t point_at_window_pos(Window *win, float click_x, float click_y) {
                 // Character region is from x (left edge) to x + char_advance (right edge)
                 float char_left = x;
                 float char_right = x + char_advance;
-                float char_mid = char_left + (char_advance / 2.0f);
 
                 // If click is within this character's bounds, return position i
                 if (click_x >= char_left && click_x < char_right) {
@@ -2097,7 +2109,7 @@ size_t point_at_window_pos(Window *win, float click_x, float click_y) {
                 }
             }
 
-            // Advance X position
+            // Advance X position by the actual character advance
             x += char_advance;
         }
 
@@ -2111,7 +2123,7 @@ size_t point_at_window_pos(Window *win, float click_x, float click_y) {
         return current_line_end;
     }
 
-    // CHANGED THIS: If click is below all content, go to end of buffer
+    // If click is below all content, go to end of buffer
     // Check if we've reached the end of the buffer
     size_t buf_len = rope_char_length(buffer->rope);
     if (last_visible_pos >= buf_len - 1 || i >= buf_len) {
@@ -2137,7 +2149,6 @@ void mouse_set_point(Window *window, int x, int y) {
 
 
 /// SCM
-
 
 // Get minimum window width in pixels (columns + fringes)
 SCM scm_window_min_pixel_width(SCM window_obj) {

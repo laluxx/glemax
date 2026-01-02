@@ -1065,7 +1065,7 @@ static SCM scm_keychord_bindings(void) {
 static SCM buffer_type;
 static SCM buffer_object_cache;  // Hash table: Buffer* -> SCM
 
-static SCM get_or_make_buffer_object(Buffer *buf) {
+SCM get_or_make_buffer_object(Buffer *buf) {
     if (!buf) return SCM_BOOL_F;
     
     // Use pointer as key (convert to integer)
@@ -1310,6 +1310,32 @@ static SCM scm_append_to_buffer(SCM buffer_or_name, SCM text, SCM prepend_newlin
     
     free(text_str);
     return SCM_UNSPECIFIED;
+}
+
+static SCM scm_buffer_file_name(SCM buffer_obj) {
+    Buffer *buf;
+    
+    // If buffer argument is not provided, use current_buffer
+    if (SCM_UNBNDP(buffer_obj)) {
+        buf = current_buffer;
+    } else if (SCM_IS_A_P(buffer_obj, buffer_type)) {
+        // It's a buffer foreign object
+        buf = scm_to_buffer(buffer_obj);
+    } else {
+        scm_wrong_type_arg("buffer-file-name", 1, buffer_obj);
+    }
+    
+    if (!buf) {
+        return SCM_BOOL_F;
+    }
+    
+    char *filename = buf->filename;
+    
+    if (filename) {
+        return scm_from_locale_string(filename);
+    } else {
+        return SCM_BOOL_F;
+    }
 }
 
 
@@ -2431,6 +2457,8 @@ void lisp_init(void) {
     scm_c_define_gsubr("next-buffer",                    0, 1, 0, scm_next_buffer);
     scm_c_define_gsubr("previous-buffer",                0, 1, 0, scm_previous_buffer);
     scm_c_define_gsubr("append-to-buffer",               2, 1, 0, scm_append_to_buffer);
+    scm_c_define_gsubr("append-to-buffer",               2, 1, 0, scm_append_to_buffer);
+    scm_c_define_gsubr("buffer-file-name",               0, 1, 0, scm_buffer_file_name);
 
 
     // Window

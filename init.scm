@@ -95,7 +95,7 @@
 (keymap-global-set "C-M-d" treesit-debug-tree)
 (keymap-global-set "C-x C-q" read-only-mode)
 (keymap-global-set "C-x C-s" save-buffer)
-
+(keymap-global-set "C-x C-f" find-file)
 
 (define (setup-self-insert-keys)
   "Bind all printable characters to self-insert-command in global keymap."
@@ -115,11 +115,8 @@
   
   ;; TAB as self-insert (some modes override this for indentation)
   (keymap-global-set "TAB" self-insert-command)
-  (keymap-global-set "SPC" self-insert-command)
-  
-  )
+  (keymap-global-set "SPC" self-insert-command))
 
-;; Call it during initialization
 (setup-self-insert-keys)
 
 
@@ -151,17 +148,6 @@
 ;; C-x [   - backward-page
 ;; C-x C-p - mark-page
 
-
-;; (key-binding (kbd "C-n"))
-
-
-(define (set-var-doc! v doc)
-  (set-object-property! v 'documentation doc))
-
-(define (variable-documentation var)
-  "variable-documentation var
-Return the documentation property associated with `var'."
-  (object-property var 'documentation))
 
 
 (define eval-display-prompt #t)

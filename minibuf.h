@@ -1,6 +1,6 @@
 #pragma once
 
-char *read_from_minibuffer(const char *prompt);
+char *read_from_minibuffer(const char *prompt, const char *initial_contents);
 void execute_extended_command(void);
 void eval_expression(void);
 void activate_minibuffer(void);

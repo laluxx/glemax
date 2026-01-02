@@ -13,6 +13,9 @@ SCM error_handler(void *data, SCM key, SCM args);
 SCM eval_string_body(void *data);
 
 
+SCM get_or_make_buffer_object(Buffer *buf);
+
+
 int clip_to_bounds(int lower, int num, int upper);
 
 void lisp_init();

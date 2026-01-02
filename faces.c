@@ -104,22 +104,22 @@ Font *fontconfig_load_font(const char *family, int size, bool bold, bool italic)
 Font *get_font_variant(bool bold, bool italic) {
     if (bold && italic) {
         if (!cached_font_bold_italic) {
-            cached_font_bold_italic = fontconfig_load_font("Adwaita Mono", 32, true, true);
+            cached_font_bold_italic = fontconfig_load_font("Adwaita Mono", 22, true, true);
         }
         return cached_font_bold_italic;
     } else if (bold) {
         if (!cached_font_bold) {
-            cached_font_bold = fontconfig_load_font("Adwaita Mono", 32, true, false);
+            cached_font_bold = fontconfig_load_font("Adwaita Mono", 22, true, false);
         }
         return cached_font_bold;
     } else if (italic) {
         if (!cached_font_italic) {
-            cached_font_italic = fontconfig_load_font("Adwaita Mono", 32, false, true);
+            cached_font_italic = fontconfig_load_font("Adwaita Mono", 22, false, true);
         }
         return cached_font_italic;
     } else {
         if (!cached_font_regular) {
-            cached_font_regular = fontconfig_load_font("Adwaita Mono", 32, false, false);
+            cached_font_regular = fontconfig_load_font("Adwaita Mono", 22, false, false);
         }
         return cached_font_regular;
     }
@@ -647,7 +647,7 @@ static SCM scm_face_foreground(SCM name) {
         float g = (fg.g <= 0.0031308f) ? fg.g * 12.92f : 1.055f * powf(fg.g, 1.0f/2.4f) - 0.055f;
         float b = (fg.b <= 0.0031308f) ? fg.b * 12.92f : 1.055f * powf(fg.b, 1.0f/2.4f) - 0.055f;
         
-        char color_str[32];
+        char color_str[22];
         snprintf(color_str, sizeof(color_str), "#%02x%02x%02x",
                  (int)(r * 255),
                  (int)(g * 255),
@@ -676,7 +676,7 @@ static SCM scm_face_background(SCM name) {
         float g = (bg.g <= 0.0031308f) ? bg.g * 12.92f : 1.055f * powf(bg.g, 1.0f/2.4f) - 0.055f;
         float b = (bg.b <= 0.0031308f) ? bg.b * 12.92f : 1.055f * powf(bg.b, 1.0f/2.4f) - 0.055f;
         
-        char color_str[32];
+        char color_str[22];
         snprintf(color_str, sizeof(color_str), "#%02x%02x%02x",
                  (int)(r * 255),
                  (int)(g * 255),

@@ -426,7 +426,7 @@ void mouse_button_callback(int button, int action, int mods) {
                 return;
             }
             
-            // Check if clicking on a draggable modeline
+            // Check if clicking on a draggable modeline - set up drag but don't switch window yet
             Window *modeline_window = NULL;
             if (is_on_draggable_modeline(x, y, selected_frame->wm.root, &modeline_window)) {
                 // Find the horizontal split parent
@@ -444,6 +444,7 @@ void mouse_button_callback(int button, int action, int mods) {
                     saved_divider_count = 0;
                     save_divider_positions(selected_frame->wm.root, false, h_parent); // false = horizontal
                     
+                    // Return here - we'll handle window selection on RELEASE
                     return;
                 }
             }
@@ -452,7 +453,7 @@ void mouse_button_callback(int button, int action, int mods) {
             Font *font = face_cache->faces[FACE_DEFAULT]->font;
             float line_height = font->ascent + font->descent;
             
-            // Check if clicked on inactive minibuffer area (bottom line of frame)
+            // Check if we clicked on minibuffer (bottom line of frame)
             if (!selected_frame->wm.minibuffer_active && y < line_height) {
                 SCM update_gcs_func = scm_c_lookup("view-echo-area-messages");
                 if (scm_is_true(scm_variable_bound_p(update_gcs_func))) {
@@ -465,7 +466,7 @@ void mouse_button_callback(int button, int action, int mods) {
             Window *clicked_window = window_at_pos(x, y);
             
             if (clicked_window) {
-                // Check if click is on the modeline
+                // Check if click is on the modeline (non-draggable)
                 float modeline_y = clicked_window->y;
                 float modeline_height = line_height;
                 
@@ -473,7 +474,7 @@ void mouse_button_callback(int button, int action, int mods) {
                                            y >= modeline_y &&
                                            y < modeline_y + modeline_height;
                 
-                // Handle modeline click - just switch window, don't move cursor
+                // Handle non-draggable modeline click - just switch window, don't move cursor
                 if (clicked_on_modeline) {
                     // Save point in current window if switching
                     if (clicked_window != selected_frame->wm.selected) {
@@ -514,6 +515,39 @@ void mouse_button_callback(int button, int action, int mods) {
                 update_region_highlight(clicked_window->buffer);
             }
         } else if (action == RELEASE) {
+            // Handle window selection on release for draggable modelines
+            if (is_dragging_modeline && dragging_modeline_window) {
+                // Check if we actually dragged (mouse moved significantly)
+                float drag_threshold = 2.0f; // pixels (exactly like Emacs)
+                float dx = x - drag_start_x;
+                float dy = y - drag_start_y;
+                float distance = sqrtf(dx * dx + dy * dy);
+                
+                // Only select window if we didn't actually drag
+                if (distance < drag_threshold) {
+                    // Find window at release position
+                    Window *released_window = window_at_pos(x, y);
+                    
+                    // If we released on the same window we started on, select it
+                    if (released_window == dragging_modeline_window) {
+                        if (released_window != selected_frame->wm.selected) {
+                            selected_frame->wm.selected->point = current_buffer->pt;
+                            
+                            // Deselect old window
+                            selected_frame->wm.selected->is_selected = false;
+                            
+                            // Select new window
+                            released_window->is_selected = true;
+                            selected_frame->wm.selected = released_window;
+                            
+                            // Update global buffer pointer and restore point
+                            current_buffer = released_window->buffer;
+                            current_buffer->pt = released_window->point;
+                        }
+                    }
+                }
+            }
+            
             // Stop dragging
             if (is_dragging_divider) {
                 is_dragging_divider = false;

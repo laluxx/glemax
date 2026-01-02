@@ -49,9 +49,11 @@ void free_themes(void);
 
 Theme *get_theme(const char *name);
 void register_theme(const char *name, const char *description);
-void load_theme(const char *name, bool no_confirm, bool no_enable);
+/* void load_theme(const char *name, bool no_confirm, bool no_enable); */
+bool load_theme(const char *name);
 void enable_theme(const char *name);
-void disable_theme(const char *name);
+/* void disable_theme(const char *name); */
+bool disable_theme(const char *name);
 void disable_all_themes(void);
 
 static inline bool color_equals(Color a, Color b) {
