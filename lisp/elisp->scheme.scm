@@ -225,10 +225,10 @@
    ;; Atoms
    ((symbol? expr)
     (transform-symbol expr))
-   
+
    ((not (pair? expr))
     expr)
-   
+
    ;; Special forms
    ((and (pair? expr) (symbol? (car expr)))
     (let ((head (car expr)))
@@ -254,7 +254,7 @@
         (else
          ;; Regular function call - recursively transform arguments
          (map elisp->scheme expr)))))
-   
+
    ;; Default: recursively transform
    (else
     (map elisp->scheme expr))))

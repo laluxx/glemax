@@ -24,11 +24,8 @@ extern Frame *selected_frame;
 
 Frame* create_frame(int x, int y, int width, int height);
 void destroy_frame(Frame *frame);
-
 void set_frame_position(Frame *frame, int x, int y);
 void init_frame_bindings(void);
 size_t frame_char_height(Frame *frame);
 size_t frame_char_width(Frame *frame);
-
-
 void update_frame_resize_mode(Frame *frame);

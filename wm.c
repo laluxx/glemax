@@ -6,6 +6,7 @@
 #include "lisp.h"
 #include "faces.h"
 #include "modeline.h"
+#include "edit.h"
 
 
 #define DEFAULT_SPLIT_RATIO 0.5f
@@ -475,6 +476,67 @@ void split_window_right() {
     selected_frame->wm.window_count++;
     wm_recalculate_layout();
     if (debug_them_windows) debug_print_windows();
+}
+
+Window* split_root_window_below(size_t size) {
+    Window *root = selected_frame->wm.root;
+    Window *original_selected = selected_frame->wm.selected;
+
+    Window *top_wrapper = window_create(NULL, root->buffer);
+    Window *bottom_window = window_create(NULL, current_buffer);
+
+    if (!top_wrapper || !bottom_window) {
+        if (top_wrapper) free(top_wrapper);
+        if (bottom_window) free(bottom_window);
+        return NULL;
+    }
+
+    top_wrapper->split_type = root->split_type;
+    top_wrapper->left = root->left;
+    top_wrapper->right = root->right;
+    top_wrapper->buffer = root->buffer;
+    top_wrapper->point = root->point;
+    top_wrapper->scrollx = root->scrollx;
+    top_wrapper->scrolly = root->scrolly;
+    top_wrapper->is_selected = false;
+
+    if (root->left) root->left->parent = top_wrapper;
+    if (root->right) root->right->parent = top_wrapper;
+
+    // Calculate split ratio
+    // In SPLIT_HORIZONTAL: left=top gets (1-ratio), right=bottom gets ratio
+    float split_ratio;
+    float total_height = root->height;
+
+    if (size == 0) {
+        split_ratio = 0.5f;  // 50/50
+    } else {
+        // Bottom window gets 'size' lines PLUS modeline
+        // Size is the number of text lines, but window also needs space for modeline
+        float bottom_height = ((float)size + 1.0f) * selected_frame->line_height;
+        split_ratio = bottom_height / total_height;
+    }
+
+    // Clamp split ratio
+    if (split_ratio < 0.1f) split_ratio = 0.1f;
+    if (split_ratio > 0.9f) split_ratio = 0.9f;
+
+    root->split_type = SPLIT_HORIZONTAL;
+    root->left = top_wrapper;
+    root->right = bottom_window;
+    root->split_ratio = split_ratio;
+
+    top_wrapper->parent = root;
+    bottom_window->parent = root;
+
+    selected_frame->wm.window_count++;
+    wm_recalculate_layout();
+
+    selected_frame->wm.selected = original_selected;
+    current_buffer = original_selected->buffer;
+    current_buffer->pt = original_selected->point;
+
+    return bottom_window;
 }
 
 // TODO Implement window_splittable_p and use it in those function
@@ -1885,8 +1947,6 @@ void move_to_window_line_top_bottom() {
     argument_manually_set = saved_manually_set;
 }
 
-#include "edit.h"
-
 // Find which window contains the given screen coordinates
 static Window* find_window_at_point_recursive(Window *win, float x, float y) {
     if (!win) return NULL;
@@ -2175,4 +2235,31 @@ SCM scm_window_min_pixel_height(SCM window_obj) {
     float min_height = (float)min_lines * selected_frame->line_height;
 
     return scm_from_double(min_height);
+}
+
+static SCM scm_split_root_window_below(SCM size) {
+    size_t size_val = 0;  // Default: 50/50 split
+
+    if (!SCM_UNBNDP(size)) {
+        if (!scm_is_integer(size)) {
+            scm_wrong_type_arg("split-root-window-below", 1, size);
+        }
+        int temp = scm_to_int(size);
+        if (temp < 0) {
+            scm_out_of_range("split-root-window-below", size);
+        }
+        size_val = (size_t)temp;
+    }
+
+    Window *win = split_root_window_below(size_val);
+
+    if (win) {
+        return get_or_make_window_object(win);
+    }
+
+    return SCM_BOOL_F;
+}
+
+void init_wm_bindings(void) {
+    scm_c_define_gsubr("split-root-window-below", 0, 1, 0, scm_split_root_window_below);
 }

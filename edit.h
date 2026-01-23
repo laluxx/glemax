@@ -44,7 +44,6 @@ void delete_blank_lines();
 void back_to_indentation();
 void delete_indentation();
 
-
 void set_mark_command();
 void set_mark(size_t pos);
 void activate_mark();

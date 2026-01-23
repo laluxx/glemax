@@ -26,11 +26,11 @@ static BaseFace *base_faces = NULL;
 
 void init_themes(void) {
     if (theme_cache) return;
-    
+
     theme_cache = calloc(1, sizeof(ThemeCache));
     theme_cache->themes = NULL;
     theme_cache->enabled_themes = SCM_EOL;
-    
+
     // Save base theme snapshot
     if (face_cache) {
         base_faces = calloc(face_cache->count, sizeof(BaseFace));
@@ -53,7 +53,7 @@ void init_themes(void) {
             }
         }
     }
-    
+
     // Initialize base colors from default face
     Face *default_face = get_face(FACE_DEFAULT);
     if (default_face) {
@@ -64,20 +64,20 @@ void init_themes(void) {
         theme_cache->base_bg = (Color){1, 1, 1, 1};
         theme_cache->base_fg = (Color){0, 0, 0, 1};
     }
-    
+
     // Protect enabled_themes from GC
     scm_gc_protect_object(theme_cache->enabled_themes);
 }
 
 void free_themes(void) {
     if (!theme_cache) return;
-    
+
     scm_gc_unprotect_object(theme_cache->enabled_themes);
-    
+
     Theme *theme = theme_cache->themes;
     while (theme) {
         Theme *next = theme->next;
-        
+
         // Free face specs
         FaceSpec *spec = theme->face_specs;
         while (spec) {
@@ -86,16 +86,16 @@ void free_themes(void) {
             free(spec);
             spec = next_spec;
         }
-        
+
         free(theme->name);
         if (theme->description) free(theme->description);
         free(theme);
         theme = next;
     }
-    
+
     free(theme_cache);
     theme_cache = NULL;
-    
+
     if (base_faces) {
         free(base_faces);
         base_faces = NULL;
@@ -104,7 +104,7 @@ void free_themes(void) {
 
 Theme *get_theme(const char *name) {
     if (!theme_cache || !name) return NULL;
-    
+
     Theme *theme = theme_cache->themes;
     while (theme) {
         if (strcmp(theme->name, name) == 0) {
@@ -112,13 +112,13 @@ Theme *get_theme(const char *name) {
         }
         theme = theme->next;
     }
-    
+
     return NULL;
 }
 
 void register_theme(const char *name, const char *description) {
     if (!theme_cache) init_themes();
-    
+
     // Check if theme already exists
     Theme *existing = get_theme(name);
     if (existing) {
@@ -131,18 +131,18 @@ void register_theme(const char *name, const char *description) {
             spec = next;
         }
         existing->face_specs = NULL;
-        
+
         if (existing->description) free(existing->description);
         existing->description = description ? strdup(description) : NULL;
         return;
     }
-    
+
     // Create new theme
     Theme *theme = calloc(1, sizeof(Theme));
     theme->name = strdup(name);
     theme->description = description ? strdup(description) : NULL;
     theme->face_specs = NULL;
-    
+
     // Add to linked list
     theme->next = theme_cache->themes;
     theme_cache->themes = theme;
@@ -151,7 +151,7 @@ void register_theme(const char *name, const char *description) {
 // Reset all faces to base theme, then apply all enabled themes in order
 static void reapply_all_themes(void) {
     if (!theme_cache || !face_cache || !base_faces) return;
-    
+
     // Step 1: Reset all faces to base theme
     for (int i = 0; i < face_cache->count; i++) {
         Face *face = face_cache->faces[i];
@@ -171,7 +171,7 @@ static void reapply_all_themes(void) {
             face->inherit_from = base_faces[i].inherit_from;
         }
     }
-    
+
     // Step 2: Apply each enabled theme in order (from oldest to newest)
     // We need to reverse the list since it's stored newest-first
     SCM reversed = SCM_EOL;
@@ -180,15 +180,15 @@ static void reapply_all_themes(void) {
         reversed = scm_cons(scm_car(themes), reversed);
         themes = scm_cdr(themes);
     }
-    
+
     // Now apply themes from oldest to newest
     while (!scm_is_null(reversed)) {
         SCM theme_name_scm = scm_car(reversed);
-        
+
         // Convert symbol to string
         SCM theme_name_str = scm_symbol_to_string(theme_name_scm);
         char *theme_name = scm_to_locale_string(theme_name_str);
-        
+
         Theme *theme = get_theme(theme_name);
         if (theme) {
             FaceSpec *spec = theme->face_specs;
@@ -207,7 +207,7 @@ static void reapply_all_themes(void) {
                             face->bg_set = false;
                         }
                     }
-                    
+
                     // Then apply explicit properties (these override inheritance)
                     if (spec->has_fg) {
                         face->fg = spec->fg;
@@ -217,7 +217,7 @@ static void reapply_all_themes(void) {
                         face->bg = spec->bg;
                         face->bg_set = true;
                     }
-                    
+
                     // Apply text attributes
                     if (spec->bold)
                         face->bold = true;
@@ -246,7 +246,7 @@ static void reapply_all_themes(void) {
                     if (spec->has_extend) {
                         face->extend = spec->extend;
                     }
-                    
+
                     // UPDATE THE FONT if bold or italic changed
                     if (spec->bold || spec->italic) {
                         face->font = get_font_variant(face->bold, face->italic);
@@ -270,58 +270,74 @@ static void reapply_all_themes(void) {
 bool load_theme(const char *name) {
     char *theme_name = NULL;
     bool should_free = false;
-    
+
     if (name == NULL || *name == '\0') {
-        // Interactive mode - prompt user for theme name
-        // TODO: This could show a list of available themes
-        theme_name = read_from_minibuffer("Load theme: ", NULL);
+        // Interactive mode - prompt with completion
+        SCM available_themes_fn = scm_c_lookup("custom-available-themes");
+        SCM available_themes = SCM_EOL;
+        if (scm_is_true(scm_variable_bound_p(available_themes_fn))) {
+            available_themes = scm_call_0(scm_variable_ref(available_themes_fn));
+        }
+
+        if (scm_is_null(available_themes)) {
+            message("No themes available");
+            return false;
+        }
+
+        // Use 'custom-theme-history for themes
+        SCM hist = scm_from_locale_symbol("custom-theme-history");
+        theme_name = read_from_minibuffer_with_completion(
+            "Load custom theme: ",
+            NULL,
+            available_themes,
+            SCM_BOOL_T,
+            hist);
+
         should_free = true;
-        
+
         if (!theme_name || !*theme_name) {
             if (theme_name) free(theme_name);
             return false;
         }
     } else {
-        // Programmatic mode - use provided name
         theme_name = (char*)name;
     }
-    
+
     if (!theme_cache) init_themes();
-    
+
     Theme *theme = get_theme(theme_name);
     if (!theme) {
         message("Unknown theme: %s", theme_name);
         if (should_free) free(theme_name);
         return false;
     }
-    
-    // Enable the theme (applies it and tracks it)
+
     enable_theme(theme_name);
-    
+
     if (should_free) free(theme_name);
     return true;
 }
 
 void enable_theme(const char *name) {
     if (!theme_cache) init_themes();
-    
+
     // Use symbol, not string - matches Emacs behavior
     SCM name_scm = scm_from_locale_symbol(name);
-    
+
     // Check if already enabled
     SCM pos = scm_member(name_scm, theme_cache->enabled_themes);
     if (scm_is_true(pos)) {
         return;  // Already enabled
     }
-    
+
     // Add to enabled themes list (newest at front)
     scm_gc_unprotect_object(theme_cache->enabled_themes);
     theme_cache->enabled_themes = scm_cons(name_scm, theme_cache->enabled_themes);
     scm_gc_protect_object(theme_cache->enabled_themes);
-    
+
     // Reapply all themes in correct order
     reapply_all_themes();
-    
+
     // Update base colors from default face
     Face *default_face = get_face(FACE_DEFAULT);
     if (default_face) {
@@ -333,12 +349,27 @@ void enable_theme(const char *name) {
 bool disable_theme(const char *name) {
     char *theme_name = NULL;
     bool should_free = false;
-    
+
     if (name == NULL || *name == '\0') {
-        // Interactive mode - prompt user for theme name
-        theme_name = read_from_minibuffer("Disable theme: ", NULL);
+        // Interactive mode - get list of enabled themes
+        if (!theme_cache) {
+            message("No themes are currently enabled");
+            return false;
+        }
+
+        SCM enabled_themes = theme_cache->enabled_themes;
+        if (scm_is_null(enabled_themes)) {
+            message("No themes are currently enabled");
+            return false;
+        }
+
+        // Prompt with completion from enabled themes
+        // Use 'custom-theme-history for consistency with load-theme
+        SCM hist = scm_from_locale_symbol("custom-theme-history");
+        theme_name = read_from_minibuffer_with_completion(
+            "Disable theme: ", NULL, enabled_themes, SCM_BOOL_F, hist);
         should_free = true;
-        
+
         if (!theme_name || !*theme_name) {
             if (theme_name) free(theme_name);
             return false;
@@ -347,38 +378,37 @@ bool disable_theme(const char *name) {
         // Programmatic mode - use provided name
         theme_name = (char*)name;
     }
-    
+
     if (!theme_cache) {
         if (should_free) free(theme_name);
         return false;
     }
-    
+
     // Use symbol to match enable_theme and Emacs behavior
     SCM name_scm = scm_from_locale_symbol(theme_name);
-    
+
     // Check if theme is actually enabled before disabling
     SCM was_enabled = scm_member(name_scm, theme_cache->enabled_themes);
-    
     if (scm_is_false(was_enabled)) {
         message("Theme '%s' is not currently enabled", theme_name);
         if (should_free) free(theme_name);
         return false;
     }
-    
+
     scm_gc_unprotect_object(theme_cache->enabled_themes);
     theme_cache->enabled_themes = scm_delete(name_scm, theme_cache->enabled_themes);
     scm_gc_protect_object(theme_cache->enabled_themes);
-    
+
     // Reapply remaining themes (or reset to base if none left)
     reapply_all_themes();
-    
+
     // Update base colors from default face
     Face *default_face = get_face(FACE_DEFAULT);
     if (default_face) {
         theme_cache->base_bg = default_face->bg;
         theme_cache->base_fg = default_face->fg;
     }
-    
+
     message("Disabled theme: %s", theme_name);
     if (should_free) free(theme_name);
     return true;
@@ -386,14 +416,14 @@ bool disable_theme(const char *name) {
 
 void disable_all_themes(void) {
     if (!theme_cache) return;
-    
+
     scm_gc_unprotect_object(theme_cache->enabled_themes);
     theme_cache->enabled_themes = SCM_EOL;
     scm_gc_protect_object(theme_cache->enabled_themes);
-    
+
     // Reset to base theme
     reapply_all_themes();
-    
+
     // Update base colors from default face
     Face *default_face = get_face(FACE_DEFAULT);
     if (default_face) {
@@ -418,19 +448,19 @@ static SCM scm_deftheme(SCM name, SCM description) {
     if (!scm_is_string(name) && !scm_is_symbol(name)) {
         scm_wrong_type_arg("deftheme", 1, name);
     }
-    
+
     char *theme_name = scm_to_c_string(name);
     char *theme_desc = NULL;
-    
+
     if (!SCM_UNBNDP(description) && scm_is_string(description)) {
         theme_desc = scm_to_locale_string(description);
     }
-    
+
     register_theme(theme_name, theme_desc);
-    
+
     free(theme_name);
     if (theme_desc) free(theme_desc);
-    
+
     return SCM_UNSPECIFIED;
 }
 
@@ -438,18 +468,18 @@ static SCM scm_custom_theme_set_faces(SCM theme_name, SCM rest) {
     if (!scm_is_string(theme_name) && !scm_is_symbol(theme_name)) {
         scm_wrong_type_arg("custom-theme-set-faces", 1, theme_name);
     }
-    
+
     char *name = scm_to_c_string(theme_name);
-    
+
     Theme *theme = get_theme(name);
     if (!theme) {
         register_theme(name, NULL);
         theme = get_theme(name);
     }
     free(name);
-    
+
     if (!theme) return SCM_BOOL_F;
-    
+
     // Clear existing face specs
     FaceSpec *spec = theme->face_specs;
     while (spec) {
@@ -459,30 +489,30 @@ static SCM scm_custom_theme_set_faces(SCM theme_name, SCM rest) {
         spec = next;
     }
     theme->face_specs = NULL;
-    
+
     // Process each face specification
     while (!scm_is_null(rest)) {
         SCM face_spec = scm_car(rest);
         rest = scm_cdr(rest);
-        
+
         if (!scm_is_pair(face_spec)) {
             continue;
         }
-        
+
         // Extract face name
         SCM face_name_scm = scm_car(face_spec);
         char *face_name = scm_to_c_string(face_name_scm);
         if (!face_name) {
             continue;
         }
-        
+
         // Allocate FaceSpec
         FaceSpec *fspec = calloc(1, sizeof(FaceSpec));
         if (!fspec) {
             free(face_name);
             continue;
         }
-        
+
         fspec->face_name = strdup(face_name);
         fspec->has_fg = false;
         fspec->has_bg = false;
@@ -496,34 +526,34 @@ static SCM scm_custom_theme_set_faces(SCM theme_name, SCM rest) {
 
         // Navigate: (face-name ((t (:foreground ...))))
         SCM rest_of_spec = scm_cdr(face_spec);
-        
+
         if (scm_is_pair(rest_of_spec)) {
             SCM outer_list = scm_car(rest_of_spec);
-            
+
             if (scm_is_pair(outer_list)) {
                 SCM display_spec = scm_car(outer_list);
-                
+
                 if (scm_is_pair(display_spec)) {
                     SCM properties_list = scm_cdr(display_spec);
-                    
+
                     if (scm_is_pair(properties_list)) {
                         SCM plist = scm_car(properties_list);
-                        
+
                         // Parse property list
                         while (scm_is_pair(plist)) {
                             SCM key = scm_car(plist);
                             plist = scm_cdr(plist);
-                            
+
                             if (!scm_is_pair(plist)) {
                                 break;
                             }
-                            
+
                             SCM value = scm_car(plist);
                             plist = scm_cdr(plist);
-                            
+
                             // Extract key name
                             char *key_name = NULL;
-                            
+
                             if (scm_is_keyword(key)) {
                                 SCM key_sym = scm_keyword_to_symbol(key);
                                 SCM key_str = scm_symbol_to_string(key_sym);
@@ -531,7 +561,7 @@ static SCM scm_custom_theme_set_faces(SCM theme_name, SCM rest) {
                             } else if (scm_is_symbol(key)) {
                                 SCM key_str = scm_symbol_to_string(key);
                                 char *raw_name = scm_to_locale_string(key_str);
-                                
+
                                 if (raw_name && raw_name[0] == ':') {
                                     key_name = strdup(raw_name + 1);
                                     free(raw_name);
@@ -539,11 +569,11 @@ static SCM scm_custom_theme_set_faces(SCM theme_name, SCM rest) {
                                     key_name = raw_name;
                                 }
                             }
-                            
+
                             if (!key_name) {
                                 continue;
                             }
-                            
+
                             // Handle properties
                             if (strcmp(key_name, "foreground") == 0) {
                                 if (scm_is_string(value)) {
@@ -638,27 +668,27 @@ static SCM scm_custom_theme_set_faces(SCM theme_name, SCM rest) {
                                 fspec->extend = scm_is_true(value);
                                 fspec->has_extend = true;
                             }
-                            
+
                             free(key_name);
                         }
                     }
                 }
             }
         }
-        
+
         // Add to theme
         fspec->next = theme->face_specs;
         theme->face_specs = fspec;
-        
+
         free(face_name);
     }
-    
+
     return SCM_UNSPECIFIED;
 }
 
 static SCM scm_load_theme(SCM name) {
     char *theme_name = NULL;
-    
+
     // Check if name argument was provided
     if (!SCM_UNBNDP(name)) {
         if (!scm_is_symbol(name)) {
@@ -666,11 +696,11 @@ static SCM scm_load_theme(SCM name) {
         }
         theme_name = scm_to_locale_string(scm_symbol_to_string(name));
     }
-    
+
     bool success = load_theme(theme_name);
-    
+
     if (theme_name) free(theme_name);
-    
+
     return scm_from_bool(success);
 }
 
@@ -678,17 +708,17 @@ static SCM scm_enable_theme(SCM name) {
     if (!scm_is_string(name) && !scm_is_symbol(name)) {
         scm_wrong_type_arg("enable-theme", 1, name);
     }
-    
+
     char *theme_name = scm_to_c_string(name);
     enable_theme(theme_name);
     free(theme_name);
-    
+
     return SCM_UNSPECIFIED;
 }
 
 static SCM scm_disable_theme(SCM name) {
     char *theme_name = NULL;
-    
+
     // Check if name argument was provided
     if (!SCM_UNBNDP(name)) {
         // Only accept symbols
@@ -699,26 +729,26 @@ static SCM scm_disable_theme(SCM name) {
         SCM name_str = scm_symbol_to_string(name);
         theme_name = scm_to_locale_string(name_str);
     }
-    
+
     bool success = disable_theme(theme_name);
-    
+
     if (theme_name) free(theme_name);
-    
+
     return scm_from_bool(success);
 }
 
 static SCM scm_custom_available_themes(void) {
     if (!theme_cache) return SCM_EOL;
-    
+
     SCM result = SCM_EOL;
     Theme *theme = theme_cache->themes;
-    
+
     while (theme) {
         SCM name = scm_from_locale_symbol(theme->name);
         result = scm_cons(name, result);
         theme = theme->next;
     }
-    
+
     return result;
 }
 

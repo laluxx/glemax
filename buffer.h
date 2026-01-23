@@ -1,5 +1,7 @@
 #pragma once
 #include "rope.h"
+#include "textprop.h"
+#include "treesit.h"
 #include <obsidian/obsidian.h>
 #include <sys/types.h>
 
@@ -16,9 +18,6 @@ typedef struct {
     bool active;
 } Region;
 
-#include "textprop.h"
-#include "treesit.h"
-
 typedef struct Buffer {
     struct Buffer *next; // Next buffer in circular list
     struct Buffer *prev; // Previous buffer in circular list
@@ -29,9 +28,9 @@ typedef struct Buffer {
     Cursor cursor;
     size_t pt;
     Region region;
-    TextProp *props;    
+    TextProp *props;
     SCM local_var_alist; // Alist of (SYMBOL . VALUE) pairs
-    KeyChordMap *keymap;  // Buffer-local keymap (can be NULL)
+    KeyChordMap *keymap; // Buffer-local keymap (can be NULL)
     TreeSitterState *ts_state; // (NULL if not using tree-sitter)
     bool read_only;
     bool modified;
@@ -85,8 +84,6 @@ SCM kill_local_variable(SCM symbol, Buffer *buf);
 void kill_all_local_variables(Buffer *buf);
 SCM buffer_local_variables(Buffer *buf);
 
-
-
 /// ARG
 void universal_argument();
 void digit_argument();
@@ -97,7 +94,6 @@ void set_prefix_arg(int value);
 bool get_raw_prefix_arg();
 void set_raw_prefix_arg(bool value);
 
-
 extern SCM last_command;
 extern bool last_command_was_kill;
 
@@ -107,7 +103,6 @@ void backward_kill_word();
 
 #include "wm.h"
 typedef struct Window Window;
-
 
 bool is_pair(uint32_t left, uint32_t right);
 

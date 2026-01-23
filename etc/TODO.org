@@ -1,0 +1,8 @@
+#+title: Stuff that I have TODO
+#+STARTUP: show2levels
+
+
+* Ideas
+** TODO Line numbers [0/2]
+   - [ ] display-line-numbers-mode
+   - [ ] if there is the same line N times show 1..N in the line numbers until the repetition ends (with a different face).

@@ -17,11 +17,11 @@ typedef struct {
     TSTree *tree;
     const TSLanguage *language;
     char *language_name;
-    
+
     // Highlighting query
     TSQuery *hl_query;
     TSQueryCursor *hl_cursor;
-    
+
     // Track last edit for incremental parsing
     size_t last_edit_pos;
     size_t last_edit_old_end;
@@ -49,9 +49,9 @@ void treesit_parser_set_language(TreeSitterState *state, const char *lang_name);
 
 // Parsing functions
 bool treesit_parse_buffer(Buffer *buf);
-void treesit_update_tree(Buffer *buf, 
-                         size_t start_byte, 
-                         size_t old_end_byte, 
+void treesit_update_tree(Buffer *buf,
+                         size_t start_byte,
+                         size_t old_end_byte,
                          size_t new_end_byte,
                          TSPoint start_point,
                          TSPoint old_end_point,

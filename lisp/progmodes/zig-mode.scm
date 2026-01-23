@@ -283,7 +283,7 @@
   "Initialize tree-sitter for Zig mode."
   (when (treesit-language-available? 'zig)
     (message "Setting up tree-sitter for Zig...")
-    
+
     ;; Create parser for current buffer
     (if (treesit-parser-create 'zig)
         (begin

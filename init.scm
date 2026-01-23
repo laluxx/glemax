@@ -99,20 +99,20 @@
 
 (define (setup-self-insert-keys)
   "Bind all printable characters to self-insert-command in global keymap."
-  
+
   ;; Printable ASCII characters (space through tilde)
   (let loop ((code 32))  ; Start from space (ASCII 32)
     (when (<= code 126)  ; Up to ~ (ASCII 126)
       (keymap-global-set (string (integer->char code)) self-insert-command)
       (loop (+ code 1))))
-  
+
   ;; Common extended ASCII / Latin-1 printable characters (160-255)
   ;; These include accented characters, currency symbols, etc.
   (let loop ((code 160))
     (when (<= code 255)
       (keymap-global-set (string (integer->char code)) self-insert-command)
       (loop (+ code 1))))
-  
+
   ;; TAB as self-insert (some modes override this for indentation)
   (keymap-global-set "TAB" self-insert-command)
   (keymap-global-set "SPC" self-insert-command))
@@ -148,6 +148,11 @@
 ;; C-x [   - backward-page
 ;; C-x C-p - mark-page
 
+
+;; TODO SUPPORT ME!
+(define load-theme-disable-other-themes #t)
+(set-var-doc! load-theme-disable-other-themes
+"If #t disable all other themes after loading a theme.")
 
 
 (define eval-display-prompt #t)
@@ -203,14 +208,9 @@ TODO When using this, you might also want to disable highlighting of
 clickable text.  See `mouse-highlight'.")
 
 
-
 (define pointer-visible #t)
 (set-var-doc! make-pointer-invisible
 "If #t, the mouse pointer is currently visible.")
-
-
-
-
 
 
 (define blink-cursor-blinks 10)
@@ -611,7 +611,7 @@ A non #f setting overrides the variable `line-move-visual', which see.")
 When truncating is off, long lines are folded."
   (let ((current-val (buffer-local-value 'truncate-lines (current-buffer))))
     (setq truncate-lines (not current-val))
-    (message "Truncate long lines ~a" 
+    (message "Truncate long lines ~a"
              (if (not current-val) "enabled" "disabled"))))
 
 (keymap-global-set "C-x x t" toggle-truncate-lines)
@@ -624,7 +624,7 @@ When truncating is off, long lines are folded."
   "Toggle lerping of scroll for the current buffer."
   (let ((current-val (buffer-local-value 'lerp-scroll (current-buffer))))
     (setq lerp-scroll (not current-val))
-    (message "Lerp scroll ~a" 
+    (message "Lerp scroll ~a"
              (if (not current-val) "enabled" "disabled"))))
 
 (keymap-global-set "C-x x l" toggle-lerp-scroll)
@@ -657,19 +657,19 @@ When truncating is off, long lines are folded."
 (define (test-faces interval-length)
   "Apply error and warning faces alternately across the entire buffer.
 INTERVAL-LENGTH specifies how many characters each face segment should be."
-  
+
   (let ((buffer-size (buffer-size)))
     (let loop ((start-pos 0)
                (use-error? #t))
       (when (< start-pos buffer-size)
         (let ((end-pos (min (+ start-pos interval-length) buffer-size)))
-          (put-text-property start-pos 
-                           end-pos 
-                           'face 
+          (put-text-property start-pos
+                           end-pos
+                           'face
                            (if use-error? 'error 'warning))
           (loop end-pos (not use-error?)))))))
 
 
-(load-theme 'modus-vivendi)
+;; (load-theme 'modus-vivendi)
 (scheme-mode)
 

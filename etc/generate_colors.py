@@ -26,42 +26,42 @@ def main():
         print("Usage: python3 generate_colors.py rgb.txt output_path", file=sys.stderr)
         print("Example: python3 generate_colors.py rgb.txt src/x11_colors", file=sys.stderr)
         sys.exit(1)
-    
+
     rgb_file = sys.argv[1]
     output_base = sys.argv[2]
     header_file = output_base + ".h"
     source_file = output_base + ".c"
-    
+
     colors = []
-    
+
     with open(rgb_file, 'r') as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith('!'):
                 continue
-            
+
             # Parse: "R G B\t\tname" or "R G B  name"
             parts = re.split(r'\s+', line, maxsplit=3)
             if len(parts) < 4:
                 continue
-            
+
             try:
                 r = int(parts[0])
                 g = int(parts[1])
                 b = int(parts[2])
                 name = parts[3]
-                
+
                 # Convert to linear color space
                 r_linear = srgb_to_linear(r)
                 g_linear = srgb_to_linear(g)
                 b_linear = srgb_to_linear(b)
-                
+
                 # Store normalized name for sorting/lookup, original name for display
                 normalized = normalize_name(name)
                 colors.append((normalized, name, r_linear, g_linear, b_linear))
             except (ValueError, IndexError):
                 continue
-    
+
     # Remove exact duplicates only (same RGB values AND same name)
     # Keep all name variations like "ghost white" and "GhostWhite"
     seen = set()
@@ -72,10 +72,10 @@ def main():
         if key not in seen:
             seen.add(key)
             unique_colors.append(color)
-    
+
     # Sort alphabetically by original name (case-insensitive) for binary search
     unique_colors.sort(key=lambda x: x[1].lower())
-    
+
     # Generate header file
     with open(header_file, 'w') as f:
         f.write("// Generated from rgb.txt - DO NOT EDIT\n")
@@ -90,7 +90,7 @@ def main():
         f.write("const X11Color *lookup_x11_color(const char *name);\n")
         f.write("\n")
         f.write("#endif // X11_COLORS_H\n")
-    
+
     # Generate source file
     with open(source_file, 'w') as f:
         f.write("// Generated from rgb.txt - DO NOT EDIT\n")
@@ -101,17 +101,17 @@ def main():
         basename = os.path.basename(header_file)
         f.write(f'#include "{basename}"\n')
         f.write("\n")
-        
+
         # Find max name length for alignment
         max_name_len = max(len(f'"{name}"') for _, name, _, _, _ in unique_colors)
-        
+
         f.write(f"static const X11Color x11_colors[{len(unique_colors)}] = {{\n")
-        
+
         for _, name, r, g, b in unique_colors:
             name_field = f'"{name}"'
             # Align on commas
             f.write(f'    {{{name_field:<{max_name_len}}, {r:.8f}f, {g:.8f}f, {b:.8f}f}},\n')
-        
+
         f.write("};\n")
         f.write("\n")
         f.write(f"#define X11_COLOR_COUNT {len(unique_colors)}\n")
@@ -125,7 +125,7 @@ def main():
         f.write("    return bsearch(name, x11_colors, X11_COLOR_COUNT,\n")
         f.write("                   sizeof(X11Color), x11_color_compare);\n")
         f.write("}\n")
-    
+
     print(f"Generated {header_file} and {source_file}")
     print(f"Found {len(unique_colors)} unique color names")
 

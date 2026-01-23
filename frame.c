@@ -10,11 +10,10 @@ static SCM frame_object_cache;
 // NOTE Currently we only support one frame
 Frame *selected_frame = NULL;
 
-
 Frame* create_frame(int x, int y, int width, int height) {
     Frame *frame = malloc(sizeof(Frame));
     if (!frame) return NULL;
-    
+
     frame->x = x;
     frame->y = y;
     frame->width = width;
@@ -22,49 +21,49 @@ Frame* create_frame(int x, int y, int width, int height) {
     frame->focused = true;
     frame->left_fringe_width = 8;
     frame->right_fringe_width = 8;
-    
+
     // Get default font metrics
     Face *default_face = get_face(FACE_DEFAULT);
     Font *default_font = get_face_font(default_face);
     frame->line_height = default_font->ascent + default_font->descent;
-    
+
     Character *space = font_get_character(default_font, ' ');
     frame->column_width = space->ax;
-    
+
     // CRITICAL: Initialize saved_config to prevent segfault
     frame->wm.saved_config.windows = NULL;
     frame->wm.saved_config.count = 0;
     frame->wm.minibuffer_active = false;
     frame->wm.previous_window = NULL;
     frame->wm.minibuffer_message_start = 0;
-    
+
     return frame;
 }
 
 void destroy_frame(Frame *frame) {
     if (!frame) return;
-    
+
     // Clean up window manager
     wm_cleanup(&frame->wm);
-    
+
     // Free saved config if it exists
     if (frame->wm.saved_config.windows) {
         free_window_configuration(&frame->wm.saved_config);
     }
-    
+
     free(frame);
 }
 
 static SCM frame_to_scm(Frame *frame) {
     if (!frame) return SCM_BOOL_F;
-    
+
     SCM key = scm_from_uintptr_t((uintptr_t)frame);
     SCM cached = scm_hashq_ref(frame_object_cache, key, SCM_BOOL_F);
-    
+
     if (scm_is_true(cached)) {
         return cached;
     }
-    
+
     SCM obj = scm_make_foreign_object_1(frame_type, frame);
     scm_hashq_set_x(frame_object_cache, key, obj);
     return obj;
@@ -81,18 +80,18 @@ static SCM frame_p(SCM obj) {
 
 void update_frame_resize_mode(Frame *frame) {
     if (!frame) return;
-    
+
     bool resize_pixelwise = scm_get_bool("frame-resize-pixelwise", false);
-    
+
     if (resize_pixelwise) {
         // Pixelwise: set increments to 1
         setWindowResizeIncrements(1, 1, 0, 0);
     } else {
         // Charwise: use actual character dimensions
         setWindowResizeIncrements(
-            frame->column_width, 
-            frame->line_height, 
-            frame->left_fringe_width + frame->right_fringe_width, 
+            frame->column_width,
+            frame->line_height,
+            frame->left_fringe_width + frame->right_fringe_width,
             0
         );
     }
@@ -104,7 +103,6 @@ void set_frame_position(Frame *frame, int x, int y) {
     frame->y = y;
     setWindowPos(context.window, x, y);
 }
-
 
 void debug_print_frame(Frame *frame) {
     printf("Frame {\n");
@@ -129,7 +127,7 @@ size_t frame_char_width(Frame *frame) {
 
 static SCM scm_debug_print_frame(SCM frame_obj) {
     Frame *frame;
-    
+
     if (SCM_UNBNDP(frame_obj)) {
         frame = selected_frame;
     } else {
@@ -138,16 +136,16 @@ static SCM scm_debug_print_frame(SCM frame_obj) {
         }
         frame = scm_to_frame(frame_obj);
     }
-    
+
     if (!frame) return SCM_BOOL_F;
-    
+
     debug_print_frame(frame);
     return SCM_UNSPECIFIED;
 }
 
 static SCM scm_set_frame_position(SCM frame_obj, SCM x_scm, SCM y_scm) {
     Frame *frame;
-    
+
     // If no frame specified, use selected frame
     if (SCM_UNBNDP(frame_obj)) {
         frame = selected_frame;
@@ -157,9 +155,9 @@ static SCM scm_set_frame_position(SCM frame_obj, SCM x_scm, SCM y_scm) {
         }
         frame = scm_to_frame(frame_obj);
     }
-    
+
     if (!frame) return SCM_BOOL_F;
-    
+
     int x = scm_to_int(x_scm);
     int y = scm_to_int(y_scm);
     set_frame_position(frame, x, y);
@@ -172,7 +170,7 @@ static SCM scm_selected_frame(void) {
 
 static SCM scm_frame_focused_p(SCM frame_obj) {
     Frame *frame;
-    
+
     if (SCM_UNBNDP(frame_obj)) {
         frame = selected_frame;
     } else {
@@ -181,14 +179,14 @@ static SCM scm_frame_focused_p(SCM frame_obj) {
         }
         frame = scm_to_frame(frame_obj);
     }
-    
+
     if (!frame) return SCM_BOOL_F;
     return scm_from_bool(frame->focused);
 }
 
 static SCM scm_frame_char_height(SCM frame_obj) {
     Frame *frame;
-    
+
     if (SCM_UNBNDP(frame_obj)) {
         frame = selected_frame;
     } else {
@@ -197,15 +195,15 @@ static SCM scm_frame_char_height(SCM frame_obj) {
         }
         frame = scm_to_frame(frame_obj);
     }
-    
+
     if (!frame) return SCM_BOOL_F;
-    
+
     return scm_from_size_t(frame_char_height(frame));
 }
 
 static SCM scm_frame_char_width(SCM frame_obj) {
     Frame *frame;
-    
+
     if (SCM_UNBNDP(frame_obj)) {
         frame = selected_frame;
     } else {
@@ -214,9 +212,9 @@ static SCM scm_frame_char_width(SCM frame_obj) {
         }
         frame = scm_to_frame(frame_obj);
     }
-    
+
     if (!frame) return SCM_BOOL_F;
-    
+
     return scm_from_size_t(frame_char_width(frame));
 }
 
@@ -225,12 +223,11 @@ void init_frame_bindings(void) {
     SCM name = scm_from_utf8_symbol("frame");
     SCM slots = scm_list_1(scm_from_utf8_symbol("data"));
     frame_type = scm_make_foreign_object_type(name, slots, NULL);
-    
+
     // Initialize frame object cache
     frame_object_cache = scm_make_hash_table(scm_from_int(4));
     scm_gc_protect_object(frame_object_cache);
 
-    // Register Scheme functions
     scm_c_define_gsubr("frame?",             1, 0, 0, frame_p);
     scm_c_define_gsubr("selected-frame",     0, 0, 0, scm_selected_frame);
     scm_c_define_gsubr("frame-focused?",     0, 1, 0, scm_frame_focused_p);

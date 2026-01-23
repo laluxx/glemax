@@ -21,7 +21,7 @@ struct Window {
     Window *parent;
     Window *left;   // Left child for vertical split, top for horizontal
     Window *right;  // Right child for vertical split, bottom for horizontal
-    
+
     SplitType split_type;
     Buffer *buffer;
     size_t point;
@@ -57,7 +57,7 @@ typedef struct {
 
 // TODO Minibuffer struct inside WindowManager
 typedef struct {
-    Window *root;    
+    Window *root;
     Window *selected;
     Window *minibuffer_window;
     Window *previous_window;   // NOTE Only tracked for the modeline we might want to change name
@@ -73,6 +73,7 @@ void wm_cleanup(WindowManager *wm);
 
 void split_window_below();
 void split_window_right();
+Window* split_root_window_below(size_t size);
 bool window_try_horizontal_split(Window *win);
 bool window_try_vertical_split(Window *win);
 Window* split_window_sensibly();
@@ -144,3 +145,5 @@ void mouse_set_point(Window *window, int x, int y);
 
 SCM scm_window_min_pixel_height(SCM window_obj);
 SCM scm_window_min_pixel_width(SCM window_obj);
+
+void init_wm_bindings(void);

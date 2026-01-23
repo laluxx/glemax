@@ -66,6 +66,17 @@ static struct {
     {"box",                                 FACE_BOX},
     {"region",                              FACE_REGION},
 
+    // TODO Support those faces in all themes!
+
+    {"shadow",                              FACE_SHADOW},
+    {"highlight",                           FACE_HIGHLIGHT},
+    {"help-key-binding",                    FACE_HELP_KEY_BINDING},
+    {"completions-highlight",               FACE_COMPLETIONS_HIGHLIGHT},
+    {"completions-annotations",             FACE_COMPLETIONS_ANNOTATIONS},
+    {"completions-common-part",             FACE_COMPLETIONS_COMMON_PART},
+    {"completions-first-difference",        FACE_COMPLETIONS_FIRST_DIFFERENCE},
+
+
     {NULL, -1}
 };
 
@@ -75,28 +86,28 @@ Font *fontconfig_load_font(const char *family, int size, bool bold, bool italic)
     FcPatternAddDouble(pattern, FC_SIZE, (double)size);
     FcPatternAddInteger(pattern, FC_WEIGHT, bold ? FC_WEIGHT_BOLD : FC_WEIGHT_REGULAR);
     FcPatternAddInteger(pattern, FC_SLANT, italic ? FC_SLANT_ITALIC : FC_SLANT_ROMAN);
-    
+
     FcConfigSubstitute(NULL, pattern, FcMatchPattern);
     FcDefaultSubstitute(pattern);
-    
+
     FcResult result;
     FcPattern *match = FcFontMatch(NULL, pattern, &result);
     FcPatternDestroy(pattern);
-    
+
     if (!match) {
         fprintf(stderr, "Failed to match font: %s\n", family);
         return NULL;
     }
-    
+
     FcChar8 *file = NULL;
     if (FcPatternGetString(match, FC_FILE, 0, &file) != FcResultMatch) {
         FcPatternDestroy(match);
         return NULL;
     }
-    
+
     Font *font = load_font((const char*)file, size);
     FcPatternDestroy(match);
-    
+
     return font;
 }
 
@@ -128,7 +139,7 @@ Font *get_font_variant(bool bold, bool italic) {
 static Face *create_face(int id) {
     Face *face = calloc(1, sizeof(Face));
     if (!face) return NULL;
-    
+
     face->id = id;
     face->fg = (Color){0, 0, 0, 1};  // Default black
     face->bg = (Color){1, 1, 1, 1};  // Default white
@@ -146,26 +157,26 @@ static Face *create_face(int id) {
     face->underline_color = (Color){0, 0, 0, 1};      // Default to black
     face->strike_through_color = (Color){0, 0, 0, 1}; // Default to black
     face->box_color = (Color){0, 0, 0, 1};            // Default to black
-    
+
     return face;
 }
 
 void resolve_face_inheritance(void) {
     if (!face_cache) return;
-    
+
     Face *default_face = get_face(FACE_DEFAULT);
     if (!default_face) return;
-    
+
     // Resolve all faces, handling inheritance chains
     for (int i = 0; i < face_cache->count; i++) {
         Face *face = face_cache->faces[i];
         if (!face || face->id == FACE_DEFAULT) continue;
-        
+
         // Follow inheritance chain to resolve colors
         Face *inherit_face = face;
         int depth = 0;
         const int MAX_DEPTH = 10; // Prevent infinite loops
-        
+
         // Resolve foreground
         if (!face->fg_set) {
             inherit_face = face;
@@ -181,7 +192,7 @@ void resolve_face_inheritance(void) {
                 face->fg = default_face->fg;
             }
         }
-        
+
         // Resolve background
         if (!face->bg_set) {
             inherit_face = face;
@@ -197,24 +208,24 @@ void resolve_face_inheritance(void) {
                 face->bg = default_face->bg;
             }
         }
-        
+
         // If underline is enabled but color is unset (still black), default to fg
-        if (face->underline && 
-            face->underline_color.r == 0 && face->underline_color.g == 0 && 
+        if (face->underline &&
+            face->underline_color.r == 0 && face->underline_color.g == 0 &&
             face->underline_color.b == 0) {
             face->underline_color = face->fg;
         }
-        
+
         // Same for strike-through
-        if (face->strike_through && 
-            face->strike_through_color.r == 0 && face->strike_through_color.g == 0 && 
+        if (face->strike_through &&
+            face->strike_through_color.r == 0 && face->strike_through_color.g == 0 &&
             face->strike_through_color.b == 0) {
             face->strike_through_color = face->fg;
         }
-        
+
         // Same for box
-        if (face->box && 
-            face->box_color.r == 0 && face->box_color.g == 0 && 
+        if (face->box &&
+            face->box_color.r == 0 && face->box_color.g == 0 &&
             face->box_color.b == 0) {
             face->box_color = face->fg;
         }
@@ -226,24 +237,24 @@ void resolve_face_inheritance(void) {
 // TODO Manually setting bg_set and fg_set is kinda tedious
 void init_faces(void) {
     if (face_cache) return;
-    
+
     face_cache = calloc(1, sizeof(FaceCache));
     face_cache->size = FACE_BUILTIN_COUNT;
     face_cache->count = 0;
     face_cache->faces = calloc(face_cache->size, sizeof(Face*));
-    
+
     // Load the regular font variant
     Font *default_font = get_font_variant(false, false);
     if (!default_font) {
         fprintf(stderr, "Failed to load default font\n");
         return;
     }
-    
+
     // Create all builtin faces
     for (int i = 0; i < FACE_BUILTIN_COUNT; i++) {
         Face *face = create_face(i);
         face->font = default_font;
-        
+
         // Set base theme
         switch (i) {
             case FACE_DEFAULT:
@@ -251,7 +262,6 @@ void init_faces(void) {
                 face->bg = parse_color("white");
                 face->fg_set = true;
                 face->bg_set = true;
-                /* face->box = true; */
                 break;
             case FACE_BOLD:
                 face->bold = true;
@@ -271,18 +281,22 @@ void init_faces(void) {
                 face->bg = parse_color("grey75");
                 face->fg_set = true;
                 face->bg_set = true;
+                face->box = true;
                 break;
             case FACE_MODE_LINE_ACTIVE:
                 face->fg = parse_color("black");
                 face->bg = parse_color("grey75");
                 face->fg_set = true;
                 face->bg_set = true;
+                face->box = true;
                 break;
             case FACE_MODE_LINE_INACTIVE:
                 face->fg = parse_color("grey20");
                 face->bg = parse_color("grey90");
                 face->fg_set = true;
                 face->bg_set = true;
+                face->box = true;
+                face->box_color = parse_color("grey75");
                 break;
             case FACE_CURSOR:
                 face->bg = parse_color("black");
@@ -439,34 +453,67 @@ void init_faces(void) {
                 face->bg_set = true;
                 face->extend = true;
                 break;
+
+            case FACE_SHADOW:
+                face->fg = parse_color("grey50");
+                face->fg_set = true;
+                break;
+            case FACE_HIGHLIGHT:
+                face->bg = parse_color("DarkSeaGreen2");
+                face->bg_set = true;
+                break;
+            case FACE_HELP_KEY_BINDING:
+                face->fg = parse_color("DarkBlue");
+                face->fg_set = true;
+                face->bg = parse_color("grey96");
+                face->bg_set = true;
+                face->box = true;
+                face->box_color = parse_color("grey80");
+                break;
+            case FACE_COMPLETIONS_HIGHLIGHT:
+                face->inherit_from = FACE_HIGHLIGHT;
+                break;
+            case FACE_COMPLETIONS_ANNOTATIONS:
+                face->inherit_from = FACE_SHADOW;
+                face->italic = true;
+                face->font = get_font_variant(true, true);
+                break;
+            case FACE_COMPLETIONS_COMMON_PART:
+                face->fg = parse_color("blue3");
+                face->fg_set = true;
+                break;
+            case FACE_COMPLETIONS_FIRST_DIFFERENCE:
+                face->bold = true;
+                face->font = get_font_variant(true, false);
+                break;
         }
-        
+
         face_cache->faces[i] = face;
         face_cache->count++;
     }
-    
+
     // Resolve inheritance once during initialization
     resolve_face_inheritance();
 }
 
 void free_faces(void) {
     if (!face_cache) return;
-    
+
     for (int i = 0; i < face_cache->count; i++) {
         free(face_cache->faces[i]);
     }
-    
+
     free(face_cache->faces);
     free(face_cache);
     face_cache = NULL;
-    
+
     // Free cached font variants
     // Note: Don't free the Font* themselves as they may be managed elsewhere
     cached_font_regular = NULL;
     cached_font_bold = NULL;
     cached_font_italic = NULL;
     cached_font_bold_italic = NULL;
-    
+
     FcFini();
 }
 
@@ -480,12 +527,12 @@ Face *get_face(int id) {
 // Get the effective font for a face, considering bold/italic attributes
 Font *get_face_font(Face *face) {
     if (!face) return get_font_variant(false, false);
-    
+
     // If the face has a specific font set, use it
     if (face->font) {
         return face->font;
     }
-    
+
     // Otherwise, get the appropriate variant based on attributes
     return get_font_variant(face->bold, face->italic);
 }
@@ -514,12 +561,12 @@ Color parse_color(const char *str) {
     if (!str || str[0] == '\0') {
         return (Color){0, 0, 0, 1};
     }
-    
+
     // Handle hex colors
     if (str[0] == '#') {
         int r, g, b, a = 255;
         size_t len = strlen(str);
-        
+
         if (len == 9) { // #RRGGBBAA
             sscanf(str, "#%02x%02x%02x%02x", &r, &g, &b, &a);
         } else if (len == 7) { // #RRGGBB
@@ -527,26 +574,26 @@ Color parse_color(const char *str) {
         } else {
             return (Color){0, 0, 0, 1};
         }
-        
+
         float rf = r / 255.0f;
         float gf = g / 255.0f;
         float bf = b / 255.0f;
         float af = a / 255.0f;
-        
+
         // Convert sRGB to linear
         rf = (rf <= 0.04045f) ? rf / 12.92f : powf((rf + 0.055f) / 1.055f, 2.4f);
         gf = (gf <= 0.04045f) ? gf / 12.92f : powf((gf + 0.055f) / 1.055f, 2.4f);
         bf = (bf <= 0.04045f) ? bf / 12.92f : powf((bf + 0.055f) / 1.055f, 2.4f);
-        
+
         return (Color){rf, gf, bf, af};
     }
-    
+
     // Try X11 color lookup (case-insensitive, handles spaces)
     const X11Color *x11_color = lookup_x11_color(str);
     if (x11_color) {
         return (Color){x11_color->r, x11_color->g, x11_color->b, 1.0f};
     }
-    
+
     // Fallback to red to suggest ERROR
     return (Color){1, 0, 0, 1};
 }
@@ -567,11 +614,11 @@ static SCM scm_make_face(SCM name) {
     if (!scm_is_string(name) && !scm_is_symbol(name)) {
         scm_wrong_type_arg("make-face", 1, name);
     }
-    
+
     char *face_name = scm_to_c_string(name);
     int id = face_id_from_name(face_name);
     free(face_name);
-    
+
     return id >= 0 ? SCM_BOOL_T : SCM_BOOL_F;
 }
 
@@ -582,23 +629,23 @@ static SCM scm_set_face_foreground(SCM name, SCM color) {
     if (!scm_is_string(color)) {
         scm_wrong_type_arg("set-face-foreground", 2, color);
     }
-    
+
     char *face_name = scm_to_c_string(name);
     Face *face = get_named_face(face_name);
     free(face_name);
-    
+
     if (face) {
         char *color_str = scm_to_locale_string(color);
         face->fg = parse_color(color_str);
         face->fg_set = true;
         free(color_str);
-        
+
         // Resolve inheritance for dependent faces
         resolve_face_inheritance();
-        
+
         return SCM_BOOL_T;
     }
-    
+
     return SCM_BOOL_F;
 }
 
@@ -609,23 +656,23 @@ static SCM scm_set_face_background(SCM name, SCM color) {
     if (!scm_is_string(color)) {
         scm_wrong_type_arg("set-face-background", 2, color);
     }
-    
+
     char *face_name = scm_to_c_string(name);
     Face *face = get_named_face(face_name);
     free(face_name);
-    
+
     if (face) {
         char *color_str = scm_to_locale_string(color);
         face->bg = parse_color(color_str);
         face->bg_set = true;
         free(color_str);
-        
+
         // Resolve inheritance for dependent faces
         resolve_face_inheritance();
-        
+
         return SCM_BOOL_T;
     }
-    
+
     return SCM_BOOL_F;
 }
 
@@ -633,20 +680,20 @@ static SCM scm_face_foreground(SCM name) {
     if (!scm_is_string(name) && !scm_is_symbol(name)) {
         scm_wrong_type_arg("face-foreground", 1, name);
     }
-    
+
     char *face_name = scm_to_c_string(name);
     Face *face = get_named_face(face_name);
     free(face_name);
-    
+
     if (face) {
         // Return the resolved color (after inheritance)
         Color fg = face->fg;
-        
+
         // Convert back from linear to sRGB for display
         float r = (fg.r <= 0.0031308f) ? fg.r * 12.92f : 1.055f * powf(fg.r, 1.0f/2.4f) - 0.055f;
         float g = (fg.g <= 0.0031308f) ? fg.g * 12.92f : 1.055f * powf(fg.g, 1.0f/2.4f) - 0.055f;
         float b = (fg.b <= 0.0031308f) ? fg.b * 12.92f : 1.055f * powf(fg.b, 1.0f/2.4f) - 0.055f;
-        
+
         char color_str[22];
         snprintf(color_str, sizeof(color_str), "#%02x%02x%02x",
                  (int)(r * 255),
@@ -654,7 +701,7 @@ static SCM scm_face_foreground(SCM name) {
                  (int)(b * 255));
         return scm_from_locale_string(color_str);
     }
-    
+
     return SCM_BOOL_F;
 }
 
@@ -662,20 +709,20 @@ static SCM scm_face_background(SCM name) {
     if (!scm_is_string(name) && !scm_is_symbol(name)) {
         scm_wrong_type_arg("face-background", 1, name);
     }
-    
+
     char *face_name = scm_to_c_string(name);
     Face *face = get_named_face(face_name);
     free(face_name);
-    
+
     if (face) {
         // Return the resolved color (after inheritance)
         Color bg = face->bg;
-        
+
         // Convert back from linear to sRGB for display
         float r = (bg.r <= 0.0031308f) ? bg.r * 12.92f : 1.055f * powf(bg.r, 1.0f/2.4f) - 0.055f;
         float g = (bg.g <= 0.0031308f) ? bg.g * 12.92f : 1.055f * powf(bg.g, 1.0f/2.4f) - 0.055f;
         float b = (bg.b <= 0.0031308f) ? bg.b * 12.92f : 1.055f * powf(bg.b, 1.0f/2.4f) - 0.055f;
-        
+
         char color_str[22];
         snprintf(color_str, sizeof(color_str), "#%02x%02x%02x",
                  (int)(r * 255),
@@ -683,7 +730,7 @@ static SCM scm_face_background(SCM name) {
                  (int)(b * 255));
         return scm_from_locale_string(color_str);
     }
-    
+
     return SCM_BOOL_F;
 }
 
