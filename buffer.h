@@ -29,8 +29,9 @@ typedef struct Buffer {
     size_t pt;
     Region region;
     TextProp *props;
-    SCM local_var_alist; // Alist of (SYMBOL . VALUE) pairs
-    KeyChordMap *keymap; // Buffer-local keymap (can be NULL)
+    SCM local_var_alist;       // Alist of (SYMBOL . VALUE) pairs
+    SCM active_minor_modes;    // List of active minor mode symbols
+    KeyChordMap *keymap;       // Buffer-local keymap (can be NULL)
     TreeSitterState *ts_state; // (NULL if not using tree-sitter)
     bool read_only;
     bool modified;
@@ -83,6 +84,12 @@ bool local_variable_if_set_p(SCM symbol, Buffer *buf);
 SCM kill_local_variable(SCM symbol, Buffer *buf);
 void kill_all_local_variables(Buffer *buf);
 SCM buffer_local_variables(Buffer *buf);
+
+/// Minor modes
+
+void enable_minor_mode(SCM mode_symbol, Buffer *buf);
+void disable_minor_mode(SCM mode_symbol, Buffer *buf);
+bool minor_mode_active_p(SCM mode_symbol, Buffer *buf);
 
 /// ARG
 void universal_argument();

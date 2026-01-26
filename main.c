@@ -13,6 +13,7 @@
 #include "edit.h"
 #include "minibuf.h"
 #include "frame.h"
+#include "glemax.h"
 
 #define ROPE_IMPLEMENTATION
 #include "rope.h"
@@ -872,23 +873,17 @@ void window_pos_callback(int xpos, int ypos) {
     printf("Frame position: %i %i\n", xpos, ypos);
 }
 
-
 static void inner_main (void *data, int argc, char **argv) {
     initWindow(sw, sh, "Glemax");
-
     init_cursors();
-
     registerMouseButtonCallback(mouse_button_callback);
     registerCursorPosCallback(cursor_pos_callback);
     registerWindowResizeCallback(window_resize_callback);
     registerWindowFocusCallback(window_focus_callback);
     registerWindowPosCallback(window_pos_callback);
     registerScrollCallback(scroll_callback);
-
-
     register_after_keychord_hook(after_keychord_hook);
     register_before_keychord_hook(before_keychord_hook);
-
 
     Buffer *scratch_buffer = buffer_create("*scratch*");
     Buffer *minibuf = buffer_create("minibuf");
@@ -900,7 +895,6 @@ static void inner_main (void *data, int argc, char **argv) {
 
     // Create the one and only frame (for now)
     selected_frame = create_frame(0, 0, 800, 600);
-
     init_faces();
     wm_init(&selected_frame->wm, scratch_buffer, minibuf, 0, 0, sw, sh, selected_frame->line_height);
 
@@ -908,23 +902,121 @@ static void inner_main (void *data, int argc, char **argv) {
 
     bool resize_pixelwise = scm_get_bool("frame-resize-pixelwise", false);
     if (!resize_pixelwise) {
-        setWindowResizeIncrements(selected_frame->column_width, selected_frame->line_height, selected_frame->left_fringe_width, selected_frame->right_fringe_width);
+        setWindowResizeIncrements(selected_frame->column_width, selected_frame->line_height,
+                                 selected_frame->left_fringe_width, selected_frame->right_fringe_width);
     }
 
-    while (!windowShouldClose()) {
-        beginFrame();
+    // Timer tracking - call timer-event-handler periodically
+    double last_timer_check = getTime();
 
+    while (!windowShouldClose() && !should_quit) {
+        beginFrame();
         clear_background(face_cache->faces[FACE_DEFAULT]->bg);
         fps(face_cache->faces[FACE_DEFAULT]->font, sw - 400, 200, face_cache->faces[FACE_ERROR]->fg);
         wm_draw(&selected_frame->wm);
-
         endFrame();
-   }
+
+        // Process timers every second
+        double now = getTime();
+        if (now - last_timer_check >= 1.0) {
+            last_timer_check = now;
+
+            // Call timer-event-handler if it exists
+            SCM timer_handler = scm_c_lookup("timer-event-handler");
+            if (scm_is_true(timer_handler)) {
+                SCM func = scm_variable_ref(timer_handler);
+                if (scm_is_true(scm_procedure_p(func))) {
+                    scm_call_0(func);
+                }
+            }
+        }
+    }
+
+    // Run kill-glemax-hook before cleanup
+    SCM hook = scm_c_lookup("kill-glemax-hook");
+    if (scm_is_true(hook)) {
+        SCM hook_val = scm_variable_ref(hook);
+        while (scm_is_pair(hook_val)) {
+            SCM func = scm_car(hook_val);
+            if (scm_is_true(scm_procedure_p(func))) {
+                scm_call_0(func);
+            }
+            hook_val = scm_cdr(hook_val);
+        }
+    }
 
     destroy_frame(selected_frame);
     destroy_all_buffers();
     cleanup(&context);
 }
+
+/* static void inner_main (void *data, int argc, char **argv) { */
+/*     initWindow(sw, sh, "Glemax"); */
+
+/*     init_cursors(); */
+
+/*     registerMouseButtonCallback(mouse_button_callback); */
+/*     registerCursorPosCallback(cursor_pos_callback); */
+/*     registerWindowResizeCallback(window_resize_callback); */
+/*     registerWindowFocusCallback(window_focus_callback); */
+/*     registerWindowPosCallback(window_pos_callback); */
+/*     registerScrollCallback(scroll_callback); */
+
+
+/*     register_after_keychord_hook(after_keychord_hook); */
+/*     register_before_keychord_hook(before_keychord_hook); */
+
+
+/*     Buffer *scratch_buffer = buffer_create("*scratch*"); */
+/*     Buffer *minibuf = buffer_create("minibuf"); */
+/*     Buffer *messages = buffer_create("*Messages*"); */
+
+/*     sh = context.swapChainExtent.height; // TODO move into */
+/*     sw = context.swapChainExtent.width;  // Resize callback */
+/*     printf("sw: %u, sh: %u\n", sw, sh); */
+
+/*     // Create the one and only frame (for now) */
+/*     selected_frame = create_frame(0, 0, 800, 600); */
+
+/*     init_faces(); */
+/*     wm_init(&selected_frame->wm, scratch_buffer, minibuf, 0, 0, sw, sh, selected_frame->line_height); */
+
+/*     lisp_init(); // IMPORTANT After initializing the windowManager */
+
+/*     bool resize_pixelwise = scm_get_bool("frame-resize-pixelwise", false); */
+/*     if (!resize_pixelwise) { */
+/*         setWindowResizeIncrements(selected_frame->column_width, selected_frame->line_height, selected_frame->left_fringe_width, selected_frame->right_fringe_width); */
+/*     } */
+
+/*     while (!windowShouldClose() && !should_quit) { */
+/*         beginFrame(); */
+
+/*         clear_background(face_cache->faces[FACE_DEFAULT]->bg); */
+/*         fps(face_cache->faces[FACE_DEFAULT]->font, sw - 400, 200, face_cache->faces[FACE_ERROR]->fg); */
+/*         wm_draw(&selected_frame->wm); */
+
+/*         endFrame(); */
+/*    } */
+
+/*     // Run kill-glemax-hook */
+/*     SCM hook = scm_c_lookup("kill-glemax-hook"); */
+/*     if (scm_is_true(hook)) { */
+/*         SCM hook_val = scm_variable_ref(hook); */
+/*         // Run each function in the hook list */
+/*         while (scm_is_pair(hook_val)) { */
+/*             SCM func = scm_car(hook_val); */
+/*             if (scm_is_true(scm_procedure_p(func))) { */
+/*                 scm_call_0(func); */
+/*             } */
+/*             hook_val = scm_cdr(hook_val); */
+/*         } */
+/*     } */
+
+
+/*     destroy_frame(selected_frame); */
+/*     destroy_all_buffers(); */
+/*     cleanup(&context); */
+/* } */
 
 int main(int argc, char **argv) {
     scm_boot_guile (argc, argv, inner_main, 0);

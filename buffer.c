@@ -75,6 +75,10 @@ Buffer* buffer_create(const char *name) {
         all_buffers->prev = buffer;
     }
 
+    // Init Minor Modes
+    buffer->active_minor_modes = SCM_EOL;
+    scm_gc_protect_object(buffer->active_minor_modes);
+
     return buffer;
 }
 
@@ -103,7 +107,8 @@ void buffer_destroy(Buffer *buffer) {
 
     // Unprotect the alist
     scm_gc_unprotect_object(buffer->local_var_alist);
-
+    // Unprotect Minor Modes
+    scm_gc_unprotect_object(buffer->active_minor_modes);
 
     // Free buffer-local keymap if it exists
     if (buffer->keymap) {
@@ -173,8 +178,36 @@ void set_buffer(Buffer *buf) {
 
     // Update keymap stack
     keymap_stack_clear();
+
+    // 1. Add buffer-local keymap
     if (buf->keymap) {
         keymap_stack_push(buf->keymap);
+    }
+
+    // 2. Add all active minor mode keymaps
+    SCM modes = buf->active_minor_modes;
+    while (scm_is_pair(modes)) {
+        SCM mode = scm_car(modes);
+
+        // Build keymap variable name
+        char *mode_name = scm_to_locale_string(scm_symbol_to_string(mode));
+        char keymap_name[256];
+        snprintf(keymap_name, sizeof(keymap_name), "%s-map", mode_name);
+        free(mode_name);
+
+        SCM keymap_var = scm_c_lookup(keymap_name);
+
+        if (scm_is_true(keymap_var)) {
+            SCM keymap_val = scm_variable_ref(keymap_var);
+            if (!scm_is_false(keymap_val) && SCM_NIMP(keymap_val)) {
+                KeyChordMap *map = scm_foreign_object_ref(keymap_val, 0);
+                if (map) {
+                    keymap_stack_push(map);
+                }
+            }
+        }
+
+        modes = scm_cdr(modes);
     }
 }
 
@@ -717,6 +750,99 @@ KeyChordMap* current_local_map(Buffer *buf) {
 KeyChordMap* current_global_map(void) {
     return &keymap;
 }
+
+/// Minor modes
+
+void enable_minor_mode(SCM mode_symbol, Buffer *buf) {
+    if (!buf) return;
+
+    // Check if already active
+    if (scm_is_true(scm_memq(mode_symbol, buf->active_minor_modes))) {
+        return;
+    }
+
+    // Add to active list
+    scm_gc_unprotect_object(buf->active_minor_modes);
+    buf->active_minor_modes = scm_cons(mode_symbol, buf->active_minor_modes);
+    scm_gc_protect_object(buf->active_minor_modes);
+
+    // If this is current buffer, update keymap stack
+    if (buf == current_buffer) {
+        // Build keymap variable name: "mode-name-map"
+        char *mode_name = scm_to_locale_string(scm_symbol_to_string(mode_symbol));
+        char keymap_name[256];
+        snprintf(keymap_name, sizeof(keymap_name), "%s-map", mode_name);
+        free(mode_name);
+
+        // Try to lookup the keymap variable
+        SCM keymap_var = scm_c_lookup(keymap_name);
+
+        if (scm_is_true(keymap_var)) {
+            SCM keymap_val = scm_variable_ref(keymap_var);
+            // Check if it's a foreign object (keymap)
+            if (!scm_is_false(keymap_val) && SCM_NIMP(keymap_val)) {
+                // Try to extract as foreign object
+                KeyChordMap *map = scm_foreign_object_ref(keymap_val, 0);
+                if (map) {
+                    keymap_stack_push(map);
+                }
+            }
+        }
+    }
+}
+
+void disable_minor_mode(SCM mode_symbol, Buffer *buf) {
+    if (!buf) return;
+
+    // Remove from active list
+    scm_gc_unprotect_object(buf->active_minor_modes);
+    buf->active_minor_modes = scm_delq(mode_symbol, buf->active_minor_modes);
+    scm_gc_protect_object(buf->active_minor_modes);
+
+    // If this is current buffer, rebuild keymap stack
+    if (buf == current_buffer) {
+        keymap_stack_clear();
+
+        // Re-add buffer-local keymap if it exists
+        if (buf->keymap) {
+            keymap_stack_push(buf->keymap);
+        }
+
+        // Re-add all active minor mode keymaps
+        SCM modes = buf->active_minor_modes;
+        while (scm_is_pair(modes)) {
+            SCM mode = scm_car(modes);
+
+            // Build keymap variable name
+            char *mode_name = scm_to_locale_string(scm_symbol_to_string(mode));
+            char keymap_name[256];
+            snprintf(keymap_name, sizeof(keymap_name), "%s-map", mode_name);
+            free(mode_name);
+
+            SCM keymap_var = scm_c_lookup(keymap_name);
+
+            if (scm_is_true(keymap_var)) {
+                SCM keymap_val = scm_variable_ref(keymap_var);
+                if (!scm_is_false(keymap_val) && SCM_NIMP(keymap_val)) {
+                    KeyChordMap *map = scm_foreign_object_ref(keymap_val, 0);
+                    if (map) {
+                        keymap_stack_push(map);
+                    }
+                }
+            }
+            modes = scm_cdr(modes);
+        }
+    }
+}
+
+bool minor_mode_active_p(SCM mode_symbol, Buffer *buf) {
+    if (!buf) return false;
+    return scm_is_true(scm_memq(mode_symbol, buf->active_minor_modes));
+}
+
+
+/// Draw
+
 
 // Helper function to find the character position at a given scroll offset
 size_t find_start_position(Buffer *buffer, Window *win, float *out_start_y) {

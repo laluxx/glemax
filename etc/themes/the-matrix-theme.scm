@@ -58,6 +58,12 @@
 
   '(minibuffer-prompt                         ((t (:foreground "#00e57a" :weight bold))))
   '(region                                    ((t (:foreground "#00cd6d" :background "#011f11"))))
+
+  '(shadow                                    ((t (:foreground "#00733d"))))
+  '(highlight                                 ((t (:background "#011f11" :underline "#00ff88"))))
+  '(help-key-binding                          ((t (:foreground "#00b25f" :weight bold))))
+  '(completions-highlight                     ((t (:inherit highlight))))
+  '(completions-annotations                   ((t (:inherit shadow :slant italic))))
+  '(completions-common-part                   ((t (:inherit bold)))); TODO Should be inherit from `match'
+  '(completions-first-difference              ((t (:inherit bold))))
 )
-
-

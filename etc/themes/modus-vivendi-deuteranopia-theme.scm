@@ -62,7 +62,7 @@
   '(shadow                                    ((t (:foreground "#989898"))))
   '(highlight                                 ((t (:foreground "#ffffff" :background "#45605e"))))
   '(help-key-binding                          ((t (:foreground "#00bcff"))))
-  '(completions-highlight                     ((t (:inherit highlight))))
+  '(completions-highlight                     ((t (:background "#2f447f" :weight bold))))
   '(completions-annotations                   ((t (:foreground "#9ac8e0"))))
   '(completions-common-part                   ((t (:foreground "#00bcff" :weight bold))))
   '(completions-first-difference              ((t (:foreground "#cabf00" :weight bold))))

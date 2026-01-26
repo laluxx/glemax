@@ -120,8 +120,6 @@
 (setup-self-insert-keys)
 
 
-
-
 (define (mark-whole-buffer)
   "Put point at beginning and mark at end of buffer."
   (set-mark (buffer-size))
@@ -147,6 +145,16 @@
 ;; C-x ]   - forward-page
 ;; C-x [   - backward-page
 ;; C-x C-p - mark-page
+
+(define kill-glemax-hook nil)
+(set-var-doc! kill-glemax-hook
+"Hook run when kill-glemax is called.
+
+Since kill-glemax may be invoked when the terminal is disconnected (or
+in other similar situations), functions placed on this hook should not
+expect to be able to interact with the user.  To ask for confirmation,
+see kill-glemax-query-functions instead.")
+
 
 
 ;; TODO SUPPORT ME!

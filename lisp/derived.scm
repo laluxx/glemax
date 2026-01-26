@@ -65,7 +65,7 @@ TODO additional ones set by `derived-mode-add-parents'."
      (begin
        ;; Store the parent mode relationship
        (put 'mode 'derived-mode-parent 'parent-mode)
-       
+
        (define (mode)
          docstring
          (kill-all-local-variables)

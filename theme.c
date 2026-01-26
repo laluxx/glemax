@@ -173,7 +173,7 @@ static void reapply_all_themes(void) {
     }
 
     // Step 2: Apply each enabled theme in order (from oldest to newest)
-    // We need to reverse the list since it's stored newest-first
+    // Reverse the list since it's stored newest-first
     SCM reversed = SCM_EOL;
     SCM themes = theme_cache->enabled_themes;
     while (!scm_is_null(themes)) {
@@ -181,11 +181,9 @@ static void reapply_all_themes(void) {
         themes = scm_cdr(themes);
     }
 
-    // Now apply themes from oldest to newest
+    // Apply themes from oldest to newest
     while (!scm_is_null(reversed)) {
         SCM theme_name_scm = scm_car(reversed);
-
-        // Convert symbol to string
         SCM theme_name_str = scm_symbol_to_string(theme_name_scm);
         char *theme_name = scm_to_locale_string(theme_name_str);
 
@@ -195,6 +193,12 @@ static void reapply_all_themes(void) {
             while (spec) {
                 Face *face = get_named_face(spec->face_name);
                 if (face) {
+                    // Reset decorative properties before applying theme specs
+                    // They should only be true if the theme explicitly sets them
+                    face->underline = false;
+                    face->strike_through = false;
+                    face->box = false;
+
                     // Apply inheritance first (if specified)
                     if (spec->has_inherit) {
                         face->inherit_from = spec->inherit_from;
@@ -208,7 +212,7 @@ static void reapply_all_themes(void) {
                         }
                     }
 
-                    // Then apply explicit properties (these override inheritance)
+                    // Apply explicit color properties (these override inheritance)
                     if (spec->has_fg) {
                         face->fg = spec->fg;
                         face->fg_set = true;
@@ -219,11 +223,14 @@ static void reapply_all_themes(void) {
                     }
 
                     // Apply text attributes
-                    if (spec->bold)
+                    if (spec->bold) {
                         face->bold = true;
-                    if (spec->italic)
+                    }
+                    if (spec->italic) {
                         face->italic = true;
+                    }
 
+                    // Apply decorative attributes
                     if (spec->underline) {
                         face->underline = true;
                         if (spec->has_underline_color) {
@@ -243,11 +250,12 @@ static void reapply_all_themes(void) {
                         }
                     }
 
+                    // Apply extend property
                     if (spec->has_extend) {
                         face->extend = spec->extend;
                     }
 
-                    // UPDATE THE FONT if bold or italic changed
+                    // Update font if bold or italic attributes changed
                     if (spec->bold || spec->italic) {
                         face->font = get_font_variant(face->bold, face->italic);
                     }

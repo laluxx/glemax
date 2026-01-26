@@ -52,4 +52,12 @@
 
   '(minibuffer-prompt                         ((t (:foreground "#fd971f"))))
   '(region                                    ((t (:background "#4e4e4e"))))
+
+  '(shadow                                    ((t (:foreground "#555556"))))
+  '(highlight                                 ((t (:foreground "#1B2229" :background "#fd971f"))))
+  '(help-key-binding                          ((t (:foreground "LightBlue" :background "grey19" :box "grey35"))))
+  '(completions-highlight                     ((t (:inherit highlight))))
+  '(completions-annotations                   ((t (:inherit shadow :slant italic))))
+  '(completions-common-part                   ((t (:foreground "LightBlue"))))
+  '(completions-first-difference              ((t (:inherit bold))))
 )

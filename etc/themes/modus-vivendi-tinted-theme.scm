@@ -58,4 +58,12 @@
 
   '(minibuffer-prompt                         ((t (:foreground "#4ae2f0"))))
   '(region                                    ((t (:foreground "#ffffff" :background "#555a66"))))
+
+  '(shadow                                    ((t (:foreground "#989898"))))
+  '(highlight                                 ((t (:foreground "#ffffff" :background "#45605e"))))
+  '(help-key-binding                          ((t (:foreground "#b6a0ff"))))
+  '(completions-highlight                     ((t (:background "#483d8a" :weight bold))))
+  '(completions-annotations                   ((t (:foreground "#9ac8e0"))))
+  '(completions-common-part                   ((t (:foreground "#00bcff" :weight bold))))
+  '(completions-first-difference              ((t (:foreground "#f78fe7" :weight bold))))
 )
