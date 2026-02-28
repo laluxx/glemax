@@ -2,6 +2,7 @@
 #include "rope.h"
 #include "textprop.h"
 #include "treesit.h"
+#include "undo.h"
 #include <obsidian/obsidian.h>
 #include <sys/types.h>
 
@@ -33,6 +34,7 @@ typedef struct Buffer {
     SCM active_minor_modes;    // List of active minor mode symbols
     KeyChordMap *keymap;       // Buffer-local keymap (can be NULL)
     TreeSitterState *ts_state; // (NULL if not using tree-sitter)
+    UndoState *undo_state;     // Undo information for this buffer
     bool read_only;
     bool modified;
 } Buffer;

@@ -60,4 +60,18 @@
   '(completions-annotations                   ((t (:inherit shadow :slant italic))))
   '(completions-common-part                   ((t (:foreground "LightBlue"))))
   '(completions-first-difference              ((t (:inherit bold))))
+
+  '(rainbow-delimiters-depth-1-face           ((t (:foreground "#5EC4FF"))))
+  '(rainbow-delimiters-depth-2-face           ((t (:foreground "#E27E8D"))))
+  '(rainbow-delimiters-depth-3-face           ((t (:foreground "#8BD49C"))))
+  '(rainbow-delimiters-depth-4-face           ((t (:foreground "#B62D65"))))
+  '(rainbow-delimiters-depth-5-face           ((t (:foreground "#33CED8"))))
+  '(rainbow-delimiters-depth-6-face           ((t (:foreground "#5EC4FF"))))
+  '(rainbow-delimiters-depth-7-face           ((t (:foreground "#E27E8D"))))
+  '(rainbow-delimiters-depth-8-face           ((t (:foreground "#8BD49C"))))
+  '(rainbow-delimiters-depth-9-face           ((t (:foreground "#B62D65"))))
+  '(rainbow-delimiters-unmatched-face         ((t (:foreground "#1D252C" :background "#D95468" :weight bold))))
+  '(rainbow-delimiters-mismatched-face        ((t (:inherit rainbow-delimiters-unmatched-face))))
+
+  '(escape-glyph                              ((t (:foreground "#46D9FF"))))
 )

@@ -73,7 +73,12 @@ void wm_cleanup(WindowManager *wm);
 
 void split_window_below();
 void split_window_right();
-Window* split_root_window_below(size_t size);
+
+Window* split_root_window_below(int size);
+
+void fit_window_to_buffer(Window *win);
+
+
 bool window_try_horizontal_split(Window *win);
 bool window_try_vertical_split(Window *win);
 Window* split_window_sensibly();
@@ -140,6 +145,8 @@ void recalculate_window_geometry(Window *win);
 Window* window_at_pos(float x, float y);
 size_t point_at_window_pos(Window *win, float click_x, float click_y);
 void mouse_set_point(Window *window, int x, int y);
+
+Window* get_buffer_window(Buffer *buffer);
 
 /// SCM
 

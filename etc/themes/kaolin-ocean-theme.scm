@@ -59,4 +59,18 @@
   '(completions-annotations                   ((t (:foreground "#5D8272"))))
   '(completions-common-part                   ((t (:foreground "#6bd9db"))))
   '(completions-first-difference              ((t (:inherit bold))))
+
+  '(rainbow-delimiters-depth-1-face           ((t (:foreground "#807f96"))))
+  '(rainbow-delimiters-depth-2-face           ((t (:foreground "#9d81ba"))))
+  '(rainbow-delimiters-depth-3-face           ((t (:foreground "#4d9391"))))
+  '(rainbow-delimiters-depth-4-face           ((t (:foreground "#a0586c"))))
+  '(rainbow-delimiters-depth-5-face           ((t (:foreground "#53859d"))))
+  '(rainbow-delimiters-depth-6-face           ((t (:foreground "#5D8272"))))
+  '(rainbow-delimiters-depth-7-face           ((t (:foreground "#cd9575"))))
+  '(rainbow-delimiters-depth-8-face           ((t (:foreground "#91b9c7"))))
+  '(rainbow-delimiters-depth-9-face           ((t (:foreground "#4ca6e8"))))
+  '(rainbow-delimiters-unmatched-face         ((t (:foreground "#e84c58" :background "#832729"))))
+  '(rainbow-delimiters-mismatched-face        ((t (:inherit rainbow-delimiters-unmatched-face))))
+
+  '(escape-glyph                              ((t (:foreground "#6bd9db"))))
 )

@@ -66,4 +66,18 @@
   '(completions-annotations                   ((t (:inherit shadow :slant italic))))
   '(completions-common-part                   ((t (:inherit bold)))); TODO Should be inherit from `match'
   '(completions-first-difference              ((t (:inherit bold))))
+
+  '(rainbow-delimiters-depth-1-face           ((t (:foreground "#00b25f"))))
+  '(rainbow-delimiters-depth-2-face           ((t (:foreground "#00733d"))))
+  '(rainbow-delimiters-depth-3-face           ((t (:foreground "#00733d"))))
+  '(rainbow-delimiters-depth-4-face           ((t (:foreground "#00733d"))))
+  '(rainbow-delimiters-depth-5-face           ((t (:foreground "#00733d"))))
+  '(rainbow-delimiters-depth-6-face           ((t (:foreground "#00733d"))))
+  '(rainbow-delimiters-depth-7-face           ((t (:foreground "#00733d"))))
+  '(rainbow-delimiters-depth-8-face           ((t (:foreground "#00733d"))))
+  '(rainbow-delimiters-depth-9-face           ((t (:foreground "#00733d"))))
+  '(rainbow-delimiters-unmatched-face         ((t (:inherit error))))
+  '(rainbow-delimiters-mismatched-face        ((t (:inherit rainbow-delimiters-unmatched-face))))
+
+  '(escape-glyph                              ((t (:inherit font-lock-string-face :weight bold))))
 )

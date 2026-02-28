@@ -4,6 +4,7 @@
 #include "lisp.h"
 #include "faces.h"
 #include "theme.h"
+#include "undo.h"
 #include <obsidian/window.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -18,11 +19,11 @@ bool last_command_was_kill = false;
 
 
 bool is_kill_command(SCM proc) {
-    return is_scm_proc(proc, "kill-word") ||
-           is_scm_proc(proc, "backward-kill-word") ||
-           is_scm_proc(proc, "kill-line") ||
-           is_scm_proc(proc, "kill-sexp") ||
-           is_scm_proc(proc, "kill-region");
+    return is_scm_proc(proc, "kill-word")
+        || is_scm_proc(proc, "backward-kill-word")
+        || is_scm_proc(proc, "kill-line")
+        || is_scm_proc(proc, "kill-sexp")
+        || is_scm_proc(proc, "kill-region");
 }
 
 #include <unistd.h>  // for getcwd
@@ -43,6 +44,8 @@ Buffer* buffer_create(const char *name) {
     buffer->region.mark = -1;
     buffer->props = NULL;
     buffer->ts_state = NULL;
+
+    undo_init(buffer);
 
     // Initialize filename and directory
     buffer->filename = NULL;
@@ -122,6 +125,7 @@ void buffer_destroy(Buffer *buffer) {
         buffer->ts_state = NULL;
     }
 
+    undo_cleanup(buffer->undo_state);
 
     free(buffer->name);
     rope_free(buffer->rope);
@@ -1153,10 +1157,48 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             current_line_height = effective_font_height;
         }
 
-        // Calculate character width - handle tabs specially
+        // Calculate character width - handle tabs and control chars specially
         float char_width;
+        bool is_control_char = (ch < 0x20 && ch != '\t' && ch != '\n') || ch == 0x7f;
         if (ch == '\t') {
-            char_width = tab_pixel_width;
+            // Check for display property override
+            SCM display_prop = get_text_property(buffer, i, scm_from_utf8_symbol("display"));
+            if (scm_is_pair(display_prop) &&
+                scm_is_symbol(scm_car(display_prop))) {
+                char *head_str = scm_to_locale_string(scm_symbol_to_string(scm_car(display_prop)));
+                bool is_space_spec = strcmp(head_str, "space") == 0;
+                free(head_str);
+
+                if (is_space_spec) {
+                    SCM plist = scm_cdr(display_prop);
+                    char_width = tab_pixel_width; // fallback
+                    while (scm_is_pair(plist) && scm_is_pair(scm_cdr(plist))) {
+                        SCM key = scm_car(plist);
+                        SCM val = scm_cadr(plist);
+                        if (scm_is_symbol(key)) {
+                            char *key_str = scm_to_locale_string(scm_symbol_to_string(key));
+                            if (strcmp(key_str, ":align-to") == 0 && scm_is_number(val)) {
+                                float target_x = start_x + (float)scm_to_double(val);
+                                char_width = target_x - x;
+                                if (char_width < 0) char_width = 0;
+                            } else if (strcmp(key_str, ":width") == 0 && scm_is_number(val)) {
+                                char_width = (float)scm_to_double(val) * selected_frame->column_width;
+                            }
+                            free(key_str);
+                        }
+                        plist = scm_cddr(plist);
+                    }
+                } else {
+                    char_width = tab_pixel_width;
+                }
+            } else {
+                char_width = tab_pixel_width;
+            }
+        } else if (is_control_char) {
+            // Rendered as ^X — width of two characters
+            uint32_t visible = (ch == 0x7f) ? '?' : (ch + 64);
+            char_width = character_width(char_font, '^') +
+                         character_width(char_font, visible);
         } else {
             char_width = character_width(char_font, ch);
         }
@@ -1356,7 +1398,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 if (ch == '\t') {
                     bool stretch_cursor = scm_get_bool("stretch-cursor", false);
                     if (stretch_cursor) {
-                        cursor_width = tab_pixel_width;
+                        cursor_width = char_width;
                     } else {
                         cursor_width = selected_frame->column_width;
                     }
@@ -1366,7 +1408,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 cursor_height = font_height;
 
                 if (crystal_point_mode && ch != '\n' && ch != ' ' && ch != '\t') {
-                    cursor_color = face->fg;
+                    cursor_color = is_control_char ? get_face(FACE_ESCAPE_GLYPH)->fg : face->fg;
                 } else {
                     cursor_color = get_face(FACE_CURSOR)->bg;
                 }
@@ -1378,8 +1420,10 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 }
 
                 if (should_draw_filled && buffer->cursor.visible) {
-                    char_color = base_bg;
+                    char_color = face->bg;
                 }
+                needs_bg = !color_equals(bg_color, base_bg);
+
             } else if (at_mark) {
                 bg_color = get_face(FACE_VISIBLE_MARK)->bg;
                 char_color = base_bg;
@@ -1435,9 +1479,8 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     // For tabs, use the tab width; for regular characters use font metrics
                     float actual_char_width;
                     if (ch == '\t') {
-                        actual_char_width = tab_pixel_width;
-                    } else {
-                        Character *char_info = font_get_character(char_font, ch);
+                        actual_char_width = char_width;
+                    } else {                        Character *char_info = font_get_character(char_font, ch);
                         actual_char_width = char_info ? char_info->ax : char_width;
                     }
 
@@ -1493,11 +1536,25 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                         }
                     }
 
-                    // Don't draw tab character itself (it's whitespace), but draw underlines if needed
                     if (ch != '\t') {
-                        draw_character_with_face(ch, draw_x, draw_y, face, char_font, char_color,
-                                               face->underline, face->underline_color,
-                                               face->strike_through, face->strike_through_color);
+                        if (is_control_char) {
+                            Face *escape_face = get_face(FACE_ESCAPE_GLYPH);
+                            Color escape_fg = escape_face ? escape_face->fg : char_color;
+                            uint32_t visible = (ch == 0x7f) ? '?' : (ch + 64);
+                            Color caret_color = (at_cursor && should_draw_filled && buffer->cursor.visible)
+                                                ? face->bg
+                                                : escape_fg;
+                            float adv1 = draw_character_with_face('^', draw_x, draw_y, face, char_font, caret_color,
+                                                                   false, char_color, false, char_color);
+                            draw_character_with_face(visible, draw_x + adv1, draw_y, face, char_font, escape_fg,
+                                                     face->underline, face->underline_color,
+                                                     face->strike_through, face->strike_through_color);
+                        } else {
+                            draw_character_with_face(ch, draw_x, draw_y, face, char_font, char_color,
+                                                   face->underline, face->underline_color,
+                                                   face->strike_through, face->strike_through_color);
+                        }
+
                     } else if (face->underline || face->strike_through) {
                         // Draw underline/strikethrough for tabs
                         if (face->underline) {
@@ -1522,9 +1579,9 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                                 underline_thickness = 1.0f;
                             }
 
-                            quad2D((vec2){draw_x, underline_y},
-                                   (vec2){tab_pixel_width, underline_thickness},
-                                   face->underline_color);
+                            quad2D((vec2){draw_x, draw_y},
+                                   (vec2){tab_pixel_width, 1.0f},
+                                   face->strike_through_color);
                         }
 
                         if (face->strike_through) {
@@ -1554,12 +1611,28 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                         box_span_no_left = false;
                     }
 
-                    // Don't draw tab character, but draw underlines if needed
+                    // Don't draw tab character, but draw underlines if needed (and control characters)
                     if (ch != '\t') {
-                        float advance = draw_character_with_face(ch, draw_x, draw_y, face, char_font, char_color,
-                                                               face->underline, face->underline_color,
-                                                               face->strike_through, face->strike_through_color);
-                        x += advance;
+                        if (is_control_char) {
+                            Face *escape_face = get_face(FACE_ESCAPE_GLYPH);
+                            Color escape_fg = escape_face ? escape_face->fg : char_color;
+                            uint32_t visible = (ch == 0x7f) ? '?' : (ch + 64);
+                            Color caret_color = (at_cursor && should_draw_filled && buffer->cursor.visible)
+                                                ? face->bg
+                                                : escape_fg;
+                            float adv1 = draw_character_with_face('^', draw_x, draw_y, face, char_font, caret_color,
+                                                                   false, char_color, false, char_color);
+                            float adv2 = draw_character_with_face(visible, draw_x + adv1, draw_y, face, char_font, escape_fg,
+                                                                   face->underline, face->underline_color,
+                                                                   face->strike_through, face->strike_through_color);
+                            x += adv1 + adv2;
+
+                        } else {
+                            float advance = draw_character_with_face(ch, draw_x, draw_y, face, char_font, char_color,
+                                                                   face->underline, face->underline_color,
+                                                                   face->strike_through, face->strike_through_color);
+                            x += advance;
+                        }
                     } else {
                         if (face->underline || face->strike_through) {
                             if (face->underline) {
@@ -1585,17 +1658,17 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                                 }
 
                                 quad2D((vec2){draw_x, underline_y},
-                                       (vec2){tab_pixel_width, underline_thickness},
-                                       face->underline_color);
+                                   (vec2){char_width, underline_thickness},
+                                   face->underline_color);
                             }
 
                             if (face->strike_through) {
                                 quad2D((vec2){draw_x, draw_y},
-                                       (vec2){tab_pixel_width, 1.0f},
-                                       face->strike_through_color);
+                                   (vec2){char_width, 1.0f},
+                                   face->strike_through_color);
                             }
                         }
-                        x += tab_pixel_width;
+                        x += char_width;
                     }
 
                     // Track for extension
@@ -1609,7 +1682,7 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 if (face->box) {
                     float actual_char_width;
                     if (ch == '\t') {
-                        actual_char_width = tab_pixel_width;
+                        actual_char_width = char_width;
                     } else {
                         Character *char_info = font_get_character(char_font, ch);
                         actual_char_width = char_info ? char_info->ax : char_width;
@@ -1714,15 +1787,20 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 buffer->cursor.blink_count = 0;
             }
 
-            float border_width = 1.0f;
-            quad2D((vec2){cursor_x, cursor_y + cursor_height - border_width},
-                   (vec2){cursor_width, border_width}, cursor_color);
-            quad2D((vec2){cursor_x, cursor_y},
-                   (vec2){cursor_width, border_width}, cursor_color);
-            quad2D((vec2){cursor_x, cursor_y},
-                   (vec2){border_width, cursor_height}, cursor_color);
-            quad2D((vec2){cursor_x + cursor_width - border_width, cursor_y},
-                   (vec2){border_width, cursor_height}, cursor_color);
+            bool cursor_in_non_selected = scm_get_bool("cursor-in-non-selected-windows", true);
+            if (!is_selected && !cursor_in_non_selected) {
+                // Don't draw cursor in non-selected windows
+            } else {
+                float border_width = 1.0f;
+                quad2D((vec2){cursor_x, cursor_y + cursor_height - border_width},
+                       (vec2){cursor_width, border_width}, cursor_color);
+                quad2D((vec2){cursor_x, cursor_y},
+                       (vec2){cursor_width, border_width}, cursor_color);
+                quad2D((vec2){cursor_x, cursor_y},
+                       (vec2){border_width, cursor_height}, cursor_color);
+                quad2D((vec2){cursor_x + cursor_width - border_width, cursor_y},
+                       (vec2){border_width, cursor_height}, cursor_color);
+            }
         }
     }
 }

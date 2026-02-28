@@ -33,15 +33,17 @@ When non-nil, then `minibuffer-next-completion' and
 selected by these commands to the minibuffer.")
 
 (define minibuffer-mode-map (make-sparse-keymap))
-(define-key minibuffer-mode-map "TAB" minibuffer-complete)
-(define-key minibuffer-mode-map "RET" minibuffer-complete-and-exit)
-(define-key minibuffer-mode-map "M-RET" minibuffer-choose-completion)
-(define-key minibuffer-mode-map "M-<up>" minibuffer-previous-completion)
+(define-key minibuffer-mode-map "TAB"      minibuffer-complete)
+(define-key minibuffer-mode-map "RET"      minibuffer-complete-and-exit)
+(define-key minibuffer-mode-map "M-RET"    minibuffer-choose-completion)
+(define-key minibuffer-mode-map "M-<up>"   minibuffer-previous-completion)
 (define-key minibuffer-mode-map "M-<down>" minibuffer-next-completion)
-(define-key minibuffer-mode-map "C-p" minibuffer-previous-completion)
-(define-key minibuffer-mode-map "C-n" minibuffer-next-completion)
-(define-key minibuffer-mode-map "M-p" previous-history-element)
-(define-key minibuffer-mode-map "M-n" next-history-element)
+(define-key minibuffer-mode-map "C-p"      minibuffer-previous-completion)
+(define-key minibuffer-mode-map "C-n"      minibuffer-next-completion)
+(define-key minibuffer-mode-map "<up>"     minibuffer-previous-completion)
+(define-key minibuffer-mode-map "<down>"   minibuffer-next-completion)
+(define-key minibuffer-mode-map "M-p"      previous-history-element)
+(define-key minibuffer-mode-map "M-n"      next-history-element)
 
 (define-derived-mode minibuffer-mode nil "Minibuffer"
   "Major mode used for active minibuffers.

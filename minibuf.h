@@ -9,6 +9,9 @@ typedef struct HistoryState {
     struct HistoryState *next;
 } HistoryState;
 
+extern bool frame_resized_since_last_complete;
+
+
 void add_to_history(SCM caller_func, const char *value);
 char* get_history_element(SCM caller_func, int offset);
 int get_history_position(SCM caller_func);

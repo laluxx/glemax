@@ -478,7 +478,8 @@ void split_window_right() {
     if (debug_them_windows) debug_print_windows();
 }
 
-Window* split_root_window_below(size_t size) {
+// TODO Implement split_root_window_right
+Window* split_root_window_below(int size) {
     Window *root = selected_frame->wm.root;
     Window *original_selected = selected_frame->wm.selected;
 
@@ -510,12 +511,26 @@ Window* split_root_window_below(size_t size) {
 
     if (size == 0) {
         split_ratio = 0.5f;  // 50/50
-    } else {
-        // Bottom window gets 'size' lines PLUS modeline
-        // Size is the number of text lines, but window also needs space for modeline
+    } else if (size > 0) {
+        // Positive: caller specifies exact line count; add 1 for the modeline
         float bottom_height = ((float)size + 1.0f) * selected_frame->line_height;
         split_ratio = bottom_height / total_height;
+    } else {
+        // Negative: content-fit mode — |size| is the exact pixel-counted line
+        // count; no modeline fudge because display_completions already counted
+        // real lines. We still add 1 line so the last line isn't clipped.
+        float bottom_height = ((float)(-size) + 1.0f) * selected_frame->line_height;
+        split_ratio = bottom_height / total_height;
     }
+
+    /* if (size == 0) { */
+    /*     split_ratio = 0.5f;  // 50/50 */
+    /* } else { */
+    /*     // Bottom window gets 'size' lines PLUS modeline */
+    /*     // Size is the number of text lines, but window also needs space for modeline */
+    /*     float bottom_height = ((float)size + 1.0f) * selected_frame->line_height; */
+    /*     split_ratio = bottom_height / total_height; */
+    /* } */
 
     // Clamp split ratio
     if (split_ratio < 0.1f) split_ratio = 0.1f;
@@ -537,6 +552,48 @@ Window* split_root_window_below(size_t size) {
     current_buffer->pt = original_selected->point;
 
     return bottom_window;
+}
+
+void fit_window_to_buffer(Window *win) {
+    if (!win || !win->buffer) return;
+
+    // Count lines in the buffer
+    int line_count = 0;
+    size_t buf_len = rope_char_length(win->buffer->rope);
+    for (size_t i = 0; i < buf_len; i++) {
+        char c;
+        rope_copy_chars(win->buffer->rope, i, 1, &c, 1);
+        if (c == '\n') line_count++;
+    }
+    if (buf_len > 0) {
+        char last;
+        rope_copy_chars(win->buffer->rope, buf_len - 1, 1, &last, 1);
+        if (last != '\n') line_count++;
+    }
+
+    if (line_count < 3) line_count = 3;
+
+    // +1 for the modeline
+    float desired_height = (line_count + 1) * selected_frame->line_height;
+
+    Window *parent = win->parent;
+    if (!parent || parent->split_type != SPLIT_HORIZONTAL) return;
+
+    float total_height = parent->height;
+    float split_ratio = desired_height / total_height;
+
+    if (split_ratio < 0.1f) split_ratio = 0.1f;
+    if (split_ratio > 0.9f) split_ratio = 0.9f;
+
+    // In SPLIT_HORIZONTAL: right=bottom gets split_ratio, left=top gets (1-split_ratio)
+    // So if win is the TOP (left) child, we need to invert
+    if (parent->left == win) {
+        parent->split_ratio = 1.0f - split_ratio;
+    } else {
+        parent->split_ratio = split_ratio;
+    }
+
+    wm_recalculate_layout();
 }
 
 // TODO Implement window_splittable_p and use it in those function
@@ -1441,7 +1498,7 @@ void recenter_top_bottom() {
 }
 
 
-int next_screen_context_lines = 2;  // Lines of overlap when scrolling full screen
+/* int next_screen_context_lines = 2;  // Lines of overlap when scrolling full screen */
 
 
 void scroll_up_command() {
@@ -1461,7 +1518,7 @@ void scroll_up_command() {
 
     if (!manually_set && !raw_prefix_arg) {
         // No argument: scroll nearly full screen (leave context lines)
-        lines_to_scroll = (int)(visible_lines - next_screen_context_lines);
+        lines_to_scroll = (int)(visible_lines - scm_get_size_t("next-screen-context-lines", 2));
         if (lines_to_scroll < 1) lines_to_scroll = 1;
     } else if (raw_prefix_arg && arg < 0) {
         // C-u - prefix: scroll down by nearly full screen
@@ -1638,7 +1695,7 @@ void scroll_down_command() {
 
     if (!manually_set && !raw_prefix_arg) {
         // No argument: scroll nearly full screen (leave context lines)
-        lines_to_scroll = (int)(visible_lines - next_screen_context_lines);
+        lines_to_scroll = (int)(visible_lines - scm_get_size_t("next-screen-context-lines", 2));
         if (lines_to_scroll < 1) lines_to_scroll = 1;
     } else if (raw_prefix_arg && arg < 0) {
         // C-u - prefix: scroll up by nearly full screen
@@ -2089,8 +2146,39 @@ size_t point_at_window_pos(Window *win, float click_x, float click_y) {
             // This MUST match what draw_buffer does
             float char_advance;
             if (ch == '\t') {
-                // Tabs use the full tab pixel width
-                char_advance = tab_pixel_width;
+                // Check for display property override (space :align-to N)
+                SCM display_prop = get_text_property(buffer, i, scm_from_utf8_symbol("display"));
+                if (scm_is_pair(display_prop) &&
+                    scm_is_symbol(scm_car(display_prop))) {
+                    char *head_str = scm_to_locale_string(scm_symbol_to_string(scm_car(display_prop)));
+                    bool is_space_spec = strcmp(head_str, "space") == 0;
+                    free(head_str);
+
+                    if (is_space_spec) {
+                        SCM plist = scm_cdr(display_prop);
+                        char_advance = tab_pixel_width; // fallback
+                        while (scm_is_pair(plist) && scm_is_pair(scm_cdr(plist))) {
+                            SCM key = scm_car(plist);
+                            SCM val = scm_cadr(plist);
+                            if (scm_is_symbol(key)) {
+                                char *key_str = scm_to_locale_string(scm_symbol_to_string(key));
+                                if (strcmp(key_str, ":align-to") == 0 && scm_is_number(val)) {
+                                    float target_x = start_x + (float)scm_to_double(val);
+                                    char_advance = target_x - x;
+                                    if (char_advance < 0) char_advance = 0;
+                                } else if (strcmp(key_str, ":width") == 0 && scm_is_number(val)) {
+                                    char_advance = (float)scm_to_double(val) * selected_frame->column_width;
+                                }
+                                free(key_str);
+                            }
+                            plist = scm_cddr(plist);
+                        }
+                    } else {
+                        char_advance = tab_pixel_width;
+                    }
+                } else {
+                    char_advance = tab_pixel_width;
+                }
             } else {
                 // Regular characters use their actual advance from the font
                 Character *char_info = font_get_character(char_font, ch);
@@ -2208,6 +2296,28 @@ void mouse_set_point(Window *window, int x, int y) {
 }
 
 
+Window* get_buffer_window(Buffer *buffer) {
+    if (!buffer || !selected_frame->wm.root) return NULL;
+
+    Window *leaves[256];
+    int count = 0;
+    collect_leaf_windows(selected_frame->wm.root, leaves, &count);
+
+    for (int i = 0; i < count; i++) {
+        if (leaves[i]->buffer == buffer) {
+            return leaves[i];
+        }
+    }
+
+    // Also check minibuffer
+    if (selected_frame->wm.minibuffer_window &&
+        selected_frame->wm.minibuffer_window->buffer == buffer) {
+        return selected_frame->wm.minibuffer_window;
+    }
+
+    return NULL;
+}
+
 /// SCM
 
 // Get minimum window width in pixels (columns + fringes)
@@ -2238,17 +2348,13 @@ SCM scm_window_min_pixel_height(SCM window_obj) {
 }
 
 static SCM scm_split_root_window_below(SCM size) {
-    size_t size_val = 0;  // Default: 50/50 split
+    int size_val = 0;  // Default: 50/50 split
 
     if (!SCM_UNBNDP(size)) {
         if (!scm_is_integer(size)) {
             scm_wrong_type_arg("split-root-window-below", 1, size);
         }
-        int temp = scm_to_int(size);
-        if (temp < 0) {
-            scm_out_of_range("split-root-window-below", size);
-        }
-        size_val = (size_t)temp;
+        size_val = scm_to_int(size);  // negative is now valid: content-fit mode
     }
 
     Window *win = split_root_window_below(size_val);

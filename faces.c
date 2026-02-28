@@ -76,6 +76,20 @@ static struct {
     {"completions-common-part",             FACE_COMPLETIONS_COMMON_PART},
     {"completions-first-difference",        FACE_COMPLETIONS_FIRST_DIFFERENCE},
 
+    {"rainbow-delimiters-depth-1-face",      FACE_RAINBOW_DELIMITERS_DEPTH_1},
+    {"rainbow-delimiters-depth-2-face",      FACE_RAINBOW_DELIMITERS_DEPTH_2},
+    {"rainbow-delimiters-depth-3-face",      FACE_RAINBOW_DELIMITERS_DEPTH_3},
+    {"rainbow-delimiters-depth-4-face",      FACE_RAINBOW_DELIMITERS_DEPTH_4},
+    {"rainbow-delimiters-depth-5-face",      FACE_RAINBOW_DELIMITERS_DEPTH_5},
+    {"rainbow-delimiters-depth-6-face",      FACE_RAINBOW_DELIMITERS_DEPTH_6},
+    {"rainbow-delimiters-depth-7-face",      FACE_RAINBOW_DELIMITERS_DEPTH_7},
+    {"rainbow-delimiters-depth-8-face",      FACE_RAINBOW_DELIMITERS_DEPTH_8},
+    {"rainbow-delimiters-depth-9-face",      FACE_RAINBOW_DELIMITERS_DEPTH_9},
+    {"rainbow-delimiters-unmatched-face",    FACE_RAINBOW_DELIMITERS_UNMATCHED},
+    {"rainbow-delimiters-mismatched-face",   FACE_RAINBOW_DELIMITERS_MISMATCHED},
+
+    {"escape-glyph",                         FACE_ESCAPE_GLYPH},
+
 
     {NULL, -1}
 };
@@ -486,6 +500,56 @@ void init_faces(void) {
                 face->bold = true;
                 face->font = get_font_variant(true, false);
                 break;
+
+            case FACE_RAINBOW_DELIMITERS_DEPTH_1:
+                face->fg = parse_color("#707183");
+                face->fg_set = true;
+                break;
+            case FACE_RAINBOW_DELIMITERS_DEPTH_2:
+                face->fg = parse_color("#7388d6");
+                face->fg_set = true;
+                break;
+            case FACE_RAINBOW_DELIMITERS_DEPTH_3:
+                face->fg = parse_color("#909183");
+                face->fg_set = true;
+                break;
+            case FACE_RAINBOW_DELIMITERS_DEPTH_4:
+                face->fg = parse_color("#709870");
+                face->fg_set = true;
+                break;
+            case FACE_RAINBOW_DELIMITERS_DEPTH_5:
+                face->fg = parse_color("#907373");
+                face->fg_set = true;
+                break;
+            case FACE_RAINBOW_DELIMITERS_DEPTH_6:
+                face->fg = parse_color("#6276ba");
+                face->fg_set = true;
+                break;
+            case FACE_RAINBOW_DELIMITERS_DEPTH_7:
+                face->fg = parse_color("#858580");
+                face->fg_set = true;
+                break;
+            case FACE_RAINBOW_DELIMITERS_DEPTH_8:
+                face->fg = parse_color("#80a880");
+                face->fg_set = true;
+                break;
+            case FACE_RAINBOW_DELIMITERS_DEPTH_9:
+                face->fg = parse_color("#887070");
+                face->fg_set = true;
+                break;
+            case FACE_RAINBOW_DELIMITERS_UNMATCHED:
+                face->fg = parse_color("#FF0000");
+                face->fg_set = true;
+                break;
+            case FACE_RAINBOW_DELIMITERS_MISMATCHED:
+                face->fg = parse_color("#BB0000");
+                face->fg_set = true;
+                break;
+
+            case FACE_ESCAPE_GLYPH:
+                face->fg = parse_color("brown");
+                face->fg_set = true;
+                break;
         }
 
         face_cache->faces[i] = face;
@@ -734,10 +798,19 @@ static SCM scm_face_background(SCM name) {
     return SCM_BOOL_F;
 }
 
+static SCM scm_face_id_from_name(SCM name) {
+    char *face_name = scm_to_c_string(name);
+    if (!face_name) return scm_from_int(-1);
+    int id = face_id_from_name(face_name);
+    free(face_name);
+    return scm_from_int(id);
+}
+
 void init_face_bindings(void) {
     scm_c_define_gsubr("make-face",            1, 0, 0, scm_make_face);
     scm_c_define_gsubr("set-face-foreground!", 2, 0, 0, scm_set_face_foreground);
     scm_c_define_gsubr("set-face-background!", 2, 0, 0, scm_set_face_background);
     scm_c_define_gsubr("face-foreground",      1, 0, 0, scm_face_foreground);
     scm_c_define_gsubr("face-background",      1, 0, 0, scm_face_background);
+    scm_c_define_gsubr("face-id-from-name",    1, 0, 0, scm_face_id_from_name);
 }

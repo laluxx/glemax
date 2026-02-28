@@ -404,6 +404,11 @@ static SCM scm_insert(SCM rest) {
     return SCM_UNSPECIFIED;
 }
 
+static SCM scm_quoted_insert(void) {
+    quoted_insert();
+    return SCM_UNSPECIFIED;
+}
+
 static SCM scm_delete_blank_lines(void) {
     delete_blank_lines();
     return SCM_UNSPECIFIED;
@@ -555,6 +560,27 @@ DEFINE_SCM_COMMAND(scm_yank, yank,
 "\n"
 "Properties listed in `yank-handled-properties' are processed,\n"
 "then those listed in `yank-excluded-properties' are discarded.");
+
+DEFINE_SCM_COMMAND(scm_duplicate_line, duplicate_line,
+"Duplicate the current line N times."
+"Interactively, N is the prefix numeric argument, and defaults to 1."
+"The user option `duplicate-line-final-position' specifies where to"
+"move point after duplicating the line."
+"Also see the `copy-from-above-command' command.");
+
+DEFINE_SCM_COMMAND(scm_duplicate_region, duplicate_region, NULL);
+
+DEFINE_SCM_COMMAND(scm_duplicate_dwim, duplicate_dwim,
+"Duplicate the current line or region N times."
+"If the region is inactive, duplicate the current line (like `duplicate-line')."
+"Otherwise, duplicate the region, which remains active afterwards."
+"If the region is rectangular, duplicate on its right-hand side."
+"Interactively, N is the prefix numeric argument, and defaults to 1."
+"The variables `duplicate-line-final-position' and"
+"`duplicate-region-final-position' control the position of point"
+"and the region after the duplication.");
+
+
 
 DEFINE_SCM_COMMAND(scm_read_only_mode, read_only_mode,
 "Change whether the current buffer is read-only.");
@@ -1907,6 +1933,41 @@ static SCM scm_display_buffer(SCM buffer_or_name, SCM action, SCM frame) {
     return SCM_BOOL_F;
 }
 
+static SCM scm_fit_window_to_buffer(SCM window_obj) {
+    Window *win;
+    if (SCM_UNBNDP(window_obj)) {
+        win = selected_frame->wm.selected;
+    } else {
+        win = scm_to_window(window_obj);
+        if (!win) return SCM_BOOL_F;
+    }
+    fit_window_to_buffer(win);
+    return SCM_UNSPECIFIED;
+}
+
+static SCM scm_get_buffer_window(SCM buffer_or_name) {
+    Buffer *buffer = NULL;
+
+    if (scm_is_string(buffer_or_name)) {
+        // It's a buffer name string
+        char *name = scm_to_locale_string(buffer_or_name);
+        buffer = get_buffer(name);
+        free(name);
+    } else {
+        // Assume it's a buffer object (smob)
+        buffer = scm_to_buffer(buffer_or_name);
+    }
+
+    if (!buffer) return SCM_BOOL_F;
+
+    Window *win = get_buffer_window(buffer);
+    if (!win) return SCM_BOOL_F;
+
+    return get_or_make_window_object(win);
+}
+
+
+
 static SCM scm_goto_char(SCM position) {
     if (!scm_is_integer(position)) {
         scm_wrong_type_arg("goto-char", 1, position);
@@ -2399,6 +2460,9 @@ static SCM scm_garbage_collect(void) {
     return scm_gc_stats();
 }
 
+
+
+
 void lisp_init(void) {
 
     scm_c_define("gcs-done", scm_from_size_t(0));
@@ -2436,6 +2500,7 @@ void lisp_init(void) {
     setup_user_init_file();
 
     init_glemax_bindings();
+    init_undo_bindings();
     init_fileio_bindings();
     init_face_bindings();
     init_textprop_bindings();
@@ -2547,10 +2612,10 @@ void lisp_init(void) {
     scm_c_define_gsubr("window-min-pixel-width",         0, 1, 0, scm_window_min_pixel_width);
     scm_c_define_gsubr("window-min-pixel-height",        0, 1, 0, scm_window_min_pixel_height);
 
-
     scm_c_define_gsubr("minibuffer-window?",             0, 1, 0, scm_minibuffer_window_p);
     scm_c_define_gsubr("set-window-buffer",              2, 0, 0, scm_set_window_buffer);
-
+    scm_c_define_gsubr("fit-window-to-buffer",           0, 1, 0, scm_fit_window_to_buffer);
+    scm_c_define_gsubr("get-buffer-window",              1, 0, 0, scm_get_buffer_window);
 
     // Keychord
     scm_c_define_gsubr("keymap-global-set",              2, 0, 0, scm_keymap_global_set);
@@ -2586,6 +2651,7 @@ void lisp_init(void) {
     scm_c_define_gsubr("char-or-string?",                1, 0, 0, scm_char_or_string_p);
     scm_c_define_gsubr("insert",                         0, 0, 1, scm_insert);
     REGISTER_COMMAND("self-insert-command",     scm_self_insert_command);
+    scm_c_define_gsubr("quoted-insert",                  0, 0, 0, scm_quoted_insert);
     scm_c_define_gsubr("delete-backward-char",           0, 1, 0, scm_delete_backward_char);
     scm_c_define_gsubr("delete-char",                    0, 1, 0, scm_delete_char);
     scm_c_define_gsubr("delete-blank-lines",             0, 0, 0, scm_delete_blank_lines);
@@ -2629,6 +2695,11 @@ void lisp_init(void) {
     REGISTER_COMMAND("kill-region",         scm_kill_region);
     REGISTER_COMMAND("copy-region-as-kill", scm_copy_region_as_kill);
     REGISTER_COMMAND("yank",                scm_yank);
+    REGISTER_COMMAND("duplicate-line",      scm_duplicate_line);
+    REGISTER_COMMAND("duplicate-region",    scm_duplicate_region);
+    REGISTER_COMMAND("duplicate-dwim",      scm_duplicate_dwim);
+
+
 
     scm_c_define_gsubr("backward-kill-word",             0, 1, 0, scm_backward_kill_word);
     /* scm_c_define_gsubr("kill-region",                    0, 1, 0, scm_kill_region); */

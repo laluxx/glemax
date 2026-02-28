@@ -526,6 +526,27 @@ static SCM scm_remove_text_properties(SCM start_scm, SCM end_scm, SCM props) {
     return SCM_BOOL_T;
 }
 
+static SCM scm_next_property_change(SCM pos_scm) {
+    if (!scm_is_integer(pos_scm)) return SCM_BOOL_F;
+    size_t pos = scm_to_size_t(pos_scm);
+    if (!current_buffer) return SCM_BOOL_F;
+
+    size_t buf_len = rope_char_length(current_buffer->rope);
+    size_t nearest = buf_len;
+
+    TextProp *prop = current_buffer->props;
+    while (prop) {
+        if (prop->start > pos && prop->start < nearest)
+            nearest = prop->start;
+        if (prop->end > pos && prop->end < nearest)
+            nearest = prop->end;
+        prop = prop->next;
+    }
+
+    return scm_from_size_t(nearest);
+}
+
+
 static SCM scm_debug_text_properties(void) {
     if (current_buffer) {
         debug_text_properties(current_buffer);
@@ -540,5 +561,6 @@ void init_textprop_bindings(void) {
     scm_c_define_gsubr("get-text-property",      2, 0, 0, scm_get_text_property);
     scm_c_define_gsubr("remove-text-properties", 3, 0, 0, scm_remove_text_properties);
     scm_c_define_gsubr("debug-text-properties",  0, 0, 0, scm_debug_text_properties);
+    scm_c_define_gsubr("next-property-change",   1, 0, 0, scm_next_property_change);
 }
 

@@ -1,7 +1,8 @@
 ;;; minor-mode.scm --- Minor mode infrastructure
 
 ;;; Commentary:
-;; This implements Emacs-style minor modes.
+
+;; This file implements minor modes.
 ;; Minor modes are independent, optional features that can be toggled on/off.
 ;; They can be buffer-local or global, have keymaps, and run hooks.
 

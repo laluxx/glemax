@@ -48,6 +48,7 @@
 (keymap-global-set "C-x 1" delete-other-windows)
 (keymap-global-set "C-x o" other-window)
 (keymap-global-set "C-x +" balance-windows)
+(keymap-global-set "C-x w -" fit-window-to-buffer)
 (keymap-global-set "C-x ^" enlarge-window)
 (keymap-global-set "C-l" recenter-top-bottom)
 (keymap-global-set "C-v" recenter)
@@ -96,6 +97,8 @@
 (keymap-global-set "C-x C-q" read-only-mode)
 (keymap-global-set "C-x C-s" save-buffer)
 (keymap-global-set "C-x C-f" find-file)
+(keymap-global-set "C-q" quoted-insert)
+(keymap-global-set "C-S-o" duplicate-dwim)
 
 (define (setup-self-insert-keys)
   "Bind all printable characters to self-insert-command in global keymap."
@@ -119,6 +122,9 @@
 
 (setup-self-insert-keys)
 
+(define post-self-insert-hook '())
+
+
 
 (define (mark-whole-buffer)
   "Put point at beginning and mark at end of buffer."
@@ -127,13 +133,13 @@
 
 (keymap-global-set "C-x h" mark-whole-buffer)
 
-
 ;; TODO
 ;; C-M-u   - backward-up-list
 ;; C-M-d   - down-list
+;; C-S-o   - duplicate-dwim
+;; C-S-M-o - copy-from-above-command
 
 ;; M-SPC   - cycle-spacing
-;; M-w     - kill-ring-save
 ;; M-k     - kill-sentence
 ;; C-M-t   - transpose-sexps
 ;; C-x C-l - downcase-region
@@ -145,6 +151,21 @@
 ;; C-x ]   - forward-page
 ;; C-x [   - backward-page
 ;; C-x C-p - mark-page
+;; C-x l   - count-lines-page
+
+;; Emacs-compatible undo system variables
+
+;;; UNDO
+
+(define undo-limit 80000)
+(define undo-strong-limit 120000)
+(define undo-outer-limit 12000000)
+(define undo-ask-before-discard nil)
+(define undo-auto-amalgamate-enabled t)
+
+(keymap-global-set "C-/" undo)
+(keymap-global-set "C-?" undo-redo)
+
 
 (define kill-glemax-hook nil)
 (set-var-doc! kill-glemax-hook
@@ -171,6 +192,10 @@ see kill-glemax-query-functions instead.")
 (set-var-doc! eval-prompt
 "String to display before evaluation results when `eval-display-prompt' is #t.")
 
+(define next-screen-context-lines 2)
+(set-var-doc! next-screen-context-lines
+"Number of lines of continuity when scrolling by screenfuls.")
+
 
 (define blink-cursor-mode #t)
 (set-var-doc! blink-cursor-mode
@@ -189,10 +214,18 @@ See also `blink-cursor-interval' and `blink-cursor-delay'.")
 face foreground color at point.")
 
 
+(define cursor-in-non-selected-windows nil)
+(set-var-doc! cursor-in-non-selected-windows
+"Non-nil means show a cursor in non-selected windows.
+If nil, only shows a cursor in the selected window.
+If t, displays a cursor related to the usual cursor type
+(a solid box becomes hollow, a bar becomes a narrower bar).
+You can also specify the cursor type as in the `cursor-type' variable.")
+
+
 (define visible-mark-mode #t)
 (set-var-doc! visible-mark-mode
 "#t if the mark should be visible.")
-
 
 
 (define make-pointer-invisible #t)
@@ -234,6 +267,22 @@ Use 0 or negative value to blink forever.")
 (set-var-doc! blink-cursor-delay
 "Seconds of idle time before the first blink of the cursor.
 TODO Values smaller than 0.2 sec are treated as 0.2 sec.")
+
+
+(define duplicate-line-final-position 0)
+(set-var-doc! duplicate-line-final-position
+"Where to put point after `duplicate-line' or `duplicate-dwim'.
+When 0, leave point on the original line.
+When 1, move point to the first new line.
+When -1, move point to the last new line.
+The same column is preserved after moving to a new line.")
+
+(define duplicate-region-final-position 0)
+(set-var-doc! duplicate-region-final-position
+"Where the region ends up after duplicating a region with `duplicate-region'.
+When 0, leave the region in place.
+When 1, put the region around the first copy.
+When -1, put the region around the last copy.")
 
 
 ;; C-x k BUG
@@ -472,7 +521,7 @@ IGNORE argument.  In order to have `split-window' make a window
 shorter, explicitly specify the SIZE argument of that function.")
 
 (define frame-resize-pixelwise #f)
-(set-var-doc! window-resize-pixelwise
+(set-var-doc! frame-resize-pixelwise
 "#t means resize frames pixelwise.
 If this option is #f, resizing a frame rounds its sizes to the frame's
 current values of `frame-char-height' and `frame-char-width'.  If this
@@ -602,6 +651,10 @@ of vertical motion commands.")
 \\[set-goal-column], or #f.
 A non #f setting overrides the variable `line-move-visual', which see.")
 
+(defvar-local line-move-visual-goal-x nil
+  "Pixel x goal position for visual line movement. Nil when not in a movement sequence.")
+
+
 (define (set-goal-column)
   (if raw-prefix-arg
       (begin
@@ -680,4 +733,8 @@ INTERVAL-LENGTH specifies how many characters each face segment should be."
 
 ;; (load-theme 'modus-vivendi)
 (scheme-mode)
+
+
+(load-theme 'modus-vivendi)
+(rainbow-delimiters-mode)
 

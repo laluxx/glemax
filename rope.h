@@ -136,9 +136,7 @@ uint32_t utf8_decode(const char *str, size_t len, size_t *bytes_read);
 
 #endif /* ROPE_H */
 
-/* ============================================================================
- * IMPLEMENTATION
- * ========================================================================= */
+/// IMPLEMENTATION
 
 #ifdef ROPE_IMPLEMENTATION
 
@@ -193,9 +191,7 @@ struct rope {
 static rope_node_t *node_pool[NODE_POOL_SIZE];
 static size_t node_pool_count = 0;
 
-/* ============================================================================
- * UTF-8 UTILITIES
- * ========================================================================= */
+/// UTF-8 UTILITIES
 
 /* Get UTF-8 character byte length from first byte */
 size_t utf8_char_len(uint8_t first_byte) {
@@ -322,9 +318,7 @@ static bool validate_utf8(const char *str, size_t len) {
     return true;
 }
 
-/* ============================================================================
- * MEMORY MANAGEMENT
- * ========================================================================= */
+/// MEMORY MANAGEMENT
 
 static inline rope_node_t *node_alloc(void) {
     rope_node_t *node;
@@ -345,18 +339,14 @@ static inline void node_free(rope_node_t *node) {
     }
 }
 
-/* ============================================================================
- * FORWARD DECLARATIONS
- * ========================================================================= */
+/// FORWARD DECLARATIONS
 
 static size_t node_byte_len(const rope_node_t *node);
 static size_t node_char_len(const rope_node_t *node);
 static size_t node_newline_count(const rope_node_t *node);
 static void node_update_weights(rope_node_t *node);
 
-/* ============================================================================
- * NODE CONSTRUCTION
- * ========================================================================= */
+/// NODE CONSTRUCTION
 
 /* Create leaf node from UTF-8 string */
 static rope_node_t *node_new_leaf(const char *str, size_t byte_len) {
@@ -414,9 +404,7 @@ static void node_deep_free(rope_node_t *node) {
     node_free(node);
 }
 
-/* ============================================================================
- * NODE METRICS
- * ========================================================================= */
+/// NODE METRICS
 
 static size_t node_byte_len(const rope_node_t *node) {
     if (!node) return 0;
@@ -452,9 +440,7 @@ static void node_update_weights(rope_node_t *node) {
     }
 }
 
-/* ============================================================================
- * RED-BLACK TREE OPERATIONS
- * ========================================================================= */
+/// RED-BLACK TREE OPERATIONS
 
 static inline rb_color_t node_color(const rope_node_t *node) {
     return node ? node->color : RB_BLACK;
@@ -538,9 +524,7 @@ static rope_node_t *balance(rope_node_t *node) {
     return node;
 }
 
-/* ============================================================================
- * CORE ROPE OPERATIONS
- * ========================================================================= */
+/// CORE ROPE OPERATIONS
 
 rope_t *rope_new(void) {
     rope_t *rope = (rope_t *)calloc(1, sizeof(rope_t));
@@ -583,9 +567,7 @@ rope_stats_t rope_stats(const rope_t *rope) {
     return stats;
 }
 
-/* ============================================================================
- * CHARACTER ACCESS
- * ========================================================================= */
+/// CHARACTER ACCESS
 
 /* Convert character position to byte position */
 size_t rope_char_to_byte(const rope_t *rope, size_t char_pos) {
@@ -695,9 +677,7 @@ uint32_t rope_char_at(const rope_t *rope, size_t char_pos) {
     return 0;
 }
 
-/* ============================================================================
- * COPY OPERATIONS
- * ========================================================================= */
+/// COPY OPERATIONS
 
 size_t rope_copy_bytes(const rope_t *rope, size_t byte_start, size_t byte_len,
                        char *buf, size_t bufsize) {
@@ -770,9 +750,7 @@ size_t rope_copy_chars(const rope_t *rope, size_t char_start, size_t char_len,
     return rope_copy_bytes(rope, byte_start, byte_len, buf, bufsize);
 }
 
-/* ============================================================================
- * CONCATENATION
- * ========================================================================= */
+/// CONCATENATION
 
 rope_t *rope_concat(rope_t *left, rope_t *right) {
     if (!left || left->byte_len == 0) {
@@ -800,9 +778,7 @@ rope_t *rope_concat(rope_t *left, rope_t *right) {
     return result;
 }
 
-/* ============================================================================
- * SPLIT OPERATIONS)
- * ========================================================================= */
+/// SPLIT OPERATIONS)
 
 /* Split leaf node at byte position */
 static void split_leaf(rope_node_t *leaf, size_t byte_pos,
@@ -935,9 +911,7 @@ rope_t *rope_split_chars(rope_t *rope, size_t char_pos, rope_t **right_out) {
     return rope_split_bytes(rope, byte_pos, right_out);
 }
 
-/* ============================================================================
- * INSERTION OPERATIONS
- * ========================================================================= */
+/// INSERTION OPERATIONS
 
 static rope_node_t *node_insert_bytes(rope_node_t *node, size_t byte_pos,
                                       const char *str, size_t len);
@@ -1013,9 +987,7 @@ rope_t *rope_insert_chars(rope_t *rope, size_t char_pos,
     return rope_insert_bytes(rope, byte_pos, str, len);
 }
 
-/* ============================================================================
- * DELETION OPERATIONS
- * ========================================================================= */
+/// DELETION OPERATIONS
 
 rope_t *rope_delete_bytes(rope_t *rope, size_t byte_start, size_t byte_len) {
     if (!rope || byte_start >= rope->byte_len) return rope;
@@ -1050,9 +1022,7 @@ rope_t *rope_delete_chars(rope_t *rope, size_t char_start, size_t char_len) {
     return rope_delete_bytes(rope, byte_start, byte_len);
 }
 
-/* ============================================================================
- * SUBSTRING OPERATIONS
- * ========================================================================= */
+/// SUBSTRING OPERATIONS
 
 rope_t *rope_substring_bytes(const rope_t *rope, size_t start, size_t len) {
     if (!rope || start >= rope->byte_len) return rope_new();
@@ -1077,9 +1047,7 @@ rope_t *rope_substring_chars(const rope_t *rope, size_t start, size_t len) {
     return rope_substring_bytes(rope, byte_start, byte_len);
 }
 
-/* ============================================================================
- * UTILITY OPERATIONS
- * ========================================================================= */
+/// UTILITY OPERATIONS
 
 char *rope_to_string(const rope_t *rope, size_t *len_out) {
     if (!rope || rope->byte_len == 0) {
@@ -1135,9 +1103,7 @@ bool rope_validate_utf8(const rope_t *rope) {
 }
 
 
-/* ============================================================================
- * CHUNK-BASED IMPLEMENTATION
- * ========================================================================= */
+/// CHUNK-BASED IMPLEMENTATION
 
 // Get the leaf (chunk) containing a character position
 // Returns the leaf node, and sets out_char_offset to the char position within the leaf
@@ -1220,9 +1186,7 @@ bool rope_prev_chunk(const rope_t *rope, chunk_info_t *current, chunk_info_t *pr
 }
 
 
-/* ============================================================================
- * ITERATOR IMPLEMENTATION
- * ========================================================================= */
+/// ITERATOR IMPLEMENTATION
 
 typedef struct {
     rope_node_t *stack[128];
@@ -1444,9 +1408,7 @@ void rope_iter_destroy(rope_iter_t *iter) {
     }
 }
 
-/* ============================================================================
- * LINE OPERATIONS
- * ========================================================================= */
+/// LINE OPERATIONS
 
 size_t rope_line_count(const rope_t *rope) {
     return rope ? rope->newlines + 1 : 1;

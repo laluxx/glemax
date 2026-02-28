@@ -18,6 +18,12 @@ static bool minibuffer_exit_requested = false;
 static bool minibuffer_abort_requested = false;
 static char *minibuffer_result = NULL;
 
+// Caches
+bool frame_resized_since_last_complete = false;
+static int last_completion_column_count = 0;
+static int last_completion_count = 0;
+static size_t last_completion_max_len = 0;
+
 #define DEFAULT_HISTORY_LENGTH 100
 
 /// History
@@ -436,7 +442,9 @@ void deactivate_minibuffer() {
 
 void keyboard_quit() {
     deactivate_mark();
-    if (selected_frame->wm.selected == selected_frame->wm.minibuffer_window) {
+    Window *selected = selected_frame->wm.selected;
+    if (selected == selected_frame->wm.minibuffer_window ||
+        selected->buffer == get_buffer("*Completions*")) {
         // Signal abort from minibuffer
         minibuffer_abort_requested = true;
         minibuffer_exit_requested = true;
@@ -815,6 +823,11 @@ static void display_completions(SCM completions, const char *input) {
     if (num_columns < 1) num_columns = 1;
     if (num_columns > count) num_columns = count;
 
+    // Cache
+    last_completion_column_count = num_columns;
+    last_completion_count        = count;
+    last_completion_max_len      = max_len;
+
     // Insert completions
     size_t first_completion_end = 0;
     for (int i = 0; i < item_idx; i++) {
@@ -834,7 +847,7 @@ static void display_completions(SCM completions, const char *input) {
             put_text_property(completions_buf, start_pos, start_pos + common_len,
                              face_sym, scm_from_int(common_part_face));
         }
-        if (common_len < items[i].len) {
+        if (input && *input != '\0' && common_len < items[i].len) {
             put_text_property(completions_buf, start_pos + common_len,
                              start_pos + common_len + 1,
                              face_sym, scm_from_int(first_diff_face));
@@ -851,23 +864,24 @@ static void display_completions(SCM completions, const char *input) {
             completions_buf->rope = rope_insert_chars(completions_buf->rope, pos, "\n", 1);
             pos += 1;
         } else {
-            // Not end of row - add SPACES then TAB to align
-            size_t padding = max_len - items[i].len;
-
-            // Add padding spaces
-            if (padding > 0) {
-                char spaces[256];
-                memset(spaces, ' ', padding);
-                spaces[padding] = '\0';
-                completions_buf->rope = rope_insert_chars(completions_buf->rope, pos,
-                                                          spaces, padding);
-                pos += padding;
-            }
-
-            // Add tab
+            // Insert a tab with display property (space :align-to N)
+            // to align to the start of the next column slot
             completions_buf->rope = rope_insert_chars(completions_buf->rope, pos, "\t", 1);
+
+            int next_col_idx = (i % num_columns) + 1;
+            int target_pixel = next_col_idx * column_width * (int)selected_frame->column_width;
+
+            SCM space_spec = scm_list_3(
+                scm_from_utf8_symbol("space"),
+                scm_from_utf8_symbol(":align-to"),
+                scm_from_int(target_pixel)
+            );
+            put_text_property(completions_buf, pos, pos + 1,
+                              scm_from_utf8_symbol("display"),
+                              space_spec);
             pos += 1;
         }
+
     }
 
     // Cleanup
@@ -887,6 +901,7 @@ static void display_completions(SCM completions, const char *input) {
     completions_buf->read_only = true;
 
     // Display window
+
     Window *leaves[256];
     int window_count = 0;
     collect_leaf_windows(selected_frame->wm.root, leaves, &window_count);
@@ -899,52 +914,190 @@ static void display_completions(SCM completions, const char *input) {
         }
     }
 
+    // Count lines in the completed buffer to size the window
+    int line_count = 0;
+    {
+        size_t buf_len = rope_char_length(completions_buf->rope);
+        for (size_t i = 0; i < buf_len; i++) {
+            char c;
+            rope_copy_chars(completions_buf->rope, i, 1, &c, 1);
+            if (c == '\n') line_count++;
+        }
+        // Count final line if no trailing newline
+        if (buf_len > 0) {
+            char last;
+            rope_copy_chars(completions_buf->rope, buf_len - 1, 1, &last, 1);
+            if (last != '\n') line_count++;
+        }
+    }
+
+    // At least 3 lines, no upper cap — let the window be as tall as the content
+    // NOTE The ? 3 is not really needed
+    int desired_lines = line_count < 3 ? 3 : line_count;
+
     if (!existing) {
-        Window *bottom = split_root_window_below(6);
+        Window *bottom = split_root_window_below(-desired_lines);
         if (bottom) {
             bottom->buffer = completions_buf;
-            bottom->point = first_completion_start;  // Start at first completion
+            bottom->point = first_completion_start;
         }
     } else {
-        // Update existing window's point
         existing->point = first_completion_start;
+        fit_window_to_buffer(existing);
     }
+}
+
+static void close_completion_window() {
+    Buffer *completions_buf = get_buffer("*Completions*");
+    if (!completions_buf) return;
+
+    Window *leaves[256];
+    int window_count = 0;
+    collect_leaf_windows(selected_frame->wm.root, leaves, &window_count);
+
+    Window *completions_win = NULL;
+    for (int i = 0; i < window_count; i++) {
+        if (leaves[i]->buffer == completions_buf) {
+            completions_win = leaves[i];
+            break;
+        }
+    }
+    if (!completions_win) return;
+
+    Window *mb_win = selected_frame->wm.minibuffer_window;
+    size_t mb_pt = mb_win->point;
+
+    // The completions window is always the right/bottom child of root
+    // (created by split_root_window_below). Its sibling is top_wrapper
+    // which contains all the real windows. Promote it back to root.
+    Window *parent = completions_win->parent;
+    if (!parent) return;
+
+    Window *sibling = (parent->left == completions_win) ? parent->right : parent->left;
+    if (!sibling) return;
+
+    // Promote sibling to take parent's place
+    sibling->parent = parent->parent;
+    if (parent->parent) {
+        if (parent->parent->left == parent)
+            parent->parent->left = sibling;
+        else
+            parent->parent->right = sibling;
+    } else {
+        selected_frame->wm.root = sibling;
+    }
+
+    sibling->x = parent->x;
+    sibling->y = parent->y;
+    sibling->width = parent->width;
+    sibling->height = parent->height;
+
+    free(completions_win);
+    free(parent);
+    selected_frame->wm.window_count--;
+
+    // Restore minibuffer as selected — do NOT touch current_buffer's pt
+    // via set_buffer, just wire everything up directly
+    selected_frame->wm.selected->is_selected = false;
+    selected_frame->wm.selected = mb_win;
+    mb_win->is_selected = true;
+    current_buffer = mb_win->buffer;
+    current_buffer->pt = mb_pt;
+    mb_win->point = mb_pt;
+
+    wm_recalculate_layout();
 }
 
 void minibuffer_complete() {
     if (!selected_frame->wm.minibuffer_active) return;
 
-    // HACK: If no collection, just return
     if (scm_is_false(completion_collection)) {
         message("No completion collection set");
         return;
     }
 
-    // HACK: Verify collection is a list
     if (!scm_is_true(scm_list_p(completion_collection))) {
         message("Completion collection is not a list!");
         return;
     }
 
+    bool repeated = is_scm_proc(last_command, "minibuffer-complete");
+
+    if (repeated && frame_resized_since_last_complete && last_completion_max_len > 0) {
+        // Resize happened — only scroll if column count wouldn't change
+        Buffer *completions_buf = get_buffer("*Completions*");
+        Window *completions_win = completions_buf ? get_buffer_window(completions_buf) : NULL;
+        if (completions_win) {
+            int window_width = completions_win->width / selected_frame->column_width;
+            if (window_width < 40) window_width = 80;
+            int new_columns = window_width / ((int)last_completion_max_len + 8);
+            if (new_columns < 1) new_columns = 1;
+            if (new_columns > last_completion_count) new_columns = last_completion_count;
+            repeated = (new_columns == last_completion_column_count);
+        }
+    }
+    frame_resized_since_last_complete = false;
+
+    if (repeated) {
+        Buffer *completions_buf = get_buffer("*Completions*");
+        Window *completions_win = completions_buf ? get_buffer_window(completions_buf) : NULL;
+
+        if (completions_win) {
+            Window *saved_selected = selected_frame->wm.selected;
+            Buffer *saved_buffer   = current_buffer;
+            size_t  saved_pt       = saved_buffer->pt;
+
+            selected_frame->wm.selected = completions_win;
+            current_buffer              = completions_buf;
+            current_buffer->pt          = completions_win->point;
+
+            Font *font          = face_cache->faces[FACE_DEFAULT]->font;
+            float line_height   = font->ascent + font->descent;
+            float usable_height = completions_win->height - line_height;
+            float scroll_bottom = completions_win->scrolly + usable_height;
+
+            size_t total_lines = 0;
+            rope_iter_t iter;
+            rope_iter_init(&iter, completions_buf->rope, 0);
+            uint32_t ch;
+            while (rope_iter_next_char(&iter, &ch)) {
+                if (ch == '\n') total_lines++;
+            }
+            rope_iter_destroy(&iter);
+            float last_line_y = total_lines * line_height;
+
+            if (scroll_bottom >= last_line_y) {
+                // End visible — wrap to top
+                completions_win->scrolly = 0;
+                completions_win->point   = 0;
+                current_buffer->pt       = 0;
+            } else {
+                // Scroll down one screen
+                scroll_up_command();
+                completions_win->point = current_buffer->pt;
+            }
+
+            selected_frame->wm.selected = saved_selected;
+            current_buffer              = saved_buffer;
+            current_buffer->pt          = saved_pt;
+            return;
+        }
+        // Window gone — fall through to re-show completions
+    }
+
     char *input = get_minibuffer_contents();
     if (!input) input = strdup("");
 
-    // DEBUG: Print what we got
-    fprintf(stderr, "DEBUG: input='%s', input_empty=%d\n", input, *input == '\0');
-
-    // NUCLEAR HACK: If input is empty, manually build the list
     SCM all_matches;
     if (*input == '\0') {
-        // Just return the entire collection for empty input
         all_matches = SCM_EOL;
         SCM tail = completion_collection;
         while (scm_is_pair(tail)) {
             SCM item = scm_car(tail);
-            if (scm_is_symbol(item)) {
+            if (scm_is_symbol(item))
                 all_matches = scm_cons(scm_symbol_to_string(item), all_matches);
-            } else if (scm_is_string(item)) {
+            else if (scm_is_string(item))
                 all_matches = scm_cons(item, all_matches);
-            }
             tail = scm_cdr(tail);
         }
         all_matches = scm_reverse(all_matches);
@@ -954,56 +1107,6 @@ void minibuffer_complete() {
 
     int match_count = scm_to_int(scm_length(all_matches));
 
-    // DEBUG: Print match count
-    fprintf(stderr, "DEBUG: match_count=%d\n", match_count);
-
-    // Handle empty input specially
-    if (*input == '\0') {
-        if (match_count == 0) {
-            message("No match");
-            free(input);
-            return;
-        }
-
-        if (match_count == 1) {
-            // Single completion - insert it immediately without showing window
-            SCM match = scm_car(all_matches);
-            char *completion = scm_to_locale_string(match);
-
-            // Insert completion
-            Buffer *mb = selected_frame->wm.minibuffer_window->buffer;
-            size_t prompt_end = 0;
-            SCM field_sym = scm_from_locale_symbol("field");
-            size_t total_len = rope_char_length(mb->rope);
-
-            // Find where the prompt ends (last char with field property + 1)
-            for (size_t i = 0; i < total_len; i++) {
-                SCM field = get_text_property(mb, i, field_sym);
-                if (scm_is_true(field)) {
-                    prompt_end = i + 1;  // Update to position after this field char
-                } else {
-                    break;  // Stop at first non-field char
-                }
-            }
-
-            // Insert new completion
-            size_t comp_len = strlen(completion);
-            mb->rope = rope_insert_chars(mb->rope, prompt_end, completion, comp_len);
-            mb->pt = prompt_end + comp_len;
-            selected_frame->wm.minibuffer_window->point = mb->pt;
-
-            free(completion);
-            free(input);
-            return;
-        }
-
-        // Multiple completions - show all of them
-        display_completions(all_matches, input);
-        free(input);
-        return;
-    }
-
-    // Non-empty input from here on
     if (match_count == 0) {
         message("No match");
         free(input);
@@ -1011,15 +1114,10 @@ void minibuffer_complete() {
     }
 
     if (match_count == 1) {
-        // Single match - insert it immediately
         SCM match = scm_car(all_matches);
-        if (scm_is_symbol(match)) {
-            match = scm_symbol_to_string(match);
-        }
-
+        if (scm_is_symbol(match)) match = scm_symbol_to_string(match);
         char *completion = scm_to_locale_string(match);
 
-        // Already complete?
         if (strcasecmp(input, completion) == 0) {
             message("Sole completion");
             free(completion);
@@ -1027,31 +1125,27 @@ void minibuffer_complete() {
             return;
         }
 
-        // Insert completion
-        Buffer *mb = selected_frame->wm.minibuffer_window->buffer;
+        close_completion_window();
+
+        Buffer *mb        = selected_frame->wm.minibuffer_window->buffer;
+        SCM field_sym     = scm_from_locale_symbol("field");
+        size_t total_len  = rope_char_length(mb->rope);
         size_t prompt_end = 0;
-        SCM field_sym = scm_from_locale_symbol("field");
-        size_t total_len = rope_char_length(mb->rope);
 
         for (size_t i = 0; i < total_len; i++) {
             SCM field = get_text_property(mb, i, field_sym);
-            if (scm_is_false(field) || scm_is_null(field)) {
-                prompt_end = i;
-                break;
-            }
+            if (scm_is_false(field) || scm_is_null(field)) { prompt_end = i; break; }
         }
 
-        // Delete old input
         size_t old_len = total_len - prompt_end;
         if (old_len > 0) {
             remove_text_properties(mb, prompt_end, total_len);
             mb->rope = rope_delete_chars(mb->rope, prompt_end, old_len);
         }
 
-        // Insert new completion
         size_t comp_len = strlen(completion);
         mb->rope = rope_insert_chars(mb->rope, prompt_end, completion, comp_len);
-        mb->pt = prompt_end + comp_len;
+        mb->pt   = prompt_end + comp_len;
         selected_frame->wm.minibuffer_window->point = mb->pt;
 
         free(completion);
@@ -1059,7 +1153,6 @@ void minibuffer_complete() {
         return;
     }
 
-    // Multiple matches - try common prefix
     SCM result = try_completion_internal(input, completion_collection);
 
     if (scm_is_false(result)) {
@@ -1070,49 +1163,40 @@ void minibuffer_complete() {
 
     char *completion = scm_to_locale_string(result);
 
-    // Can we complete further?
-    if (strcasecmp(input, completion) == 0) {
-        // No - show list
+    if (strcasecmp(input, completion) != 0) {
+        close_completion_window();
+
+        Buffer *mb        = selected_frame->wm.minibuffer_window->buffer;
+        SCM field_sym     = scm_from_locale_symbol("field");
+        size_t total_len  = rope_char_length(mb->rope);
+        size_t prompt_end = 0;
+
+        for (size_t i = 0; i < total_len; i++) {
+            SCM field = get_text_property(mb, i, field_sym);
+            if (scm_is_false(field) || scm_is_null(field)) { prompt_end = i; break; }
+        }
+
+        size_t old_len = total_len - prompt_end;
+        if (old_len > 0) {
+            remove_text_properties(mb, prompt_end, total_len);
+            mb->rope = rope_delete_chars(mb->rope, prompt_end, old_len);
+        }
+
+        size_t comp_len = strlen(completion);
+        mb->rope = rope_insert_chars(mb->rope, prompt_end, completion, comp_len);
+        mb->pt   = prompt_end + comp_len;
+        selected_frame->wm.minibuffer_window->point = mb->pt;
+    } else {
         bool is_valid = is_exact_completion(input, completion_collection);
-        if (is_valid) {
-            message("Complete, but not unique");
-        }
+        if (is_valid) message("Complete, but not unique");
         display_completions(all_matches, input);
-        free(completion);
-        free(input);
-        return;
     }
-
-    // Yes - insert common prefix
-    Buffer *mb = selected_frame->wm.minibuffer_window->buffer;
-    size_t prompt_end = 0;
-    SCM field_sym = scm_from_locale_symbol("field");
-    size_t total_len = rope_char_length(mb->rope);
-
-    for (size_t i = 0; i < total_len; i++) {
-        SCM field = get_text_property(mb, i, field_sym);
-        if (scm_is_false(field) || scm_is_null(field)) {
-            prompt_end = i;
-            break;
-        }
-    }
-
-    // Delete old
-    size_t old_len = total_len - prompt_end;
-    if (old_len > 0) {
-        remove_text_properties(mb, prompt_end, total_len);
-        mb->rope = rope_delete_chars(mb->rope, prompt_end, old_len);
-    }
-
-    // Insert new
-    size_t comp_len = strlen(completion);
-    mb->rope = rope_insert_chars(mb->rope, prompt_end, completion, comp_len);
-    mb->pt = prompt_end + comp_len;
-    selected_frame->wm.minibuffer_window->point = mb->pt;
 
     free(completion);
     free(input);
 }
+
+
 
 void minibuffer_complete_and_exit() {
     if (!selected_frame->wm.minibuffer_active) return;

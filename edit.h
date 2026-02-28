@@ -5,9 +5,12 @@
 
 extern bool transient_mark_mode_should_be_disabled;
 extern const char *last_notation;
+extern bool quoted_insert_pending;
 
 void message(const char *format, ...);
 void insert(const char *text);
+void quoted_insert();
+bool quoted_insert_interceptor(int key, int action, int mods);
 void self_insert_command();
 void delete_backward_char();
 void delete_char();
@@ -57,6 +60,10 @@ void rkill(size_t start, size_t end, bool prepend);
 void kill_line();
 void kill_region();
 void yank();
+
+void duplicate_line();
+void duplicate_region();
+void duplicate_dwim();
 
 /// WORDS
 
