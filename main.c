@@ -49,51 +49,51 @@ void before_keychord_hook(const char *notation, KeyChordBinding *binding) {
 }
 
 // TODO This is bad we should not *really* apply the face, just render it
-void update_region_highlight(Buffer *buf) {
-    // First, remove any existing region face properties
-    // We'll use a special key to track region highlighting
-    SCM region_key = scm_from_locale_symbol("region-overlay");
+/* void update_region_highlight(Buffer *buf) { */
+/*     // First, remove any existing region face properties */
+/*     // We'll use a special key to track region highlighting */
+/*     SCM region_key = scm_from_locale_symbol("region-overlay"); */
 
-    // Clear old region highlighting
-    if (buf->props) {
-        TextProp *prop = buf->props;
-        while (prop) {
-            SCM has_region = get_text_property(buf, prop->start, region_key);
-            if (scm_is_true(has_region)) {
-                // Remove the face property from this interval
-                remove_text_properties(buf, prop->start, prop->end);
-            }
-            prop = prop->next;
-        }
-    }
+/*     // Clear old region highlighting */
+/*     if (buf->props) { */
+/*         TextProp *prop = buf->props; */
+/*         while (prop) { */
+/*             SCM has_region = get_text_property(buf, prop->start, region_key); */
+/*             if (scm_is_true(has_region)) { */
+/*                 // Remove the face property from this interval */
+/*                 remove_text_properties(buf, prop->start, prop->end); */
+/*             } */
+/*             prop = prop->next; */
+/*         } */
+/*     } */
 
-    // Apply new region highlighting if region is active
-    if (buf->region.active && buf->region.mark >= 0) {
-        size_t start, end;
-        if (buf->region.mark < buf->pt) {
-            start = buf->region.mark;
-            end = buf->pt;
-        } else {
-            start = buf->pt;
-            end = buf->region.mark;
-        }
+/*     // Apply new region highlighting if region is active */
+/*     if (buf->region.active && buf->region.mark >= 0) { */
+/*         size_t start, end; */
+/*         if (buf->region.mark < buf->pt) { */
+/*             start = buf->region.mark; */
+/*             end = buf->pt; */
+/*         } else { */
+/*             start = buf->pt; */
+/*             end = buf->region.mark; */
+/*         } */
 
-        if (start != end) {
-            SCM face_sym = scm_from_locale_symbol("face");
-            SCM face_val = scm_from_int(FACE_REGION);
-            put_text_property(buf, start, end, face_sym, face_val);
-            // Mark this as region overlay so we can clean it up later
-            put_text_property(buf, start, end, region_key, SCM_BOOL_T);
-        }
-    }
-}
+/*         if (start != end) { */
+/*             SCM face_sym = scm_from_locale_symbol("face"); */
+/*             SCM face_val = scm_from_int(FACE_REGION); */
+/*             put_text_property(buf, start, end, face_sym, face_val); */
+/*             // Mark this as region overlay so we can clean it up later */
+/*             put_text_property(buf, start, end, region_key, SCM_BOOL_T); */
+/*         } */
+/*     } */
+/* } */
 
 void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
     reset_cursor_blink(current_buffer);
     update_windows_scroll();
     int arg = get_prefix_arg();
 
-    update_region_highlight(current_buffer);
+    /* update_region_highlight(current_buffer); */ // HERE
 
     if (!is_scm_proc(binding->action.scheme_proc, "recenter-top-bottom") &&
         !is_scm_proc(binding->action.scheme_proc, "move-to-window-line-top-bottom"))
@@ -520,7 +520,7 @@ void mouse_button_callback(int button, int action, int mods) {
 
                 // Normal click - set point to clicked position within the window
                 mouse_set_point(clicked_window, x, y);
-                update_region_highlight(clicked_window->buffer);
+                /* update_region_highlight(clicked_window->buffer); */ // HERE
             }
         } else if (action == RELEASE) {
             // Handle window selection on release for draggable modelines

@@ -130,6 +130,12 @@ size_t rope_byte_to_line(const rope_t *rope, size_t byte_pos);
 size_t utf8_char_len(uint8_t first_byte);
 uint32_t utf8_decode(const char *str, size_t len, size_t *bytes_read);
 
+/* Visit every newline in the rope, calling callback(char_pos, userdata) for each */
+void rope_each_newline(const rope_t *rope,
+                       void (*callback)(size_t char_pos, void *userdata),
+                       void *userdata);
+
+
 #ifdef __cplusplus
 }
 #endif
@@ -1446,5 +1452,49 @@ size_t rope_line_to_byte(const rope_t *rope, size_t line) {
     size_t char_pos = rope_line_to_char(rope, line);
     return rope_char_to_byte(rope, char_pos);
 }
+
+
+void rope_each_newline(const rope_t *rope,
+                       void (*callback)(size_t char_pos, void *userdata),
+                       void *userdata) {
+    if (!rope || !rope->root) return;
+
+    rope_node_t *stack[128];
+    int sp = 0;
+    rope_node_t *node = rope->root;
+    size_t char_pos = 0;
+
+    while (node || sp > 0) {
+        while (node) {
+            if (!node->is_leaf) {
+                stack[sp++] = node;
+                node = node->branch.left;
+            } else {
+                break;
+            }
+        }
+
+        if (node && node->is_leaf) {
+            const char *data = node->leaf.data;
+            size_t byte_len  = node->leaf.byte_len;
+            size_t byte_pos  = 0;
+
+            while (byte_pos < byte_len) {
+                unsigned char c = (unsigned char)data[byte_pos];
+                if (c == '\n') {
+                    callback(char_pos, userdata);
+                }
+                byte_pos += utf8_char_len(c);
+                char_pos++;
+            }
+            node = NULL;
+        }
+
+        if (sp > 0) {
+            node = stack[--sp]->branch.right;
+        }
+    }
+}
+
 
 #endif /* ROPE_IMPLEMENTATION */

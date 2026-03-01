@@ -99,6 +99,11 @@
 (keymap-global-set "C-x C-f" find-file)
 (keymap-global-set "C-q" quoted-insert)
 (keymap-global-set "C-S-o" duplicate-dwim)
+(keymap-global-set "C-x ]" forward-page)
+(keymap-global-set "C-x [" backward-page)
+(keymap-global-set "C-x C-p" mark-page)
+(keymap-global-set "C-x l" count-lines-page)
+(keymap-global-set "C-h C-g" count-lines-page)
 
 (define (setup-self-insert-keys)
   "Bind all printable characters to self-insert-command in global keymap."
@@ -155,7 +160,9 @@
 
 ;; Emacs-compatible undo system variables
 
+
 ;;; UNDO
+
 
 (define undo-limit 80000)
 (define undo-strong-limit 120000)
@@ -176,6 +183,10 @@ in other similar situations), functions placed on this hook should not
 expect to be able to interact with the user.  To ask for confirmation,
 see kill-glemax-query-functions instead.")
 
+
+(define page-delimiter "^\014")
+(set-var-doc! page-delimiter
+"Regexp describing line-beginnings that separate pages.")
 
 
 ;; TODO SUPPORT ME!

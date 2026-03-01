@@ -5,6 +5,7 @@
 #include "frame.h"
 #include "minibuf.h"
 #include <ctype.h>
+#include <regex.h>
 
 const char *last_notation = NULL;
 
@@ -147,6 +148,8 @@ void insert(const char *text) {
     set_point(current_buffer->pt + total_char_count);
     update_goal_column();
     reset_cursor_blink(current_buffer);
+
+    newline_cache_invalidate(current_buffer);
     current_buffer->modified = true;
 
     // UNDO: Mark that we need a boundary before the next command
@@ -579,6 +582,8 @@ size_t delete_impl(size_t pos, size_t count) {
 
     adjust_all_window_points_after_modification(pos, -(int)count);
     reset_cursor_blink(current_buffer);
+
+    newline_cache_invalidate(current_buffer);
     current_buffer->modified = true;
 
     // UNDO: Mark that we need a boundary before the next command
@@ -3035,6 +3040,203 @@ void backward_paragraph() {
     forward_paragraph();
 }
 
+/// Pages
+
+static size_t line_start_at(Buffer *buffer, size_t pos) {
+    return line_at_char(buffer, pos);
+}
+
+static size_t next_line_start(Buffer *buffer, size_t pos) {
+    return next_line_at_char(buffer, pos);
+}
+
+/* static size_t line_start_at(Buffer *buffer, size_t pos) { */
+/*     if (pos == 0) return 0; */
+/*     size_t line = buffer_char_to_line(buffer, pos); */
+/*     return buffer_line_to_char(buffer, line); */
+/* } */
+
+/* static size_t next_line_start(Buffer *buffer, size_t pos) { */
+/*     size_t text_len = rope_char_length(buffer->rope); */
+/*     if (pos >= text_len) return text_len; */
+/*     size_t line = buffer_char_to_line(buffer, pos); */
+/*     return buffer_line_to_char(buffer, line + 1); */
+/* } */
+
+static bool is_page_boundary(Buffer *buffer, size_t pos) {
+    size_t text_len = rope_char_length(buffer->rope);
+    if (pos >= text_len) return false;
+    // Must be at start of a line
+    if (pos > 0 && rope_char_at(buffer->rope, pos - 1) != '\n') return false;
+    // Check first char is form feed \014 = 0x0C = 12
+    uint32_t ch = rope_char_at(buffer->rope, pos);
+    return ch == 0x0C;
+}
+
+
+void forward_page() {
+    int arg = get_prefix_arg();
+    if (arg == 0) arg = 1;
+    int direction = arg > 0 ? 1 : -1;
+    int count = abs(arg);
+
+    size_t text_len = rope_char_length(current_buffer->rope);
+    size_t pos = current_buffer->pt;
+
+    for (int i = 0; i < count; i++) {
+        if (direction > 0) {
+            pos = next_line_start(current_buffer, line_start_at(current_buffer, pos));
+            while (pos < text_len && !is_page_boundary(current_buffer, pos)) {
+                pos = next_line_start(current_buffer, pos);
+            }
+            // Land right after the ^L character, not after the whole line
+            if (pos < text_len && is_page_boundary(current_buffer, pos)) {
+                pos = pos + 1;
+            }
+        } else {
+            size_t cur_line = line_start_at(current_buffer, pos);
+            if (cur_line == 0) {
+                pos = 0;
+                continue;
+            }
+            pos = line_start_at(current_buffer, cur_line - 1);
+            while (pos > 0 && !is_page_boundary(current_buffer, pos)) {
+                pos = line_start_at(current_buffer, pos - 1);
+            }
+            // Land right after the ^L character
+            if (is_page_boundary(current_buffer, pos)) {
+                pos = pos + 1;
+            }
+        }
+    }
+
+    set_point(pos);
+    update_goal_column();
+    reset_cursor_blink(current_buffer);
+}
+
+void backward_page() {
+    int arg = get_prefix_arg();
+    if (arg == 0) arg = 1;
+    set_prefix_arg(-arg);
+    forward_page();
+}
+
+void mark_page() {
+    int arg = get_prefix_arg();
+    if (arg == 0) arg = 1;
+    size_t text_len = rope_char_length(current_buffer->rope);
+
+    if (arg != 1) {
+        set_prefix_arg(arg > 0 ? arg - 1 : arg);
+        forward_page();
+    }
+
+    size_t pos = current_buffer->pt;
+
+    // Find opening boundary: walk backward to nearest ^L or BOB
+    size_t page_start = line_start_at(current_buffer, pos);
+    if (!is_page_boundary(current_buffer, page_start)) {
+        while (page_start > 0) {
+            page_start = line_start_at(current_buffer, page_start - 1);
+            if (is_page_boundary(current_buffer, page_start)) break;
+        }
+    }
+
+    // point goes right after the ^L character (or BOB)
+    size_t point_pos = is_page_boundary(current_buffer, page_start)
+                       ? page_start + 1
+                       : page_start;
+
+    // Special case: point_pos is at EOB — we're on an empty last page.
+    // Mark the previous page instead.
+    if (point_pos >= text_len && is_page_boundary(current_buffer, page_start) && page_start > 0) {
+        // Find the previous boundary
+        size_t prev = line_start_at(current_buffer, page_start - 1);
+        while (prev > 0 && !is_page_boundary(current_buffer, prev)) {
+            prev = line_start_at(current_buffer, prev - 1);
+        }
+
+        size_t prev_point_pos = is_page_boundary(current_buffer, prev)
+                                ? prev + 1
+                                : prev;
+
+        // Closing boundary is the current ^L, include it
+        size_t prev_page_end = page_start + 1;
+
+        set_point(prev_point_pos);
+        current_buffer->region.mark   = (ssize_t)prev_page_end;
+        current_buffer->region.active = true;
+        update_goal_column();
+        reset_cursor_blink(current_buffer);
+        return;
+    }
+
+    // Find closing boundary: walk forward from start of line after point_pos
+    size_t page_end = next_line_start(current_buffer, point_pos);
+    while (page_end < text_len && !is_page_boundary(current_buffer, page_end)) {
+        page_end = next_line_start(current_buffer, page_end);
+    }
+
+    // Include up to and including the ^L character of closing boundary
+    if (page_end < text_len && is_page_boundary(current_buffer, page_end)) {
+        page_end = page_end + 1;
+    }
+
+    set_point(point_pos);
+    current_buffer->region.mark   = (ssize_t)page_end;
+    current_buffer->region.active = true;
+
+    update_goal_column();
+    reset_cursor_blink(current_buffer);
+}
+
+void count_lines_page() {
+    size_t text_len = rope_char_length(current_buffer->rope);
+    size_t pos = current_buffer->pt;
+
+    // Find opening boundary: walk backward to nearest ^L or BOB
+    size_t page_start = line_at_char(current_buffer, pos);
+    if (!is_page_boundary(current_buffer, page_start)) {
+        while (page_start > 0) {
+            page_start = line_at_char(current_buffer, page_start - 1);
+            if (is_page_boundary(current_buffer, page_start)) break;
+        }
+    }
+
+    // Content starts after the ^L line (or BOB)
+    size_t content_start = is_page_boundary(current_buffer, page_start)
+                           ? next_line_at_char(current_buffer, page_start)
+                           : page_start;
+
+    // Find closing boundary: walk forward to next ^L or EOB
+    size_t page_end = content_start;
+    while (page_end < text_len && !is_page_boundary(current_buffer, page_end)) {
+        page_end = next_line_at_char(current_buffer, page_end);
+    }
+
+    // O(log n) via newline cache binary searches
+    int lines_before = (int)count_lines(current_buffer, content_start, pos);
+    int lines_after  = (int)count_lines(current_buffer, pos, page_end);
+
+    // If page_end is EOB and last char is not a newline, count the final line
+    if (page_end >= text_len && text_len > 0) {
+        uint32_t last_ch = rope_char_at(current_buffer->rope, text_len - 1);
+        if (last_ch != '\n') lines_after++;
+    }
+
+    int total_lines = lines_before + lines_after;
+
+    bool has_page = is_page_boundary(current_buffer, page_start) ||
+                    (page_end < text_len && is_page_boundary(current_buffer, page_end));
+
+    if (has_page) {
+        message("Page has %d lines (%d + %d)", total_lines, lines_before, lines_after);
+    } else {
+        message("Buffer has %d lines (%d + %d)", total_lines, lines_before, lines_after);
+    }
+}
+
 /// TRANSPOSE
 
 void transpose_chars() {
@@ -4123,3 +4325,5 @@ void end_of_defun() {
         set_point(char_pos);
     }
 }
+
+

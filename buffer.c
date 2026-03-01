@@ -42,8 +42,18 @@ Buffer* buffer_create(const char *name) {
     buffer->cursor.blink_count = 0;
     buffer->region.active = false;
     buffer->region.mark = -1;
-    buffer->props = NULL;
+    /* buffer->props = NULL; */
+    buffer->intervals.root  = NULL;
+    buffer->intervals.count = 0;
     buffer->ts_state = NULL;
+
+    buffer->newline_cache.newline_positions = NULL;
+    buffer->newline_cache.count     = 0;
+    buffer->newline_cache.capacity  = 0;
+    buffer->newline_cache.valid     = false;
+    buffer->newline_cache.last_line = 0;
+    buffer->newline_cache.last_pos  = 0;
+
 
     undo_init(buffer);
 
@@ -126,6 +136,7 @@ void buffer_destroy(Buffer *buffer) {
     }
 
     undo_cleanup(buffer->undo_state);
+    free(buffer->newline_cache.newline_positions);
 
     free(buffer->name);
     rope_free(buffer->rope);
@@ -541,6 +552,109 @@ void message(const char *format, ...) {
     free(formatted);
 }
 
+/// Newline cache
+
+void newline_cache_invalidate(Buffer *buf) {
+    buf->newline_cache.valid     = false;
+    buf->newline_cache.last_line = 0;
+    buf->newline_cache.last_pos  = 0;
+}
+
+static void newline_cache_collect(size_t char_pos, void *userdata) {
+    NewlineCache *cache = (NewlineCache *)userdata;
+    cache->newline_positions[cache->count++] = char_pos;
+}
+
+static void newline_cache_rebuild(Buffer *buf) {
+    NewlineCache *cache = &buf->newline_cache;
+
+    size_t expected = rope_stats(buf->rope).newlines;
+    if (expected + 1 > cache->capacity) {
+        cache->capacity = (expected + 1) * 2;
+        cache->newline_positions = realloc(cache->newline_positions,
+                                           cache->capacity * sizeof(size_t));
+    }
+    cache->count = 0;
+
+    rope_each_newline(buf->rope, newline_cache_collect, cache);
+
+    cache->valid     = true;
+    cache->last_line = 0;
+    cache->last_pos  = 0;
+}
+
+static inline void newline_cache_ensure(Buffer *buf) {
+    if (!buf->newline_cache.valid)
+        newline_cache_rebuild(buf);
+}
+
+// ---------------------------------------------------------------------------
+// Newline cache public API — matching Emacs function names
+// All O(log n) after the cache is built, O(n) on first call after modification
+// ---------------------------------------------------------------------------
+
+// Internal: 0-based line index for char_pos (number of newlines before pos)
+static size_t charpos_to_linenum(Buffer *buf, size_t char_pos) {
+    newline_cache_ensure(buf);
+    NewlineCache *cache = &buf->newline_cache;
+    if (cache->count == 0) return 0;
+    size_t lo = 0, hi = cache->count;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (cache->newline_positions[mid] < char_pos)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
+// Internal: char pos of start of 0-based line N
+static size_t linenum_to_charpos(Buffer *buf, size_t line) {
+    newline_cache_ensure(buf);
+    NewlineCache *cache = &buf->newline_cache;
+    if (line == 0) return 0;
+    if (line > cache->count) return rope_char_length(buf->rope);
+    return cache->newline_positions[line - 1] + 1;
+}
+
+// count_lines(start, end) — number of newlines in [start, end)
+// Equivalent to Emacs count_lines()
+ptrdiff_t count_lines(Buffer *buf, size_t start, size_t end) {
+    if (start >= end) return 0;
+    return (ptrdiff_t)(charpos_to_linenum(buf, end) -
+                       charpos_to_linenum(buf, start));
+}
+
+// line_number_at_pos(pos) — 1-based line number at char pos
+// Equivalent to Emacs line_number_at_pos()
+ptrdiff_t line_number_at_pos(Buffer *buf, size_t pos) {
+    return (ptrdiff_t)charpos_to_linenum(buf, pos) + 1;
+}
+
+// line_at_char(pos) — char pos of the beginning of the line containing pos
+// Equivalent to Emacs line_beginning_position() internals
+size_t line_at_char(Buffer *buf, size_t pos) {
+    if (pos == 0) return 0;
+    return linenum_to_charpos(buf, charpos_to_linenum(buf, pos));
+}
+
+// next_line_at_char(pos) — char pos of the beginning of the line after pos
+size_t next_line_at_char(Buffer *buf, size_t pos) {
+    size_t text_len = rope_char_length(buf->rope);
+    if (pos >= text_len) return text_len;
+    return linenum_to_charpos(buf, charpos_to_linenum(buf, pos) + 1);
+}
+
+// buffer_line_count() — total number of lines (always >= 1)
+// Equivalent to Emacs (line-number-at-pos (point-max))
+size_t buffer_line_count(Buffer *buf) {
+    newline_cache_ensure(buf);
+    return buf->newline_cache.count + 1;
+}
+
+
+
 /// ARG
 
 // TODO Activate universal-argument-map and bind 0..9 to digit-argument
@@ -855,35 +969,51 @@ size_t find_start_position(Buffer *buffer, Window *win, float *out_start_y) {
         return 0;
     }
 
-    // Get default face font for initial calculation
     Face *default_face = get_face(FACE_DEFAULT);
     Font *default_font = default_face ? default_face->font : NULL;
     if (!default_font) {
         *out_start_y = 0;
-
         return 0;
     }
 
     float line_height = default_font->ascent + default_font->descent;
     float max_x = win->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width);
 
-    // Calculate how many lines are scrolled off the top
-    // Add a buffer of a few lines to avoid visual glitches
+    SCM truncate_lines_sym = scm_from_utf8_symbol("truncate-lines");
+    SCM truncate_lines_val = buffer_local_value(truncate_lines_sym, buffer);
+    bool truncate_lines = scm_is_true(truncate_lines_val);
+
     float lines_scrolled = (win->scrolly / line_height);
-    int skip_lines = (int)lines_scrolled - 2;  // Start 2 lines earlier for safety
+    int skip_lines = (int)lines_scrolled - 2;
     if (skip_lines < 0) skip_lines = 0;
 
-    // Find the character position at skip_lines
-    size_t pos = 0;
-    int current_line = 0;
+    size_t total_lines = buffer_line_count(buffer);
+
+    if (truncate_lines) {
+        // Each logical line == one visual line, jump directly — O(log n)
+        size_t target_line = (size_t)skip_lines;
+        if (target_line >= total_lines) target_line = total_lines > 0 ? total_lines - 1 : 0;
+
+        size_t pos = linenum_to_charpos(buffer, target_line);
+        *out_start_y = target_line * line_height;
+        return pos;
+    }
+
+    // Wrapping mode: jump to skip_lines-th logical line as a lower bound,
+    // then walk forward counting visual wrap lines from there.
+    size_t start_logical_line = (size_t)skip_lines;
+    if (start_logical_line >= total_lines)
+        start_logical_line = total_lines > 0 ? total_lines - 1 : 0;
+
+    size_t pos = linenum_to_charpos(buffer, start_logical_line);
+    int current_line = (int)start_logical_line;
     float x = 0;
 
     rope_iter_t iter;
-    rope_iter_init(&iter, buffer->rope, 0);
-
+    rope_iter_init(&iter, buffer->rope, pos);
     uint32_t ch;
+
     while (rope_iter_next_char(&iter, &ch) && current_line < skip_lines) {
-        // Get the face and font at this position
         int face_id = get_text_property_face(buffer, pos);
         Face *face = get_face(face_id);
         Font *font = (face && face->font) ? face->font : default_font;
@@ -897,15 +1027,11 @@ size_t find_start_position(Buffer *buffer, Window *win, float *out_start_y) {
                 current_line++;
                 x = 0;
             }
-
             Character *char_info = font_get_character(font, ch);
-            if (char_info) {
-                x += char_info->ax;
-            }
+            if (char_info) x += char_info->ax;
         }
         pos++;
     }
-
     rope_iter_destroy(&iter);
 
     *out_start_y = current_line * line_height;
@@ -1040,103 +1166,123 @@ static void draw_face_extension(float x, float y, float max_x,
     draw_background_span(x, extend_y, extend_width, extend_height, bg_color);
 }
 
-// This is getting too long..
+// This is getting long..
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     Face *default_face = get_face(FACE_DEFAULT);
     Font *default_font = default_face ? get_face_font(default_face) : NULL;
     if (!default_font) return;
 
     Color base_bg = theme_cache->base_bg;
-    Color base_fg = theme_cache->base_fg;
 
     float line_height = selected_frame->line_height;
-    float max_x = start_x + (win->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width));
+    float max_x = start_x + (win->width - (selected_frame->left_fringe_width +
+                                            selected_frame->right_fringe_width));
 
-    SCM truncate_lines_sym = scm_from_utf8_symbol("truncate-lines");
-    SCM truncate_lines_val = buffer_local_value(truncate_lines_sym, buffer);
+    SCM truncate_lines_val = buffer_local_value(scm_from_utf8_symbol("truncate-lines"), buffer);
     bool truncate_lines = scm_is_true(truncate_lines_val);
 
-    // Get tab width from Scheme
-    SCM tab_width_sym = scm_from_utf8_symbol("tab-width");
-    SCM tab_width_val = buffer_local_value(tab_width_sym, buffer);
-    int tab_width = scm_to_int(tab_width_val);
+    SCM tab_width_val = buffer_local_value(scm_from_utf8_symbol("tab-width"), buffer);
+    int   tab_width       = scm_to_int(tab_width_val);
     float tab_pixel_width = tab_width * selected_frame->column_width;
 
     float window_bottom = win->y;
-    float window_top = win->y + win->height;
-
-    if (!win->is_minibuffer) {
+    float window_top    = win->y + win->height;
+    if (!win->is_minibuffer)
         window_bottom += line_height;
+
+    size_t point       = win ? win->point : buffer->pt;
+    bool   is_selected = win && win->is_selected;
+    bool   mark_is_set = (buffer->region.mark >= 0);
+
+    // Region bounds — computed once, used per character
+    bool   has_region    = false;
+    size_t region_start  = 0;
+    size_t region_end    = 0;
+    Face  *region_face   = get_face(FACE_REGION);
+    bool   region_extend = region_face && region_face->extend;
+
+    bool transient_mark_mode = scm_get_bool("transient-mark-mode", false);
+    if (mark_is_set && is_selected && transient_mark_mode && buffer->region.active) {
+        has_region   = true;
+        region_start = ((size_t)buffer->region.mark < point)
+                       ? (size_t)buffer->region.mark : point;
+        region_end   = ((size_t)buffer->region.mark < point)
+                       ? point : (size_t)buffer->region.mark;
     }
 
-    size_t point = win ? win->point : buffer->pt;
-    bool is_selected = win && win->is_selected;
-    bool mark_is_set = (buffer->region.mark >= 0);
+    bool visible_mark_mode  = scm_get_bool("visible-mark-mode", false);
+    bool crystal_point_mode = scm_get_bool("crystal-point-mode", false);
+    bool should_draw_filled = is_selected && selected_frame && selected_frame->focused;
 
     float scroll_offset_y = 0;
     size_t start_pos = 0;
-
-    if (win && !win->is_minibuffer) {
+    if (win && !win->is_minibuffer)
         start_pos = find_start_position(buffer, win, &scroll_offset_y);
-    }
 
     float scroll_offset_x = (win && !win->is_minibuffer && truncate_lines) ? win->scrollx : 0;
-    float line_start_x = start_x - scroll_offset_x;
+    float line_start_x    = start_x - scroll_offset_x;
 
     float x = line_start_x;
     float y = start_y + (win && !win->is_minibuffer ? win->scrolly : 0) - scroll_offset_y;
 
-    rope_iter_t iter;
-    rope_iter_init(&iter, buffer->rope, start_pos);
+    float current_line_height          = line_height;
+    float box_line_thickness           = 1.0f;
+    bool  current_line_has_box         = false;
+    bool  previous_line_had_wrapped_box = false;
 
-    uint32_t ch;
-    size_t i = start_pos;
-    bool visible_mark_mode   = scm_get_bool("visible-mark-mode", false);
-    bool transient_mark_mode = scm_get_bool("transient-mark-mode", false);
-    bool crystal_point_mode  = scm_get_bool("crystal-point-mode", false);
-
-    float current_line_height = line_height;
-    float box_line_thickness = 1.0f;
-
-    bool current_line_has_box = false;
-    bool previous_line_had_wrapped_box = false;
-
-    // Cursor tracking
-    float cursor_x = 0, cursor_y = 0;
-    float cursor_width = 0, cursor_height = 0;
-    bool cursor_found = false;
+    // Cursor
+    float cursor_x = 0, cursor_y = 0, cursor_width = 0, cursor_height = 0;
+    bool  cursor_found = false;
     Color cursor_color;
 
-    bool should_draw_filled = is_selected && selected_frame && selected_frame->focused;
-
     // Background batching
-    float bg_span_start_x = 0;
-    float bg_span_width = 0;
-    float bg_span_y = 0;
-    float bg_span_height = 0;
+    float bg_span_start_x = 0, bg_span_width = 0;
+    float bg_span_y = 0,       bg_span_height = 0;
     Color bg_span_color = {0, 0, 0, 0};
-    bool has_bg_span = false;
+    bool  has_bg_span = false;
 
     // Box batching
-    float box_span_start_x = 0;
-    float box_span_width = 0;
-    float box_span_y = 0;
-    float box_span_height = 0;
+    float box_span_start_x = 0, box_span_width = 0;
+    float box_span_y = 0,       box_span_height = 0;
     Color box_span_color = {0, 0, 0, 0};
-    bool has_box_span = false;
-    bool box_span_no_left = false;
-    bool box_span_no_right = false;
-    bool was_in_box = false;
+    bool  has_box_span    = false;
+    bool  box_span_no_left  = false;
+    bool  box_span_no_right = false;
+    bool  was_in_box        = false;
 
-    // Track the last face for extension purposes
-    Face *last_drawn_face = NULL;
-    Font *last_drawn_font = NULL;
-    Color last_drawn_bg = base_bg;
-    bool last_face_had_box = false;
+    // Face extension tracking
+    Face  *last_drawn_face  = NULL;
+    Font  *last_drawn_font  = NULL;
+    Color  last_drawn_bg    = base_bg;
+    bool   last_face_had_box = false;
+
+    // Face run cache
+    SCM face_sym    = scm_from_utf8_symbol("face");
+    SCM display_sym = scm_from_utf8_symbol("display");
+
+    size_t i = start_pos;
+    int    current_face_id      = get_text_property_face(buffer, i);
+    size_t face_run_end         = next_single_property_change(buffer, i, face_sym);
+    SCM    current_display_prop = get_text_property(buffer, i, display_sym);
+    size_t display_run_end      = next_single_property_change(buffer, i, display_sym);
+
+    rope_iter_t iter;
+    rope_iter_init(&iter, buffer->rope, start_pos);
+    uint32_t ch;
 
     while (rope_iter_next_char(&iter, &ch)) {
-        int face_id = get_text_property_face(buffer, i);
-        Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
+
+        // Refresh face/display runs at boundaries
+        if (i >= face_run_end) {
+            current_face_id = get_text_property_face(buffer, i);
+            face_run_end    = next_single_property_change(buffer, i, face_sym);
+        }
+        if (i >= display_run_end) {
+            current_display_prop = get_text_property(buffer, i, display_sym);
+            display_run_end      = next_single_property_change(buffer, i, display_sym);
+        }
+
+        Face *face = (current_face_id == FACE_DEFAULT) ? default_face : get_face(current_face_id);
         if (!face) face = default_face;
 
         Font *char_font = get_face_font(face);
@@ -1152,26 +1298,23 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 current_line_has_box = true;
             }
         }
-
-        if (effective_font_height > current_line_height) {
+        if (effective_font_height > current_line_height)
             current_line_height = effective_font_height;
-        }
 
-        // Calculate character width - handle tabs and control chars specially
+        // Character width
         float char_width;
         bool is_control_char = (ch < 0x20 && ch != '\t' && ch != '\n') || ch == 0x7f;
+
         if (ch == '\t') {
-            // Check for display property override
-            SCM display_prop = get_text_property(buffer, i, scm_from_utf8_symbol("display"));
-            if (scm_is_pair(display_prop) &&
-                scm_is_symbol(scm_car(display_prop))) {
-                char *head_str = scm_to_locale_string(scm_symbol_to_string(scm_car(display_prop)));
+            if (scm_is_pair(current_display_prop) &&
+                scm_is_symbol(scm_car(current_display_prop))) {
+                char *head_str = scm_to_locale_string(
+                    scm_symbol_to_string(scm_car(current_display_prop)));
                 bool is_space_spec = strcmp(head_str, "space") == 0;
                 free(head_str);
-
                 if (is_space_spec) {
-                    SCM plist = scm_cdr(display_prop);
-                    char_width = tab_pixel_width; // fallback
+                    SCM plist = scm_cdr(current_display_prop);
+                    char_width = tab_pixel_width;
                     while (scm_is_pair(plist) && scm_is_pair(scm_cdr(plist))) {
                         SCM key = scm_car(plist);
                         SCM val = scm_cadr(plist);
@@ -1195,7 +1338,6 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 char_width = tab_pixel_width;
             }
         } else if (is_control_char) {
-            // Rendered as ^X — width of two characters
             uint32_t visible = (ch == 0x7f) ? '?' : (ch + 64);
             char_width = character_width(char_font, '^') +
                          character_width(char_font, visible);
@@ -1203,31 +1345,41 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             char_width = character_width(char_font, ch);
         }
 
-        bool at_cursor = (i == point);
-        bool at_mark = mark_is_set && is_selected && visible_mark_mode && !transient_mark_mode &&
-                       i == (size_t)buffer->region.mark && (size_t)buffer->region.mark != point;
+        bool at_cursor    = (i == point);
+        bool at_mark      = mark_is_set && is_selected && visible_mark_mode &&
+                            !transient_mark_mode &&
+                            i == (size_t)buffer->region.mark &&
+                            (size_t)buffer->region.mark != point;
+        bool in_region    = has_region && i >= region_start && i < region_end;
 
-        if (y < window_bottom - current_line_height) {
+        if (y < window_bottom - current_line_height)
             break;
-        }
 
         if (ch == '\n') {
-            // Flush background
             if (has_bg_span) {
-                draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
+                draw_background_span(bg_span_start_x, bg_span_y, bg_span_width,
+                                     bg_span_height, bg_span_color);
                 has_bg_span = false;
             }
 
-            // Draw extension if the current face requires it
             if (y >= window_bottom && y <= window_top) {
-                draw_face_extension(x, y, max_x, face, char_font,
-                                   face->bg, box_line_thickness, face->box);
+                // Region line extension
+                if (in_region && region_extend && region_face) {
+                    float ext_width = max_x - x;
+                    if (ext_width > 0) {
+                        float ext_y = y - (char_font->descent * 2);
+                        float ext_h = font_height;
+                        draw_background_span(x, ext_y, ext_width, ext_h, region_face->bg);
+                    }
+                } else {
+                    draw_face_extension(x, y, max_x, face, char_font,
+                                        face->bg, box_line_thickness, face->box);
+                }
             }
 
-            // Flush box - newline always closes the box completely
             if (has_box_span) {
                 flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height,
-                             box_span_color, box_line_thickness, box_span_no_left, false);
+                               box_span_color, box_line_thickness, box_span_no_left, false);
                 has_box_span = false;
             }
 
@@ -1235,12 +1387,10 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 cursor_x = x;
                 cursor_y = y - (char_font->descent * 2);
                 Character *space = font_get_character(char_font, ' ');
-                cursor_width = space ? space->ax : char_font->ascent;
+                cursor_width  = space ? space->ax : char_font->ascent;
                 cursor_height = font_height;
-                cursor_color = get_face(FACE_CURSOR)->bg;
-                cursor_found = true;
-
-                // Offset cursor to the right if we're in a box
+                cursor_color  = get_face(FACE_CURSOR)->bg;
+                cursor_found  = true;
                 if (face->box) {
                     cursor_x += box_line_thickness;
                     cursor_y -= box_line_thickness;
@@ -1252,86 +1402,66 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 float mark_width = space ? space->ax : char_font->ascent;
                 float mark_x = x;
                 float mark_y = y - (char_font->descent * 2);
-
-                // Offset mark to the right if we're in a box
                 if (face->box) {
                     mark_x += box_line_thickness;
                     mark_y -= box_line_thickness;
                 }
-
-                quad2D((vec2){mark_x, mark_y},
-                       (vec2){mark_width, font_height},
+                quad2D((vec2){mark_x, mark_y}, (vec2){mark_width, font_height},
                        get_face(FACE_VISIBLE_MARK)->bg);
             }
 
             x = line_start_x;
             y -= current_line_height;
-
-            // If the line that just ended had a wrapped box, add extra spacing for the box borders
-            if (previous_line_had_wrapped_box) {
+            if (previous_line_had_wrapped_box)
                 y -= box_line_thickness * 2;
-            }
 
-            current_line_height = line_height;
-            current_line_has_box = false;
-            was_in_box = false;
-            box_span_no_left = false;
-            box_span_no_right = false;
+            current_line_height          = line_height;
+            current_line_has_box         = false;
+            was_in_box                   = false;
+            box_span_no_left             = false;
+            box_span_no_right            = false;
             previous_line_had_wrapped_box = false;
+            last_drawn_face              = NULL;
+            last_drawn_font              = NULL;
+            last_drawn_bg                = base_bg;
+            last_face_had_box            = false;
 
-            // Reset tracking for next line
-            last_drawn_face = NULL;
-            last_drawn_font = NULL;
-            last_drawn_bg = base_bg;
-            last_face_had_box = false;
         } else {
-            // Handle truncation/wrapping
+            // Truncation / wrapping
             if (truncate_lines) {
                 if (x > max_x) {
                     if (has_bg_span) {
-                        draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
+                        draw_background_span(bg_span_start_x, bg_span_y, bg_span_width,
+                                             bg_span_height, bg_span_color);
                         has_bg_span = false;
                     }
-
-                    // Draw extension for truncated line
-                    if (last_drawn_face && y >= window_bottom && y <= window_top) {
+                    if (last_drawn_face && y >= window_bottom && y <= window_top)
                         draw_face_extension(x, y, max_x, last_drawn_face, last_drawn_font,
-                                          last_drawn_bg, box_line_thickness, last_face_had_box);
-                    }
-
+                                            last_drawn_bg, box_line_thickness, last_face_had_box);
                     if (has_box_span) {
                         flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height,
-                                     box_span_color, box_line_thickness, box_span_no_left, false);
+                                       box_span_color, box_line_thickness, box_span_no_left, false);
                         has_box_span = false;
                     }
-
-                    while (rope_iter_next_char(&iter, &ch) && ch != '\n') {
-                        i++;
-                    }
+                    while (rope_iter_next_char(&iter, &ch) && ch != '\n') i++;
                     if (ch == '\n') {
                         x = line_start_x;
                         y -= current_line_height;
-
-                        if (previous_line_had_wrapped_box) {
-                            y -= box_line_thickness * 2;
-                        }
-
-                        current_line_height = line_height;
-                        current_line_has_box = false;
-                        was_in_box = false;
-                        box_span_no_left = false;
-                        box_span_no_right = false;
+                        if (previous_line_had_wrapped_box) y -= box_line_thickness * 2;
+                        current_line_height          = line_height;
+                        current_line_has_box         = false;
+                        was_in_box                   = false;
+                        box_span_no_left             = false;
+                        box_span_no_right            = false;
                         previous_line_had_wrapped_box = false;
-
-                        last_drawn_face = NULL;
-                        last_drawn_font = NULL;
-                        last_drawn_bg = base_bg;
-                        last_face_had_box = false;
+                        last_drawn_face              = NULL;
+                        last_drawn_font              = NULL;
+                        last_drawn_bg                = base_bg;
+                        last_face_had_box            = false;
                     }
                     i += 2;
                     continue;
                 }
-
                 if (x + char_width < start_x) {
                     x += char_width;
                     i++;
@@ -1340,345 +1470,128 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             } else {
                 if (x + char_width > max_x) {
                     bool will_continue_box = face->box;
-
                     if (has_bg_span) {
-                        draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
+                        draw_background_span(bg_span_start_x, bg_span_y, bg_span_width,
+                                             bg_span_height, bg_span_color);
                         has_bg_span = false;
                     }
-
-                    // Draw extension before wrapping if face extends
-                    if (last_drawn_face && y >= window_bottom && y <= window_top) {
+                    if (last_drawn_face && y >= window_bottom && y <= window_top)
                         draw_face_extension(x, y, max_x, last_drawn_face, last_drawn_font,
-                                          last_drawn_bg, box_line_thickness, last_face_had_box);
-                    }
-
-                    // Handle box wrapping
+                                            last_drawn_bg, box_line_thickness, last_face_had_box);
                     if (has_box_span) {
                         flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height,
-                                     box_span_color, box_line_thickness, box_span_no_left, will_continue_box);
+                                       box_span_color, box_line_thickness, box_span_no_left,
+                                       will_continue_box);
                         has_box_span = false;
                     }
-
                     x = start_x;
                     y -= current_line_height;
                     current_line_height = line_height;
-
                     if (will_continue_box) {
                         previous_line_had_wrapped_box = true;
-                        current_line_has_box = true;
+                        current_line_has_box          = true;
                         y -= 2 * box_line_thickness;
                         box_span_no_left = true;
                     } else {
-                        current_line_has_box = false;
-                        was_in_box = false;
-                        box_span_no_left = false;
+                        current_line_has_box          = false;
+                        was_in_box                    = false;
+                        box_span_no_left              = false;
                         previous_line_had_wrapped_box = false;
                     }
                     box_span_no_right = false;
-
-                    if (y < window_bottom - current_line_height) {
-                        break;
-                    }
+                    if (y < window_bottom - current_line_height) break;
                 }
             }
 
+            // Determine colors — region overrides face, cursor overrides region
             Color char_color = face->fg;
-            Color bg_color = face->bg;
-            bool needs_bg = false;
+            Color bg_color   = face->bg;
+            bool  needs_bg   = false;
+
+            if (in_region && region_face) {
+                bg_color   = region_face->bg;
+                char_color = region_face->fg;
+                needs_bg   = true;
+            } else {
+                needs_bg = !color_equals(bg_color, base_bg);
+            }
 
             if (at_cursor) {
-                int prev_face_id = (i > 0) ? get_text_property_face(buffer, i - 1) : FACE_DEFAULT;
-                Face *prev_face = (prev_face_id == FACE_DEFAULT) ? default_face : get_face(prev_face_id);
-                if (!prev_face) prev_face = default_face;
-
                 cursor_x = x;
                 cursor_y = y - (char_font->descent * 2);
-
-                // For tabs, use the tab width; for regular characters use space width as fallback
                 if (ch == '\t') {
                     bool stretch_cursor = scm_get_bool("stretch-cursor", false);
-                    if (stretch_cursor) {
-                        cursor_width = char_width;
-                    } else {
-                        cursor_width = selected_frame->column_width;
-                    }
+                    cursor_width = stretch_cursor ? char_width : selected_frame->column_width;
                 } else {
                     cursor_width = selected_frame->column_width;
                 }
                 cursor_height = font_height;
-
                 if (crystal_point_mode && ch != '\n' && ch != ' ' && ch != '\t') {
-                    cursor_color = is_control_char ? get_face(FACE_ESCAPE_GLYPH)->fg : face->fg;
+                    cursor_color = is_control_char
+                                   ? get_face(FACE_ESCAPE_GLYPH)->fg
+                                   : face->fg;
                 } else {
                     cursor_color = get_face(FACE_CURSOR)->bg;
                 }
                 cursor_found = true;
-
-                if (prev_face->box && i > 0) {
-                    cursor_x += box_line_thickness;
-                    cursor_y -= box_line_thickness;
+                if (i > 0) {
+                    int prev_face_id = get_text_property_face(buffer, i - 1);
+                    Face *prev_face  = (prev_face_id == FACE_DEFAULT)
+                                       ? default_face : get_face(prev_face_id);
+                    if (!prev_face) prev_face = default_face;
+                    if (prev_face->box) {
+                        cursor_x += box_line_thickness;
+                        cursor_y -= box_line_thickness;
+                    }
                 }
-
-                if (should_draw_filled && buffer->cursor.visible) {
-                    char_color = face->bg;
-                }
+                if (should_draw_filled && buffer->cursor.visible)
+                    char_color = in_region ? region_face->bg : face->bg;
                 needs_bg = !color_equals(bg_color, base_bg);
 
-            } else if (at_mark) {
-                bg_color = get_face(FACE_VISIBLE_MARK)->bg;
+            } else if (at_mark && !in_region) {
+                bg_color   = get_face(FACE_VISIBLE_MARK)->bg;
                 char_color = base_bg;
-                needs_bg = true;
-            } else {
-                needs_bg = !color_equals(bg_color, base_bg);
+                needs_bg   = true;
             }
 
             if (y >= window_bottom && y <= window_top) {
                 float draw_x = x;
                 float draw_y = y;
-
                 if (face->box) {
                     draw_x += box_line_thickness;
                     draw_y -= box_line_thickness;
                 }
 
-                // Background batching (including for tabs)
+                // Background batching
                 if (needs_bg && (!at_cursor || !should_draw_filled || !buffer->cursor.visible)) {
-                    float bg_y = draw_y - char_font->descent * 2;
+                    float bg_y      = draw_y - char_font->descent * 2;
                     float bg_height = font_height;
-
-                    // Use actual char_width for tabs
-                    float actual_char_width = char_width;
-
                     if (has_bg_span &&
                         color_equals(bg_color, bg_span_color) &&
-                        bg_y == bg_span_y &&
+                        bg_y      == bg_span_y      &&
                         bg_height == bg_span_height &&
-                        draw_x == bg_span_start_x + bg_span_width) {
-                        bg_span_width += actual_char_width;
+                        draw_x    == bg_span_start_x + bg_span_width) {
+                        bg_span_width += char_width;
                     } else {
-                        if (has_bg_span) {
-                            draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
-                        }
-
+                        if (has_bg_span)
+                            draw_background_span(bg_span_start_x, bg_span_y, bg_span_width,
+                                                 bg_span_height, bg_span_color);
                         bg_span_start_x = draw_x;
-                        bg_span_y = bg_y;
-                        bg_span_width = actual_char_width;
-                        bg_span_height = bg_height;
-                        bg_span_color = bg_color;
-                        has_bg_span = true;
+                        bg_span_y       = bg_y;
+                        bg_span_width   = char_width;
+                        bg_span_height  = bg_height;
+                        bg_span_color   = bg_color;
+                        has_bg_span     = true;
                     }
                 } else {
                     if (has_bg_span) {
-                        draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
+                        draw_background_span(bg_span_start_x, bg_span_y, bg_span_width,
+                                             bg_span_height, bg_span_color);
                         has_bg_span = false;
                     }
                 }
 
                 // Box batching
-                if (face->box) {
-                    // For tabs, use the tab width; for regular characters use font metrics
-                    float actual_char_width;
-                    if (ch == '\t') {
-                        actual_char_width = char_width;
-                    } else {                        Character *char_info = font_get_character(char_font, ch);
-                        actual_char_width = char_info ? char_info->ax : char_width;
-                    }
-
-                    Color current_box_color = face->box_color;
-
-                    float box_y = draw_y - char_font->descent * 2 - box_line_thickness;
-                    float box_height = font_height + (box_line_thickness * 2);
-
-                    if (!was_in_box) {
-                        if (has_box_span) {
-                            flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height,
-                                         box_span_color, box_line_thickness, box_span_no_left, box_span_no_right);
-                            has_box_span = false;
-                        }
-
-                        bool this_span_no_left = box_span_no_left;
-
-                        if (!this_span_no_left) {
-                            x += box_line_thickness;
-                            draw_x = x;
-                        }
-
-                        box_span_start_x = this_span_no_left ? x : (x - box_line_thickness);
-                        box_span_y = box_y;
-                        box_span_width = actual_char_width + box_line_thickness + (this_span_no_left ? 0 : box_line_thickness);
-                        box_span_height = box_height;
-                        box_span_color = current_box_color;
-                        box_span_no_left = this_span_no_left;
-                        box_span_no_right = false;
-                        has_box_span = true;
-                    } else {
-                        bool can_extend = has_box_span &&
-                                          color_equals(current_box_color, box_span_color) &&
-                                          box_y == box_span_y &&
-                                          box_height == box_span_height;
-
-                        if (can_extend) {
-                            box_span_width += actual_char_width;
-                        } else {
-                            if (has_box_span) {
-                                flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height,
-                                             box_span_color, box_line_thickness, box_span_no_left, box_span_no_right);
-                            }
-
-                            box_span_start_x = x - box_line_thickness;
-                            box_span_y = box_y;
-                            box_span_width = actual_char_width + (box_line_thickness * 2);
-                            box_span_height = box_height;
-                            box_span_color = current_box_color;
-                            box_span_no_left = false;
-                            box_span_no_right = false;
-                            has_box_span = true;
-                        }
-                    }
-
-                    if (ch != '\t') {
-                        if (is_control_char) {
-                            Face *escape_face = get_face(FACE_ESCAPE_GLYPH);
-                            Color escape_fg = escape_face ? escape_face->fg : char_color;
-                            uint32_t visible = (ch == 0x7f) ? '?' : (ch + 64);
-                            Color caret_color = (at_cursor && should_draw_filled && buffer->cursor.visible)
-                                                ? face->bg
-                                                : escape_fg;
-                            float adv1 = draw_character_with_face('^', draw_x, draw_y, face, char_font, caret_color,
-                                                                   false, char_color, false, char_color);
-                            draw_character_with_face(visible, draw_x + adv1, draw_y, face, char_font, escape_fg,
-                                                     face->underline, face->underline_color,
-                                                     face->strike_through, face->strike_through_color);
-                        } else {
-                            draw_character_with_face(ch, draw_x, draw_y, face, char_font, char_color,
-                                                   face->underline, face->underline_color,
-                                                   face->strike_through, face->strike_through_color);
-                        }
-
-                    } else if (face->underline || face->strike_through) {
-                        // Draw underline/strikethrough for tabs
-                        if (face->underline) {
-                            int underline_minimum_offset = scm_get_int("underline-minimum-offset", 1);
-                            bool underline_at_descent_line = scm_get_bool("underline-at-descent-line", false);
-                            bool use_underline_position_properties = scm_get_bool("use-underline-position-properties", true);
-
-                            float underline_y;
-                            float underline_thickness;
-
-                            if (underline_at_descent_line) {
-                                underline_y = draw_y - char_font->descent * 2;
-                            } else if (use_underline_position_properties) {
-                                underline_y = draw_y - char_font->descent - char_font->underline_position;
-                            } else {
-                                underline_y = draw_y - char_font->descent - underline_minimum_offset;
-                            }
-
-                            if (use_underline_position_properties) {
-                                underline_thickness = char_font->underline_thickness;
-                            } else {
-                                underline_thickness = 1.0f;
-                            }
-
-                            quad2D((vec2){draw_x, draw_y},
-                                   (vec2){tab_pixel_width, 1.0f},
-                                   face->strike_through_color);
-                        }
-
-                        if (face->strike_through) {
-                            quad2D((vec2){draw_x, draw_y},
-                                   (vec2){tab_pixel_width, 1.0f},
-                                   face->strike_through_color);
-                        }
-                    }
-
-                    x += actual_char_width;
-                    was_in_box = true;
-
-                    // Track for extension
-                    last_drawn_face = face;
-                    last_drawn_font = char_font;
-                    last_drawn_bg = bg_color;
-                    last_face_had_box = true;
-                } else {
-                    if (was_in_box) {
-                        if (has_box_span) {
-                            flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height,
-                                         box_span_color, box_line_thickness, box_span_no_left, false);
-                            has_box_span = false;
-                        }
-                        x += box_line_thickness;
-                        was_in_box = false;
-                        box_span_no_left = false;
-                    }
-
-                    // Don't draw tab character, but draw underlines if needed (and control characters)
-                    if (ch != '\t') {
-                        if (is_control_char) {
-                            Face *escape_face = get_face(FACE_ESCAPE_GLYPH);
-                            Color escape_fg = escape_face ? escape_face->fg : char_color;
-                            uint32_t visible = (ch == 0x7f) ? '?' : (ch + 64);
-                            Color caret_color = (at_cursor && should_draw_filled && buffer->cursor.visible)
-                                                ? face->bg
-                                                : escape_fg;
-                            float adv1 = draw_character_with_face('^', draw_x, draw_y, face, char_font, caret_color,
-                                                                   false, char_color, false, char_color);
-                            float adv2 = draw_character_with_face(visible, draw_x + adv1, draw_y, face, char_font, escape_fg,
-                                                                   face->underline, face->underline_color,
-                                                                   face->strike_through, face->strike_through_color);
-                            x += adv1 + adv2;
-
-                        } else {
-                            float advance = draw_character_with_face(ch, draw_x, draw_y, face, char_font, char_color,
-                                                                   face->underline, face->underline_color,
-                                                                   face->strike_through, face->strike_through_color);
-                            x += advance;
-                        }
-                    } else {
-                        if (face->underline || face->strike_through) {
-                            if (face->underline) {
-                                int underline_minimum_offset = scm_get_int("underline-minimum-offset", 1);
-                                bool underline_at_descent_line = scm_get_bool("underline-at-descent-line", false);
-                                bool use_underline_position_properties = scm_get_bool("use-underline-position-properties", true);
-
-                                float underline_y;
-                                float underline_thickness;
-
-                                if (underline_at_descent_line) {
-                                    underline_y = draw_y - char_font->descent * 2;
-                                } else if (use_underline_position_properties) {
-                                    underline_y = draw_y - char_font->descent - char_font->underline_position;
-                                } else {
-                                    underline_y = draw_y - char_font->descent - underline_minimum_offset;
-                                }
-
-                                if (use_underline_position_properties) {
-                                    underline_thickness = char_font->underline_thickness;
-                                } else {
-                                    underline_thickness = 1.0f;
-                                }
-
-                                quad2D((vec2){draw_x, underline_y},
-                                   (vec2){char_width, underline_thickness},
-                                   face->underline_color);
-                            }
-
-                            if (face->strike_through) {
-                                quad2D((vec2){draw_x, draw_y},
-                                   (vec2){char_width, 1.0f},
-                                   face->strike_through_color);
-                            }
-                        }
-                        x += char_width;
-                    }
-
-                    // Track for extension
-                    last_drawn_face = face;
-                    last_drawn_font = char_font;
-                    last_drawn_bg = bg_color;
-                    last_face_had_box = false;
-                }
-            } else if (y >= window_bottom) {
-                // Off-screen x position updates
                 if (face->box) {
                     float actual_char_width;
                     if (ch == '\t') {
@@ -1687,120 +1600,958 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                         Character *char_info = font_get_character(char_font, ch);
                         actual_char_width = char_info ? char_info->ax : char_width;
                     }
+                    Color current_box_color = face->box_color;
+                    float box_y      = draw_y - char_font->descent * 2 - box_line_thickness;
+                    float box_height = font_height + (box_line_thickness * 2);
 
-                    if (!was_in_box && !box_span_no_left) {
-                        x += box_line_thickness;
+                    if (!was_in_box) {
+                        if (has_box_span) {
+                            flush_box_span(box_span_start_x, box_span_y, box_span_width,
+                                           box_span_height, box_span_color, box_line_thickness,
+                                           box_span_no_left, box_span_no_right);
+                            has_box_span = false;
+                        }
+                        bool this_span_no_left = box_span_no_left;
+                        if (!this_span_no_left) {
+                            x += box_line_thickness;
+                            draw_x = x;
+                        }
+                        box_span_start_x  = this_span_no_left ? x : (x - box_line_thickness);
+                        box_span_y        = box_y;
+                        box_span_width    = actual_char_width + box_line_thickness +
+                                            (this_span_no_left ? 0 : box_line_thickness);
+                        box_span_height   = box_height;
+                        box_span_color    = current_box_color;
+                        box_span_no_left  = this_span_no_left;
+                        box_span_no_right = false;
+                        has_box_span      = true;
+                    } else {
+                        bool can_extend = has_box_span &&
+                                          color_equals(current_box_color, box_span_color) &&
+                                          box_y     == box_span_y &&
+                                          box_height == box_span_height;
+                        if (can_extend) {
+                            box_span_width += actual_char_width;
+                        } else {
+                            if (has_box_span)
+                                flush_box_span(box_span_start_x, box_span_y, box_span_width,
+                                               box_span_height, box_span_color, box_line_thickness,
+                                               box_span_no_left, box_span_no_right);
+                            box_span_start_x  = x - box_line_thickness;
+                            box_span_y        = box_y;
+                            box_span_width    = actual_char_width + (box_line_thickness * 2);
+                            box_span_height   = box_height;
+                            box_span_color    = current_box_color;
+                            box_span_no_left  = false;
+                            box_span_no_right = false;
+                            has_box_span      = true;
+                        }
                     }
+
+                    if (ch != '\t') {
+                        if (is_control_char) {
+                            Face    *escape_face = get_face(FACE_ESCAPE_GLYPH);
+                            Color    escape_fg   = escape_face ? escape_face->fg : char_color;
+                            uint32_t visible     = (ch == 0x7f) ? '?' : (ch + 64);
+                            Color    caret_color = (at_cursor && should_draw_filled &&
+                                                    buffer->cursor.visible)
+                                                   ? face->bg : escape_fg;
+                            float adv1 = draw_character_with_face('^', draw_x, draw_y, face,
+                                                                   char_font, caret_color,
+                                                                   false, char_color,
+                                                                   false, char_color);
+                            draw_character_with_face(visible, draw_x + adv1, draw_y, face,
+                                                     char_font, escape_fg,
+                                                     face->underline, face->underline_color,
+                                                     face->strike_through,
+                                                     face->strike_through_color);
+                        } else {
+                            draw_character_with_face(ch, draw_x, draw_y, face, char_font,
+                                                     char_color,
+                                                     face->underline, face->underline_color,
+                                                     face->strike_through,
+                                                     face->strike_through_color);
+                        }
+                    } else if (face->underline || face->strike_through) {
+                        if (face->underline)
+                            quad2D((vec2){draw_x, draw_y},
+                                   (vec2){tab_pixel_width, 1.0f},
+                                   face->underline_color);
+                        if (face->strike_through)
+                            quad2D((vec2){draw_x, draw_y},
+                                   (vec2){tab_pixel_width, 1.0f},
+                                   face->strike_through_color);
+                    }
+
+                    x += actual_char_width;
+                    was_in_box       = true;
+                    last_drawn_face  = face;
+                    last_drawn_font  = char_font;
+                    last_drawn_bg    = bg_color;
+                    last_face_had_box = true;
+
+                } else {
+                    if (was_in_box) {
+                        if (has_box_span) {
+                            flush_box_span(box_span_start_x, box_span_y, box_span_width,
+                                           box_span_height, box_span_color, box_line_thickness,
+                                           box_span_no_left, false);
+                            has_box_span = false;
+                        }
+                        x += box_line_thickness;
+                        was_in_box       = false;
+                        box_span_no_left = false;
+                    }
+
+                    if (ch != '\t') {
+                        if (is_control_char) {
+                            Face    *escape_face = get_face(FACE_ESCAPE_GLYPH);
+                            Color    escape_fg   = escape_face ? escape_face->fg : char_color;
+                            uint32_t visible     = (ch == 0x7f) ? '?' : (ch + 64);
+                            Color    caret_color = (at_cursor && should_draw_filled &&
+                                                    buffer->cursor.visible)
+                                                   ? face->bg : escape_fg;
+                            float adv1 = draw_character_with_face('^', draw_x, draw_y, face,
+                                                                   char_font, caret_color,
+                                                                   false, char_color,
+                                                                   false, char_color);
+                            float adv2 = draw_character_with_face(visible, draw_x + adv1,
+                                                                   draw_y, face, char_font,
+                                                                   escape_fg,
+                                                                   face->underline,
+                                                                   face->underline_color,
+                                                                   face->strike_through,
+                                                                   face->strike_through_color);
+                            x += adv1 + adv2;
+                        } else {
+                            float advance = draw_character_with_face(ch, draw_x, draw_y, face,
+                                                                     char_font, char_color,
+                                                                     face->underline,
+                                                                     face->underline_color,
+                                                                     face->strike_through,
+                                                                     face->strike_through_color);
+                            x += advance;
+                        }
+                    } else {
+                        if (face->underline) {
+                            bool  underline_at_descent_line =
+                                scm_get_bool("underline-at-descent-line", false);
+                            bool  use_underline_pos =
+                                scm_get_bool("use-underline-position-properties", true);
+                            int   underline_minimum_offset =
+                                scm_get_int("underline-minimum-offset", 1);
+                            float underline_y, underline_thickness;
+                            if (underline_at_descent_line)
+                                underline_y = draw_y - char_font->descent * 2;
+                            else if (use_underline_pos)
+                                underline_y = draw_y - char_font->descent -
+                                              char_font->underline_position;
+                            else
+                                underline_y = draw_y - char_font->descent -
+                                              underline_minimum_offset;
+                            underline_thickness = use_underline_pos
+                                                  ? char_font->underline_thickness : 1.0f;
+                            quad2D((vec2){draw_x, underline_y},
+                                   (vec2){char_width, underline_thickness},
+                                   face->underline_color);
+                        }
+                        if (face->strike_through)
+                            quad2D((vec2){draw_x, draw_y},
+                                   (vec2){char_width, 1.0f},
+                                   face->strike_through_color);
+                        x += char_width;
+                    }
+
+                    last_drawn_face  = face;
+                    last_drawn_font  = char_font;
+                    last_drawn_bg    = bg_color;
+                    last_face_had_box = false;
+                }
+
+            } else if (y >= window_bottom) {
+                // Off-screen x tracking
+                if (face->box) {
+                    float actual_char_width;
+                    if (ch == '\t') {
+                        actual_char_width = char_width;
+                    } else {
+                        Character *char_info = font_get_character(char_font, ch);
+                        actual_char_width = char_info ? char_info->ax : char_width;
+                    }
+                    if (!was_in_box && !box_span_no_left) x += box_line_thickness;
                     x += actual_char_width;
                     was_in_box = true;
                 } else {
                     if (was_in_box) {
                         x += box_line_thickness;
-                        was_in_box = false;
+                        was_in_box       = false;
                         box_span_no_left = false;
                     }
                     x += char_width;
                 }
-
-                // Still track face for potential extension
-                last_drawn_face = face;
-                last_drawn_font = char_font;
-                last_drawn_bg = bg_color;
+                last_drawn_face  = face;
+                last_drawn_font  = char_font;
+                last_drawn_bg    = bg_color;
                 last_face_had_box = face->box;
             }
         }
         i++;
     }
 
-    // Flush any remaining background span
-    if (has_bg_span) {
-        draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
-    }
+    // Flush remaining
+    if (has_bg_span)
+        draw_background_span(bg_span_start_x, bg_span_y, bg_span_width,
+                             bg_span_height, bg_span_color);
 
-    // Draw extension at end of buffer if needed
-    if (last_drawn_face && y >= window_bottom && y <= window_top) {
+    if (last_drawn_face && y >= window_bottom && y <= window_top)
         draw_face_extension(x, y, max_x, last_drawn_face, last_drawn_font,
-                          last_drawn_bg, box_line_thickness, last_face_had_box);
-    }
+                            last_drawn_bg, box_line_thickness, last_face_had_box);
 
-    // Flush any remaining box span
-    if (has_box_span) {
+    if (has_box_span)
         flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height,
-                     box_span_color, box_line_thickness, box_span_no_left, false);
-    }
+                       box_span_color, box_line_thickness, box_span_no_left, false);
 
     rope_iter_destroy(&iter);
 
-    // Handle cursor at end of buffer
+    // Cursor at end of buffer
     if (point >= rope_char_length(buffer->rope)) {
-        int face_id = get_text_property_face(buffer, point);
-        Face *face = get_face(face_id);
+        int   face_id   = get_text_property_face(buffer, point);
+        Face *face      = get_face(face_id);
         Font *char_font = face ? face->font : default_font;
-
         cursor_x = x;
         cursor_y = y - (char_font->descent * 2);
         Character *space = font_get_character(char_font, ' ');
-        cursor_width = space ? space->ax : char_font->ascent;
+        cursor_width  = space ? space->ax : char_font->ascent;
         cursor_height = char_font->ascent + char_font->descent;
-        cursor_color = get_face(FACE_CURSOR)->bg;
-        cursor_found = true;
+        cursor_color  = get_face(FACE_CURSOR)->bg;
+        cursor_found  = true;
     }
 
     buffer->cursor.x = cursor_x;
     buffer->cursor.y = cursor_y;
 
-    // Draw cursor
-    if (cursor_found) {
-        if (win && win->is_minibuffer && !selected_frame->wm.minibuffer_active) {
-            return;
-        }
+    if (!cursor_found) return;
+    if (win && win->is_minibuffer && !selected_frame->wm.minibuffer_active) return;
 
-        if (should_draw_filled) {
-            bool blink_cursor_mode = scm_get_bool("blink-cursor-mode", true);
-            size_t blink_cursor_blinks = scm_get_size_t("blink-cursor-blinks", 0);
-            float blink_cursor_interval = scm_get_float("blink-cursor-interval", 0.1);
-            float blink_cursor_delay = scm_get_float("blink-cursor-delay", 0.1);
+    if (should_draw_filled) {
+        bool   blink_cursor_mode     = scm_get_bool("blink-cursor-mode", true);
+        size_t blink_cursor_blinks   = scm_get_size_t("blink-cursor-blinks", 0);
+        float  blink_cursor_interval = scm_get_float("blink-cursor-interval", 0.1f);
+        float  blink_cursor_delay    = scm_get_float("blink-cursor-delay", 0.1f);
 
-            if (blink_cursor_mode && buffer->cursor.blink_count < blink_cursor_blinks) {
-                double currentTime = getTime();
-                double interval = buffer->cursor.visible ? blink_cursor_interval : blink_cursor_delay;
-
-                if (currentTime - buffer->cursor.last_blink >= interval) {
-                    buffer->cursor.visible = !buffer->cursor.visible;
-                    buffer->cursor.last_blink = currentTime;
-                    if (buffer->cursor.visible) {
-                        buffer->cursor.blink_count++;
-                    }
-                }
-
-                if (buffer->cursor.visible) {
-                    quad2D((vec2){cursor_x, cursor_y},
-                           (vec2){cursor_width, cursor_height}, cursor_color);
-                }
-            } else {
+        if (blink_cursor_mode && buffer->cursor.blink_count < blink_cursor_blinks) {
+            double currentTime = getTime();
+            double interval = buffer->cursor.visible
+                              ? blink_cursor_interval : blink_cursor_delay;
+            if (currentTime - buffer->cursor.last_blink >= interval) {
+                buffer->cursor.visible = !buffer->cursor.visible;
+                buffer->cursor.last_blink = currentTime;
+                if (buffer->cursor.visible) buffer->cursor.blink_count++;
+            }
+            if (buffer->cursor.visible)
                 quad2D((vec2){cursor_x, cursor_y},
                        (vec2){cursor_width, cursor_height}, cursor_color);
-            }
         } else {
-            if (is_selected) {
-                buffer->cursor.visible = true;
-                buffer->cursor.blink_count = 0;
-            }
-
-            bool cursor_in_non_selected = scm_get_bool("cursor-in-non-selected-windows", true);
-            if (!is_selected && !cursor_in_non_selected) {
-                // Don't draw cursor in non-selected windows
-            } else {
-                float border_width = 1.0f;
-                quad2D((vec2){cursor_x, cursor_y + cursor_height - border_width},
-                       (vec2){cursor_width, border_width}, cursor_color);
-                quad2D((vec2){cursor_x, cursor_y},
-                       (vec2){cursor_width, border_width}, cursor_color);
-                quad2D((vec2){cursor_x, cursor_y},
-                       (vec2){border_width, cursor_height}, cursor_color);
-                quad2D((vec2){cursor_x + cursor_width - border_width, cursor_y},
-                       (vec2){border_width, cursor_height}, cursor_color);
-            }
+            quad2D((vec2){cursor_x, cursor_y},
+                   (vec2){cursor_width, cursor_height}, cursor_color);
+        }
+    } else {
+        if (is_selected) {
+            buffer->cursor.visible     = true;
+            buffer->cursor.blink_count = 0;
+        }
+        bool cursor_in_non_selected = scm_get_bool("cursor-in-non-selected-windows", true);
+        if (is_selected || cursor_in_non_selected) {
+            float bw = 1.0f;
+            quad2D((vec2){cursor_x, cursor_y + cursor_height - bw},
+                   (vec2){cursor_width, bw}, cursor_color);
+            quad2D((vec2){cursor_x, cursor_y},
+                   (vec2){cursor_width, bw}, cursor_color);
+            quad2D((vec2){cursor_x, cursor_y},
+                   (vec2){bw, cursor_height}, cursor_color);
+            quad2D((vec2){cursor_x + cursor_width - bw, cursor_y},
+                   (vec2){bw, cursor_height}, cursor_color);
         }
     }
 }
+
+/* void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) { */
+/*     Face *default_face = get_face(FACE_DEFAULT); */
+/*     Font *default_font = default_face ? get_face_font(default_face) : NULL; */
+/*     if (!default_font) return; */
+
+/*     Color base_bg = theme_cache->base_bg; */
+/*     Color base_fg = theme_cache->base_fg; */
+
+/*     float line_height = selected_frame->line_height; */
+/*     float max_x = start_x + (win->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width)); */
+
+/*     SCM truncate_lines_sym = scm_from_utf8_symbol("truncate-lines"); */
+/*     SCM truncate_lines_val = buffer_local_value(truncate_lines_sym, buffer); */
+/*     bool truncate_lines = scm_is_true(truncate_lines_val); */
+
+/*     SCM tab_width_sym = scm_from_utf8_symbol("tab-width"); */
+/*     SCM tab_width_val = buffer_local_value(tab_width_sym, buffer); */
+/*     int tab_width = scm_to_int(tab_width_val); */
+/*     float tab_pixel_width = tab_width * selected_frame->column_width; */
+
+/*     float window_bottom = win->y; */
+/*     float window_top = win->y + win->height; */
+
+/*     if (!win->is_minibuffer) { */
+/*         window_bottom += line_height; */
+/*     } */
+
+/*     size_t point = win ? win->point : buffer->pt; */
+/*     bool is_selected = win && win->is_selected; */
+/*     bool mark_is_set = (buffer->region.mark >= 0); */
+
+/*     float scroll_offset_y = 0; */
+/*     size_t start_pos = 0; */
+
+/*     if (win && !win->is_minibuffer) { */
+/*         start_pos = find_start_position(buffer, win, &scroll_offset_y); */
+/*     } */
+
+/*     float scroll_offset_x = (win && !win->is_minibuffer && truncate_lines) ? win->scrollx : 0; */
+/*     float line_start_x = start_x - scroll_offset_x; */
+
+/*     float x = line_start_x; */
+/*     float y = start_y + (win && !win->is_minibuffer ? win->scrolly : 0) - scroll_offset_y; */
+
+/*     bool visible_mark_mode   = scm_get_bool("visible-mark-mode", false); */
+/*     bool transient_mark_mode = scm_get_bool("transient-mark-mode", false); */
+/*     bool crystal_point_mode  = scm_get_bool("crystal-point-mode", false); */
+/*     bool should_draw_filled  = is_selected && selected_frame && selected_frame->focused; */
+
+/*     float current_line_height = line_height; */
+/*     float box_line_thickness  = 1.0f; */
+/*     bool current_line_has_box = false; */
+/*     bool previous_line_had_wrapped_box = false; */
+
+/*     // Cursor tracking */
+/*     float cursor_x = 0, cursor_y = 0; */
+/*     float cursor_width = 0, cursor_height = 0; */
+/*     bool cursor_found = false; */
+/*     Color cursor_color; */
+
+/*     // Background batching */
+/*     float bg_span_start_x = 0, bg_span_width = 0; */
+/*     float bg_span_y = 0, bg_span_height = 0; */
+/*     Color bg_span_color = {0, 0, 0, 0}; */
+/*     bool has_bg_span = false; */
+
+/*     // Box batching */
+/*     float box_span_start_x = 0, box_span_width = 0; */
+/*     float box_span_y = 0, box_span_height = 0; */
+/*     Color box_span_color = {0, 0, 0, 0}; */
+/*     bool has_box_span = false; */
+/*     bool box_span_no_left = false; */
+/*     bool box_span_no_right = false; */
+/*     bool was_in_box = false; */
+
+/*     // Face extension tracking */
+/*     Face  *last_drawn_face = NULL; */
+/*     Font  *last_drawn_font = NULL; */
+/*     Color  last_drawn_bg   = base_bg; */
+/*     bool   last_face_had_box = false; */
+
+/*     // --- Face run cache --- */
+/*     // Instead of calling get_text_property_face() for every character, */
+/*     // we call it once per run and jump to the next boundary. */
+/*     SCM face_sym    = scm_from_utf8_symbol("face"); */
+/*     SCM display_sym = scm_from_utf8_symbol("display"); */
+
+/*     size_t i = start_pos; */
+/*     int    current_face_id      = get_text_property_face(buffer, i); */
+/*     size_t face_run_end         = next_single_property_change(buffer, i, face_sym); */
+/*     SCM    current_display_prop = get_text_property(buffer, i, display_sym); */
+/*     size_t display_run_end      = next_single_property_change(buffer, i, display_sym); */
+
+/*     rope_iter_t iter; */
+/*     rope_iter_init(&iter, buffer->rope, start_pos); */
+/*     uint32_t ch; */
+
+/*     while (rope_iter_next_char(&iter, &ch)) { */
+
+/*         // Refresh face run if we've crossed a boundary — O(log n) per run */
+/*         if (i >= face_run_end) { */
+/*             current_face_id = get_text_property_face(buffer, i); */
+/*             face_run_end    = next_single_property_change(buffer, i, face_sym); */
+/*         } */
+/*         if (i >= display_run_end) { */
+/*             current_display_prop = get_text_property(buffer, i, display_sym); */
+/*             display_run_end      = next_single_property_change(buffer, i, display_sym); */
+/*         } */
+
+/*         Face *face = (current_face_id == FACE_DEFAULT) ? default_face : get_face(current_face_id); */
+/*         if (!face) face = default_face; */
+
+/*         Font *char_font = get_face_font(face); */
+/*         if (!char_font) char_font = default_font; */
+
+/*         float font_height = char_font->ascent + char_font->descent; */
+
+/*         float effective_font_height = font_height; */
+/*         if (face->box) { */
+/*             effective_font_height = font_height + (box_line_thickness * 2); */
+/*             if (!current_line_has_box) { */
+/*                 y -= box_line_thickness; */
+/*                 current_line_has_box = true; */
+/*             } */
+/*         } */
+/*         if (effective_font_height > current_line_height) */
+/*             current_line_height = effective_font_height; */
+
+/*         // Character width */
+/*         float char_width; */
+/*         bool is_control_char = (ch < 0x20 && ch != '\t' && ch != '\n') || ch == 0x7f; */
+
+/*         if (ch == '\t') { */
+/*             // Use cached display property */
+/*             if (scm_is_pair(current_display_prop) && */
+/*                 scm_is_symbol(scm_car(current_display_prop))) { */
+/*                 char *head_str = scm_to_locale_string(scm_symbol_to_string(scm_car(current_display_prop))); */
+/*                 bool is_space_spec = strcmp(head_str, "space") == 0; */
+/*                 free(head_str); */
+
+/*                 if (is_space_spec) { */
+/*                     SCM plist = scm_cdr(current_display_prop); */
+/*                     char_width = tab_pixel_width; */
+/*                     while (scm_is_pair(plist) && scm_is_pair(scm_cdr(plist))) { */
+/*                         SCM key = scm_car(plist); */
+/*                         SCM val = scm_cadr(plist); */
+/*                         if (scm_is_symbol(key)) { */
+/*                             char *key_str = scm_to_locale_string(scm_symbol_to_string(key)); */
+/*                             if (strcmp(key_str, ":align-to") == 0 && scm_is_number(val)) { */
+/*                                 float target_x = start_x + (float)scm_to_double(val); */
+/*                                 char_width = target_x - x; */
+/*                                 if (char_width < 0) char_width = 0; */
+/*                             } else if (strcmp(key_str, ":width") == 0 && scm_is_number(val)) { */
+/*                                 char_width = (float)scm_to_double(val) * selected_frame->column_width; */
+/*                             } */
+/*                             free(key_str); */
+/*                         } */
+/*                         plist = scm_cddr(plist); */
+/*                     } */
+/*                 } else { */
+/*                     char_width = tab_pixel_width; */
+/*                 } */
+/*             } else { */
+/*                 char_width = tab_pixel_width; */
+/*             } */
+/*         } else if (is_control_char) { */
+/*             uint32_t visible = (ch == 0x7f) ? '?' : (ch + 64); */
+/*             char_width = character_width(char_font, '^') + */
+/*                          character_width(char_font, visible); */
+/*         } else { */
+/*             char_width = character_width(char_font, ch); */
+/*         } */
+
+/*         bool at_cursor = (i == point); */
+/*         bool at_mark   = mark_is_set && is_selected && visible_mark_mode && */
+/*                          !transient_mark_mode && */
+/*                          i == (size_t)buffer->region.mark && */
+/*                          (size_t)buffer->region.mark != point; */
+
+/*         if (y < window_bottom - current_line_height) */
+/*             break; */
+
+/*         if (ch == '\n') { */
+/*             // Flush background */
+/*             if (has_bg_span) { */
+/*                 draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color); */
+/*                 has_bg_span = false; */
+/*             } */
+
+/*             if (y >= window_bottom && y <= window_top) { */
+/*                 draw_face_extension(x, y, max_x, face, char_font, */
+/*                                     face->bg, box_line_thickness, face->box); */
+/*             } */
+
+/*             if (has_box_span) { */
+/*                 flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, */
+/*                                box_span_color, box_line_thickness, box_span_no_left, false); */
+/*                 has_box_span = false; */
+/*             } */
+
+/*             if (at_cursor) { */
+/*                 cursor_x = x; */
+/*                 cursor_y = y - (char_font->descent * 2); */
+/*                 Character *space = font_get_character(char_font, ' '); */
+/*                 cursor_width  = space ? space->ax : char_font->ascent; */
+/*                 cursor_height = font_height; */
+/*                 cursor_color  = get_face(FACE_CURSOR)->bg; */
+/*                 cursor_found  = true; */
+/*                 if (face->box) { */
+/*                     cursor_x += box_line_thickness; */
+/*                     cursor_y -= box_line_thickness; */
+/*                 } */
+/*             } */
+
+/*             if (at_mark && y >= window_bottom && y <= window_top) { */
+/*                 Character *space = font_get_character(char_font, ' '); */
+/*                 float mark_width = space ? space->ax : char_font->ascent; */
+/*                 float mark_x = x; */
+/*                 float mark_y = y - (char_font->descent * 2); */
+/*                 if (face->box) { */
+/*                     mark_x += box_line_thickness; */
+/*                     mark_y -= box_line_thickness; */
+/*                 } */
+/*                 quad2D((vec2){mark_x, mark_y}, */
+/*                        (vec2){mark_width, font_height}, */
+/*                        get_face(FACE_VISIBLE_MARK)->bg); */
+/*             } */
+
+/*             x = line_start_x; */
+/*             y -= current_line_height; */
+
+/*             if (previous_line_had_wrapped_box) */
+/*                 y -= box_line_thickness * 2; */
+
+/*             current_line_height = line_height; */
+/*             current_line_has_box = false; */
+/*             was_in_box = false; */
+/*             box_span_no_left = false; */
+/*             box_span_no_right = false; */
+/*             previous_line_had_wrapped_box = false; */
+
+/*             last_drawn_face    = NULL; */
+/*             last_drawn_font    = NULL; */
+/*             last_drawn_bg      = base_bg; */
+/*             last_face_had_box  = false; */
+
+/*         } else { */
+/*             // Truncation / wrapping */
+/*             if (truncate_lines) { */
+/*                 if (x > max_x) { */
+/*                     if (has_bg_span) { */
+/*                         draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color); */
+/*                         has_bg_span = false; */
+/*                     } */
+/*                     if (last_drawn_face && y >= window_bottom && y <= window_top) { */
+/*                         draw_face_extension(x, y, max_x, last_drawn_face, last_drawn_font, */
+/*                                             last_drawn_bg, box_line_thickness, last_face_had_box); */
+/*                     } */
+/*                     if (has_box_span) { */
+/*                         flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, */
+/*                                        box_span_color, box_line_thickness, box_span_no_left, false); */
+/*                         has_box_span = false; */
+/*                     } */
+
+/*                     // Skip to end of line */
+/*                     while (rope_iter_next_char(&iter, &ch) && ch != '\n') i++; */
+
+/*                     if (ch == '\n') { */
+/*                         x = line_start_x; */
+/*                         y -= current_line_height; */
+/*                         if (previous_line_had_wrapped_box) y -= box_line_thickness * 2; */
+/*                         current_line_height  = line_height; */
+/*                         current_line_has_box = false; */
+/*                         was_in_box           = false; */
+/*                         box_span_no_left     = false; */
+/*                         box_span_no_right    = false; */
+/*                         previous_line_had_wrapped_box = false; */
+/*                         last_drawn_face   = NULL; */
+/*                         last_drawn_font   = NULL; */
+/*                         last_drawn_bg     = base_bg; */
+/*                         last_face_had_box = false; */
+/*                     } */
+/*                     i += 2; */
+/*                     continue; */
+/*                 } */
+
+/*                 if (x + char_width < start_x) { */
+/*                     x += char_width; */
+/*                     i++; */
+/*                     continue; */
+/*                 } */
+/*             } else { */
+/*                 if (x + char_width > max_x) { */
+/*                     bool will_continue_box = face->box; */
+
+/*                     if (has_bg_span) { */
+/*                         draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color); */
+/*                         has_bg_span = false; */
+/*                     } */
+/*                     if (last_drawn_face && y >= window_bottom && y <= window_top) { */
+/*                         draw_face_extension(x, y, max_x, last_drawn_face, last_drawn_font, */
+/*                                             last_drawn_bg, box_line_thickness, last_face_had_box); */
+/*                     } */
+/*                     if (has_box_span) { */
+/*                         flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, */
+/*                                        box_span_color, box_line_thickness, box_span_no_left, will_continue_box); */
+/*                         has_box_span = false; */
+/*                     } */
+
+/*                     x = start_x; */
+/*                     y -= current_line_height; */
+/*                     current_line_height = line_height; */
+
+/*                     if (will_continue_box) { */
+/*                         previous_line_had_wrapped_box = true; */
+/*                         current_line_has_box = true; */
+/*                         y -= 2 * box_line_thickness; */
+/*                         box_span_no_left = true; */
+/*                     } else { */
+/*                         current_line_has_box = false; */
+/*                         was_in_box           = false; */
+/*                         box_span_no_left     = false; */
+/*                         previous_line_had_wrapped_box = false; */
+/*                     } */
+/*                     box_span_no_right = false; */
+
+/*                     if (y < window_bottom - current_line_height) break; */
+/*                 } */
+/*             } */
+
+/*             Color char_color = face->fg; */
+/*             Color bg_color   = face->bg; */
+/*             bool  needs_bg   = false; */
+
+/*             if (at_cursor) { */
+/*                 cursor_x = x; */
+/*                 cursor_y = y - (char_font->descent * 2); */
+
+/*                 if (ch == '\t') { */
+/*                     bool stretch_cursor = scm_get_bool("stretch-cursor", false); */
+/*                     cursor_width = stretch_cursor ? char_width : selected_frame->column_width; */
+/*                 } else { */
+/*                     cursor_width = selected_frame->column_width; */
+/*                 } */
+/*                 cursor_height = font_height; */
+
+/*                 if (crystal_point_mode && ch != '\n' && ch != ' ' && ch != '\t') { */
+/*                     cursor_color = is_control_char ? get_face(FACE_ESCAPE_GLYPH)->fg : face->fg; */
+/*                 } else { */
+/*                     cursor_color = get_face(FACE_CURSOR)->bg; */
+/*                 } */
+/*                 cursor_found = true; */
+
+/*                 // prev face for box offset — one lookup per cursor per frame, acceptable */
+/*                 if (i > 0) { */
+/*                     int prev_face_id = get_text_property_face(buffer, i - 1); */
+/*                     Face *prev_face  = (prev_face_id == FACE_DEFAULT) ? default_face : get_face(prev_face_id); */
+/*                     if (!prev_face) prev_face = default_face; */
+/*                     if (prev_face->box) { */
+/*                         cursor_x += box_line_thickness; */
+/*                         cursor_y -= box_line_thickness; */
+/*                     } */
+/*                 } */
+
+/*                 if (should_draw_filled && buffer->cursor.visible) */
+/*                     char_color = face->bg; */
+
+/*                 needs_bg = !color_equals(bg_color, base_bg); */
+
+/*             } else if (at_mark) { */
+/*                 bg_color  = get_face(FACE_VISIBLE_MARK)->bg; */
+/*                 char_color = base_bg; */
+/*                 needs_bg  = true; */
+/*             } else { */
+/*                 needs_bg = !color_equals(bg_color, base_bg); */
+/*             } */
+
+/*             if (y >= window_bottom && y <= window_top) { */
+/*                 float draw_x = x; */
+/*                 float draw_y = y; */
+
+/*                 if (face->box) { */
+/*                     draw_x += box_line_thickness; */
+/*                     draw_y -= box_line_thickness; */
+/*                 } */
+
+/*                 // Background batching */
+/*                 if (needs_bg && (!at_cursor || !should_draw_filled || !buffer->cursor.visible)) { */
+/*                     float bg_y      = draw_y - char_font->descent * 2; */
+/*                     float bg_height = font_height; */
+
+/*                     if (has_bg_span && */
+/*                         color_equals(bg_color, bg_span_color) && */
+/*                         bg_y     == bg_span_y      && */
+/*                         bg_height == bg_span_height && */
+/*                         draw_x   == bg_span_start_x + bg_span_width) { */
+/*                         bg_span_width += char_width; */
+/*                     } else { */
+/*                         if (has_bg_span) */
+/*                             draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color); */
+/*                         bg_span_start_x = draw_x; */
+/*                         bg_span_y       = bg_y; */
+/*                         bg_span_width   = char_width; */
+/*                         bg_span_height  = bg_height; */
+/*                         bg_span_color   = bg_color; */
+/*                         has_bg_span     = true; */
+/*                     } */
+/*                 } else { */
+/*                     if (has_bg_span) { */
+/*                         draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color); */
+/*                         has_bg_span = false; */
+/*                     } */
+/*                 } */
+
+/*                 // Box batching */
+/*                 if (face->box) { */
+/*                     float actual_char_width; */
+/*                     if (ch == '\t') { */
+/*                         actual_char_width = char_width; */
+/*                     } else { */
+/*                         Character *char_info = font_get_character(char_font, ch); */
+/*                         actual_char_width = char_info ? char_info->ax : char_width; */
+/*                     } */
+
+/*                     Color current_box_color = face->box_color; */
+/*                     float box_y      = draw_y - char_font->descent * 2 - box_line_thickness; */
+/*                     float box_height = font_height + (box_line_thickness * 2); */
+
+/*                     if (!was_in_box) { */
+/*                         if (has_box_span) { */
+/*                             flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, */
+/*                                            box_span_color, box_line_thickness, box_span_no_left, box_span_no_right); */
+/*                             has_box_span = false; */
+/*                         } */
+/*                         bool this_span_no_left = box_span_no_left; */
+/*                         if (!this_span_no_left) { */
+/*                             x += box_line_thickness; */
+/*                             draw_x = x; */
+/*                         } */
+/*                         box_span_start_x  = this_span_no_left ? x : (x - box_line_thickness); */
+/*                         box_span_y        = box_y; */
+/*                         box_span_width    = actual_char_width + box_line_thickness + (this_span_no_left ? 0 : box_line_thickness); */
+/*                         box_span_height   = box_height; */
+/*                         box_span_color    = current_box_color; */
+/*                         box_span_no_left  = this_span_no_left; */
+/*                         box_span_no_right = false; */
+/*                         has_box_span      = true; */
+/*                     } else { */
+/*                         bool can_extend = has_box_span && */
+/*                                           color_equals(current_box_color, box_span_color) && */
+/*                                           box_y     == box_span_y && */
+/*                                           box_height == box_span_height; */
+/*                         if (can_extend) { */
+/*                             box_span_width += actual_char_width; */
+/*                         } else { */
+/*                             if (has_box_span) */
+/*                                 flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, */
+/*                                                box_span_color, box_line_thickness, box_span_no_left, box_span_no_right); */
+/*                             box_span_start_x  = x - box_line_thickness; */
+/*                             box_span_y        = box_y; */
+/*                             box_span_width    = actual_char_width + (box_line_thickness * 2); */
+/*                             box_span_height   = box_height; */
+/*                             box_span_color    = current_box_color; */
+/*                             box_span_no_left  = false; */
+/*                             box_span_no_right = false; */
+/*                             has_box_span      = true; */
+/*                         } */
+/*                     } */
+
+/*                     if (ch != '\t') { */
+/*                         if (is_control_char) { */
+/*                             Face  *escape_face = get_face(FACE_ESCAPE_GLYPH); */
+/*                             Color  escape_fg   = escape_face ? escape_face->fg : char_color; */
+/*                             uint32_t visible   = (ch == 0x7f) ? '?' : (ch + 64); */
+/*                             Color caret_color  = (at_cursor && should_draw_filled && buffer->cursor.visible) */
+/*                                                   ? face->bg : escape_fg; */
+/*                             float adv1 = draw_character_with_face('^', draw_x, draw_y, face, char_font, caret_color, */
+/*                                                                    false, char_color, false, char_color); */
+/*                             draw_character_with_face(visible, draw_x + adv1, draw_y, face, char_font, escape_fg, */
+/*                                                      face->underline, face->underline_color, */
+/*                                                      face->strike_through, face->strike_through_color); */
+/*                         } else { */
+/*                             draw_character_with_face(ch, draw_x, draw_y, face, char_font, char_color, */
+/*                                                      face->underline, face->underline_color, */
+/*                                                      face->strike_through, face->strike_through_color); */
+/*                         } */
+/*                     } else if (face->underline || face->strike_through) { */
+/*                         if (face->underline) { */
+/*                             quad2D((vec2){draw_x, draw_y}, */
+/*                                    (vec2){tab_pixel_width, 1.0f}, */
+/*                                    face->underline_color); */
+/*                         } */
+/*                         if (face->strike_through) { */
+/*                             quad2D((vec2){draw_x, draw_y}, */
+/*                                    (vec2){tab_pixel_width, 1.0f}, */
+/*                                    face->strike_through_color); */
+/*                         } */
+/*                     } */
+
+/*                     x += actual_char_width; */
+/*                     was_in_box = true; */
+
+/*                     last_drawn_face    = face; */
+/*                     last_drawn_font    = char_font; */
+/*                     last_drawn_bg      = bg_color; */
+/*                     last_face_had_box  = true; */
+
+/*                 } else { */
+/*                     // Not in box */
+/*                     if (was_in_box) { */
+/*                         if (has_box_span) { */
+/*                             flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, */
+/*                                            box_span_color, box_line_thickness, box_span_no_left, false); */
+/*                             has_box_span = false; */
+/*                         } */
+/*                         x += box_line_thickness; */
+/*                         was_in_box    = false; */
+/*                         box_span_no_left = false; */
+/*                     } */
+
+/*                     if (ch != '\t') { */
+/*                         if (is_control_char) { */
+/*                             Face  *escape_face = get_face(FACE_ESCAPE_GLYPH); */
+/*                             Color  escape_fg   = escape_face ? escape_face->fg : char_color; */
+/*                             uint32_t visible   = (ch == 0x7f) ? '?' : (ch + 64); */
+/*                             Color caret_color  = (at_cursor && should_draw_filled && buffer->cursor.visible) */
+/*                                                   ? face->bg : escape_fg; */
+/*                             float adv1 = draw_character_with_face('^', draw_x, draw_y, face, char_font, caret_color, */
+/*                                                                    false, char_color, false, char_color); */
+/*                             float adv2 = draw_character_with_face(visible, draw_x + adv1, draw_y, face, char_font, escape_fg, */
+/*                                                                    face->underline, face->underline_color, */
+/*                                                                    face->strike_through, face->strike_through_color); */
+/*                             x += adv1 + adv2; */
+/*                         } else { */
+/*                             float advance = draw_character_with_face(ch, draw_x, draw_y, face, char_font, char_color, */
+/*                                                                      face->underline, face->underline_color, */
+/*                                                                      face->strike_through, face->strike_through_color); */
+/*                             x += advance; */
+/*                         } */
+/*                     } else { */
+/*                         if (face->underline) { */
+/*                             int   underline_minimum_offset          = scm_get_int("underline-minimum-offset", 1); */
+/*                             bool  underline_at_descent_line         = scm_get_bool("underline-at-descent-line", false); */
+/*                             bool  use_underline_position_properties = scm_get_bool("use-underline-position-properties", true); */
+/*                             float underline_y, underline_thickness; */
+
+/*                             if (underline_at_descent_line) */
+/*                                 underline_y = draw_y - char_font->descent * 2; */
+/*                             else if (use_underline_position_properties) */
+/*                                 underline_y = draw_y - char_font->descent - char_font->underline_position; */
+/*                             else */
+/*                                 underline_y = draw_y - char_font->descent - underline_minimum_offset; */
+
+/*                             underline_thickness = use_underline_position_properties */
+/*                                                   ? char_font->underline_thickness : 1.0f; */
+
+/*                             quad2D((vec2){draw_x, underline_y}, */
+/*                                    (vec2){char_width, underline_thickness}, */
+/*                                    face->underline_color); */
+/*                         } */
+/*                         if (face->strike_through) { */
+/*                             quad2D((vec2){draw_x, draw_y}, */
+/*                                    (vec2){char_width, 1.0f}, */
+/*                                    face->strike_through_color); */
+/*                         } */
+/*                         x += char_width; */
+/*                     } */
+
+/*                     last_drawn_face   = face; */
+/*                     last_drawn_font   = char_font; */
+/*                     last_drawn_bg     = bg_color; */
+/*                     last_face_had_box = false; */
+/*                 } */
+
+/*             } else if (y >= window_bottom) { */
+/*                 // Off-screen x tracking */
+/*                 if (face->box) { */
+/*                     float actual_char_width; */
+/*                     if (ch == '\t') { */
+/*                         actual_char_width = char_width; */
+/*                     } else { */
+/*                         Character *char_info = font_get_character(char_font, ch); */
+/*                         actual_char_width = char_info ? char_info->ax : char_width; */
+/*                     } */
+/*                     if (!was_in_box && !box_span_no_left) x += box_line_thickness; */
+/*                     x += actual_char_width; */
+/*                     was_in_box = true; */
+/*                 } else { */
+/*                     if (was_in_box) { */
+/*                         x += box_line_thickness; */
+/*                         was_in_box    = false; */
+/*                         box_span_no_left = false; */
+/*                     } */
+/*                     x += char_width; */
+/*                 } */
+/*                 last_drawn_face   = face; */
+/*                 last_drawn_font   = char_font; */
+/*                 last_drawn_bg     = bg_color; */
+/*                 last_face_had_box = face->box; */
+/*             } */
+/*         } */
+/*         i++; */
+/*     } */
+
+/*     // Flush remaining spans */
+/*     if (has_bg_span) */
+/*         draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color); */
+
+/*     if (last_drawn_face && y >= window_bottom && y <= window_top) */
+/*         draw_face_extension(x, y, max_x, last_drawn_face, last_drawn_font, */
+/*                             last_drawn_bg, box_line_thickness, last_face_had_box); */
+
+/*     if (has_box_span) */
+/*         flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, */
+/*                        box_span_color, box_line_thickness, box_span_no_left, false); */
+
+/*     rope_iter_destroy(&iter); */
+
+/*     // Cursor at end of buffer */
+/*     if (point >= rope_char_length(buffer->rope)) { */
+/*         int face_id    = get_text_property_face(buffer, point); */
+/*         Face *face     = get_face(face_id); */
+/*         Font *char_font = face ? face->font : default_font; */
+
+/*         cursor_x = x; */
+/*         cursor_y = y - (char_font->descent * 2); */
+/*         Character *space = font_get_character(char_font, ' '); */
+/*         cursor_width  = space ? space->ax : char_font->ascent; */
+/*         cursor_height = char_font->ascent + char_font->descent; */
+/*         cursor_color  = get_face(FACE_CURSOR)->bg; */
+/*         cursor_found  = true; */
+/*     } */
+
+/*     buffer->cursor.x = cursor_x; */
+/*     buffer->cursor.y = cursor_y; */
+
+/*     if (!cursor_found) return; */
+/*     if (win && win->is_minibuffer && !selected_frame->wm.minibuffer_active) return; */
+
+/*     if (should_draw_filled) { */
+/*         bool   blink_cursor_mode     = scm_get_bool("blink-cursor-mode", true); */
+/*         size_t blink_cursor_blinks   = scm_get_size_t("blink-cursor-blinks", 0); */
+/*         float  blink_cursor_interval = scm_get_float("blink-cursor-interval", 0.1); */
+/*         float  blink_cursor_delay    = scm_get_float("blink-cursor-delay", 0.1); */
+
+/*         if (blink_cursor_mode && buffer->cursor.blink_count < blink_cursor_blinks) { */
+/*             double currentTime = getTime(); */
+/*             double interval = buffer->cursor.visible ? blink_cursor_interval : blink_cursor_delay; */
+
+/*             if (currentTime - buffer->cursor.last_blink >= interval) { */
+/*                 buffer->cursor.visible = !buffer->cursor.visible; */
+/*                 buffer->cursor.last_blink = currentTime; */
+/*                 if (buffer->cursor.visible) buffer->cursor.blink_count++; */
+/*             } */
+
+/*             if (buffer->cursor.visible) */
+/*                 quad2D((vec2){cursor_x, cursor_y}, (vec2){cursor_width, cursor_height}, cursor_color); */
+/*         } else { */
+/*             quad2D((vec2){cursor_x, cursor_y}, (vec2){cursor_width, cursor_height}, cursor_color); */
+/*         } */
+/*     } else { */
+/*         if (is_selected) { */
+/*             buffer->cursor.visible     = true; */
+/*             buffer->cursor.blink_count = 0; */
+/*         } */
+
+/*         bool cursor_in_non_selected = scm_get_bool("cursor-in-non-selected-windows", true); */
+/*         if (is_selected || cursor_in_non_selected) { */
+/*             float bw = 1.0f; */
+/*             quad2D((vec2){cursor_x, cursor_y + cursor_height - bw}, */
+/*                    (vec2){cursor_width, bw}, cursor_color); */
+/*             quad2D((vec2){cursor_x, cursor_y}, */
+/*                    (vec2){cursor_width, bw}, cursor_color); */
+/*             quad2D((vec2){cursor_x, cursor_y}, */
+/*                    (vec2){bw, cursor_height}, cursor_color); */
+/*             quad2D((vec2){cursor_x + cursor_width - bw, cursor_y}, */
+/*                    (vec2){bw, cursor_height}, cursor_color); */
+/*         } */
+/*     } */
+/* } */

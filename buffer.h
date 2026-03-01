@@ -19,6 +19,16 @@ typedef struct {
     bool active;
 } Region;
 
+typedef struct {
+    size_t *newline_positions; // char positions of every '\n'
+    size_t  count;             // number of newlines
+    size_t  capacity;
+    bool    valid;
+    // Last-access hint for sequential access (like Emacs pt_byte cache)
+    size_t  last_line;         // last line number returned
+    size_t  last_pos;          // char pos associated with last_line
+} NewlineCache;
+
 typedef struct Buffer {
     struct Buffer *next; // Next buffer in circular list
     struct Buffer *prev; // Previous buffer in circular list
@@ -29,7 +39,8 @@ typedef struct Buffer {
     Cursor cursor;
     size_t pt;
     Region region;
-    TextProp *props;
+    /* TextProp *props; */
+    IntervalTree intervals;
     SCM local_var_alist;       // Alist of (SYMBOL . VALUE) pairs
     SCM active_minor_modes;    // List of active minor mode symbols
     KeyChordMap *keymap;       // Buffer-local keymap (can be NULL)
@@ -37,6 +48,7 @@ typedef struct Buffer {
     UndoState *undo_state;     // Undo information for this buffer
     bool read_only;
     bool modified;
+    NewlineCache newline_cache;
 } Buffer;
 
 extern Buffer *all_buffers;
@@ -71,6 +83,16 @@ void end_of_line();
 void beginning_of_line();
 void beginning_of_buffer();
 void end_of_buffer();
+
+/// Newline cache
+
+void      newline_cache_invalidate(Buffer *buf);
+ptrdiff_t count_lines(Buffer *buf, size_t start, size_t end);
+ptrdiff_t line_number_at_pos(Buffer *buf, size_t pos);
+size_t    line_at_char(Buffer *buf, size_t pos);
+size_t    next_line_at_char(Buffer *buf, size_t pos);
+size_t    buffer_line_count(Buffer *buf);
+
 
 /// Buffer local variables
 

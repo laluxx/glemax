@@ -721,6 +721,27 @@ DEFINE_SCM_COMMAND(scm_forward_word,                   forward_word,            
 DEFINE_SCM_COMMAND(scm_backward_word,                  backward_word,                  NULL);
 DEFINE_SCM_COMMAND(scm_forward_paragraph,              forward_paragraph,              NULL);
 DEFINE_SCM_COMMAND(scm_backward_paragraph,             backward_paragraph,             NULL);
+
+DEFINE_SCM_COMMAND(scm_forward_page,                   forward_page,
+"Move forward to page boundary.  With arg, repeat, or go back if negative."
+"A page boundary is any line whose beginning matches the regexp"
+"`page-delimiter'.");
+
+DEFINE_SCM_COMMAND(scm_backward_page, backward_page,
+"Move backward to page boundary.  With arg, repeat, or go fwd if negative."
+"A page boundary is any line whose beginning matches the regexp"
+"`page-delimiter'.");
+
+DEFINE_SCM_COMMAND(scm_mark_page, mark_page,
+"Put mark at end of page, point at beginning."
+"A numeric arg specifies to move forward or backward by that many pages,"
+"thus marking a page other than the one point was originally in.");
+
+DEFINE_SCM_COMMAND(scm_count_lines_page, count_lines_page,
+"Report number of lines on current page, and how many are before or after point.");
+
+
+
 DEFINE_SCM_COMMAND(scm_beginning_of_line,              beginning_of_line,              NULL);
 DEFINE_SCM_COMMAND(scm_end_of_line,                    end_of_line,                    NULL);
 DEFINE_SCM_COMMAND(scm_beginning_of_visual_line,       beginning_of_visual_line,       NULL);
@@ -2639,6 +2660,11 @@ void lisp_init(void) {
     scm_c_define_gsubr("backward-word",                  0, 1, 0, scm_backward_word);
     scm_c_define_gsubr("forward-paragraph",              0, 1, 0, scm_forward_paragraph);
     scm_c_define_gsubr("backward-paragraph",             0, 1, 0, scm_backward_paragraph);
+    REGISTER_COMMAND("forward-page",             scm_forward_page);
+    REGISTER_COMMAND("backward-page",            scm_backward_page);
+    REGISTER_COMMAND("mark-page",                scm_mark_page);
+    REGISTER_COMMAND("count-lines-page",         scm_count_lines_page);
+
 
     REGISTER_COMMAND("beginning-of-line",        scm_beginning_of_line);
     REGISTER_COMMAND("end-of-line",              scm_end_of_line);

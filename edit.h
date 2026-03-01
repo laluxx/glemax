@@ -83,6 +83,13 @@ void upcase_word();
 void forward_paragraph();
 void backward_paragraph();
 
+/// Pages
+
+void forward_page();
+void backward_page();
+void mark_page();
+void count_lines_page();
+
 /// TRANSPOSE
 
 void transpose_chars();
