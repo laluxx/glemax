@@ -2,7 +2,7 @@
 
 ;;; Commentary:
 
-;; Defines Glemax's basic file- and directory-handling functions,
+;; Defines Glemax's basic file and directory-handling functions,
 ;; including file visiting, backup file generation and versioning,
 ;; link handling, load- and write-hook handling, and the like.
 

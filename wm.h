@@ -109,6 +109,7 @@ void shrink_window();
 
 Window* window_create(Window *parent, Buffer *buffer);
 void window_destroy(Window *win);
+void wm_invalidate_start_pos_cache(Buffer *buf);
 void collect_leaf_windows(Window *win, Window **leaves, int *count);
 
 void debug_print_windows();

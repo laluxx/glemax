@@ -911,6 +911,9 @@ static void inner_main (void *data, int argc, char **argv) {
 
     lisp_init(); // IMPORTANT After initializing the windowManager
 
+    init_draw_cache();
+
+
     bool resize_pixelwise = scm_get_bool("frame-resize-pixelwise", false);
     if (!resize_pixelwise) {
         setWindowResizeIncrements(selected_frame->column_width,
@@ -925,6 +928,8 @@ static void inner_main (void *data, int argc, char **argv) {
     while (!windowShouldClose() && !should_quit) {
         beginFrame();
         clear_background(face_cache->faces[FACE_DEFAULT]->bg);
+        refresh_draw_config();   // once per frame — reads g_ul underline flags
+
         fps(face_cache->faces[FACE_DEFAULT]->font, sw - 400, 200, face_cache->faces[FACE_ERROR]->fg);
         wm_draw(&selected_frame->wm);
         endFrame();

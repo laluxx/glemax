@@ -1,309 +1,251 @@
 #include "modeline.h"
 #include "faces.h"
-#include "lisp.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 
-// Helper to append a string to a dynamic buffer
 typedef struct {
-    char *data;
+    char  *data;
     size_t length;
     size_t capacity;
 } StrBuf;
 
-static void strbuf_init(StrBuf *buf) {
-    buf->capacity = 256;
-    buf->length = 0;
-    buf->data = malloc(buf->capacity);
-    buf->data[0] = '\0';
+static inline void strbuf_init(StrBuf *b) {
+    b->capacity = 256;
+    b->length   = 0;
+    b->data     = malloc(b->capacity);
+    b->data[0]  = '\0';
 }
 
-static void strbuf_append(StrBuf *buf, const char *str) {
-    if (!str) return;
-
-    size_t str_len = strlen(str);
-    while (buf->length + str_len + 1 > buf->capacity) {
-        buf->capacity *= 2;
-        buf->data = realloc(buf->data, buf->capacity);
-    }
-
-    strcpy(buf->data + buf->length, str);
-    buf->length += str_len;
+static inline void strbuf_ensure(StrBuf *b, size_t extra) {
+    if (b->length + extra + 1 <= b->capacity) return;
+    while (b->length + extra + 1 > b->capacity) b->capacity *= 2;
+    b->data = realloc(b->data, b->capacity);
 }
 
-static void strbuf_append_char(StrBuf *buf, char c) {
-    if (buf->length + 2 > buf->capacity) {
-        buf->capacity *= 2;
-        buf->data = realloc(buf->data, buf->capacity);
-    }
-
-    buf->data[buf->length++] = c;
-    buf->data[buf->length] = '\0';
+static inline void strbuf_append(StrBuf *b, const char *s) {
+    if (!s) return;
+    size_t n = strlen(s);
+    strbuf_ensure(b, n);
+    memcpy(b->data + b->length, s, n + 1);
+    b->length += n;
 }
 
-// Count lines in buffer up to position
-static size_t count_lines_to_point(Buffer *buf, size_t point) {
-    size_t line = 1;
+static inline void strbuf_append_char(StrBuf *b, char c) {
+    strbuf_ensure(b, 1);
+    b->data[b->length++] = c;
+    b->data[b->length]   = '\0';
+}
+
+// (computed once per format_mode_line, lazily filled)
+typedef struct {
+    Window *win;
+    Buffer *buf;
+    size_t  tab_width;
+    // Lazy fields — 0/SIZE_MAX means "not yet computed"
+    size_t  line;   // 1-based; 0 = not computed
+    size_t  col;    // 0-based; SIZE_MAX = not computed
+} Ctx;
+
+// Column: walk from line_start to point — only the current line, not whole buffer
+static size_t compute_col(Ctx *ctx) {
+    Buffer *buf  = ctx->buf;
+    size_t  pos  = ctx->win->point;
+    size_t  ls   = line_at_char(buf, pos);   // char pos of line start (buffer.c)
+    size_t  col  = 0;
+    size_t  tw   = ctx->tab_width;
+
     rope_iter_t iter;
-    rope_iter_init(&iter, buf->rope, 0);
-
+    rope_iter_init(&iter, buf->rope, ls);
     uint32_t ch;
-    size_t i = 0;
-    while (i < point && rope_iter_next_char(&iter, &ch)) {
-        if (ch == '\n') line++;
+    size_t i = ls;
+    while (i < pos && rope_iter_next_char(&iter, &ch)) {
+        col = (ch == '\t') ? ((col / tw) + 1) * tw : col + 1;
         i++;
     }
-
-    rope_iter_destroy(&iter);
-    return line;
-}
-
-// Calculate current column
-static size_t calculate_column(Buffer *buf, size_t point) {
-    rope_iter_t iter;
-    rope_iter_init(&iter, buf->rope, 0);
-
-    size_t col = 0;
-    uint32_t ch;
-    size_t i = 0;
-
-    while (i < point && rope_iter_next_char(&iter, &ch)) {
-        if (ch == '\n') {
-            col = 0;
-        } else if (ch == '\t') {
-            size_t tab_width = scm_get_size_t("tab-width", 8);
-            col = ((col / tab_width) + 1) * tab_width;
-        } else {
-            col++;
-        }
-        i++;
-    }
-
     rope_iter_destroy(&iter);
     return col;
 }
 
-// Process %-constructs in a string
-static void process_percent_constructs(StrBuf *out, const char *str, Window *win) {
-    Buffer *buf = win->buffer;
-    size_t i = 0;
+// %-construct expander
+static void ml_construct(StrBuf *out, SCM construct, Ctx *ctx);
 
-    while (str[i]) {
-        if (str[i] == '%') {
-            i++;
-            if (!str[i]) break;
+static void ml_percent(StrBuf *out, const char *str, Ctx *ctx) {
+    Buffer *buf = ctx->buf;
+    char tmp[32];
 
-            // Handle field width (digits after %)
-            int field_width = 0;
-            while (isdigit(str[i])) {
-                field_width = field_width * 10 + (str[i] - '0');
-                i++;
+    for (size_t i = 0; str[i]; ) {
+        if (str[i] != '%') { strbuf_append_char(out, str[i++]); continue; }
+        i++;
+        if (!str[i]) break;
+
+        // Optional numeric field width (consumed but only used for '%-')
+        int fw = 0;
+        while (isdigit((unsigned char)str[i])) fw = fw * 10 + (str[i++] - '0');
+
+        switch (str[i]) {
+            case 'b': case 'f':
+                strbuf_append(out, buf->name);
+                break;
+            case 'l':
+                if (!ctx->line) ctx->line = (size_t)line_number_at_pos(buf, ctx->win->point);
+                snprintf(tmp, sizeof tmp, "%zu", ctx->line);
+                strbuf_append(out, tmp);
+                break;
+            case 'c':
+                if (ctx->col == (size_t)-1) ctx->col = compute_col(ctx);
+                snprintf(tmp, sizeof tmp, "%zu", ctx->col);
+                strbuf_append(out, tmp);
+                break;
+            case 'C':
+                if (ctx->col == (size_t)-1) ctx->col = compute_col(ctx);
+                snprintf(tmp, sizeof tmp, "%zu", ctx->col + 1);
+                strbuf_append(out, tmp);
+                break;
+            case 'i':
+                snprintf(tmp, sizeof tmp, "%zu", rope_char_length(buf->rope));
+                strbuf_append(out, tmp);
+                break;
+            case '*':
+                strbuf_append_char(out, buf->read_only ? '%' : buf->modified ? '*' : '-');
+                break;
+            case '+':
+                strbuf_append_char(out, (buf->modified && buf->read_only) ? '*'
+                                      : buf->read_only                    ? '%'
+                                      : buf->modified                     ? '*' : '-');
+                break;
+            case '&':
+                strbuf_append_char(out, buf->modified ? '*' : '-');
+                break;
+            case 'p': case 'P':
+                strbuf_append(out, "Top"); // TODO: real scroll %
+                break;
+            case '-': {
+                int n = fw > 0 ? fw : 10;
+                strbuf_ensure(out, n);
+                memset(out->data + out->length, '-', n);
+                out->length += n;
+                out->data[out->length] = '\0';
+                break;
             }
-
-            char temp[256];
-            switch (str[i]) {
-                case 'b':  // Buffer name
-                    strbuf_append(out, buf->name);
-                    break;
-
-                case 'f':  // Visited file name (we don't have this yet)
-                    strbuf_append(out, buf->name);
-                    break;
-
-                case 'c':  // Column number (0-based)
-                    snprintf(temp, sizeof(temp), "%zu", calculate_column(buf, win->point));
-                    strbuf_append(out, temp);
-                    break;
-
-                case 'C':  // Column number (1-based)
-                    snprintf(temp, sizeof(temp), "%zu", calculate_column(buf, win->point) + 1);
-                    strbuf_append(out, temp);
-                    break;
-
-                case 'l':  // Line number
-                    snprintf(temp, sizeof(temp), "%zu", count_lines_to_point(buf, win->point));
-                    strbuf_append(out, temp);
-                    break;
-
-                case 'p':  // Percent above top of window
-                    // TODO: Calculate actual percentage
-                    strbuf_append(out, "Top");
-                    break;
-
-                case 'P':  // Percent above bottom of window
-                    // TODO: Calculate actual percentage
-                    strbuf_append(out, "Top");
-                    break;
-
-                case 'i':  // Buffer size
-                    snprintf(temp, sizeof(temp), "%zu", rope_char_length(buf->rope));
-                    strbuf_append(out, temp);
-                    break;
-
-                case '*':  // Modified flag: %, * or -
-                    if (buf->read_only) {
-                        strbuf_append_char(out, '%');
-                    } else if (buf->modified) {  // You'll need to add a 'modified' field
-                        strbuf_append_char(out, '*');
-                    } else {
-                        strbuf_append_char(out, '-');
-                    }
-                    break;
-
-                case '+':  // Modified/read-only: *, % or -
-                    if (buf->modified && buf->read_only) {
-                        strbuf_append_char(out, '*');
-                    } else if (buf->read_only) {
-                        strbuf_append_char(out, '%');
-                    } else if (buf->modified) {
-                        strbuf_append_char(out, '*');
-                    } else {
-                        strbuf_append_char(out, '-');
-                    }
-                    break;
-
-                case '&':  // Modified: * or -
-                    strbuf_append_char(out, buf->modified ? '*' : '-');
-                    break;
-
-                case '-':  // Fill with dashes
-                    // Calculate remaining width and fill with dashes
-                    // This is complex - for now just add some dashes
-                    for (int j = 0; j < 10; j++) {
-                        strbuf_append_char(out, '-');
-                    }
-                    break;
-
-                case '%':  // Literal %
-                    strbuf_append_char(out, '%');
-                    break;
-
-                default:
-                    // Unknown construct, just output it literally
-                    strbuf_append_char(out, '%');
-                    strbuf_append_char(out, str[i]);
-                    break;
-            }
-            i++;
-        } else {
-            strbuf_append_char(out, str[i]);
-            i++;
+            case '%':
+                strbuf_append_char(out, '%');
+                break;
+            default:
+                strbuf_append_char(out, '%');
+                strbuf_append_char(out, str[i]);
+                break;
         }
+        i++;
     }
 }
 
-static void process_mode_line_construct(StrBuf *out, SCM construct, Window *win);
-
-// Process a mode-line list
-static void process_mode_line_list(StrBuf *out, SCM list, Window *win) {
+static void ml_list(StrBuf *out, SCM list, Ctx *ctx) {
     if (!scm_is_pair(list)) return;
-
     SCM car = scm_car(list);
 
-    // Check for special forms
     if (scm_is_symbol(car)) {
-        char *sym_name = scm_to_locale_string(scm_symbol_to_string(car));
+        // Intern once — zero-alloc comparisons on every call after first
+        static SCM s_eval = 0, s_prop = 0;
+        if (!s_eval) {
+            s_eval = scm_from_utf8_symbol(":eval");
+            s_prop = scm_from_utf8_symbol(":propertize");
+            scm_gc_protect_object(s_eval);
+            scm_gc_protect_object(s_prop);
+        }
 
-        if (strcmp(sym_name, ":eval") == 0) {
-            // (:eval FORM) - evaluate FORM
-            if (scm_is_pair(scm_cdr(list))) {
-                SCM form = scm_cadr(list);
-                SCM result = scm_eval(form, scm_current_module());
-                process_mode_line_construct(out, result, win);
-            }
-            free(sym_name);
+        if (scm_is_eq(car, s_eval)) {
+            if (scm_is_pair(scm_cdr(list)))
+                ml_construct(out, scm_eval(scm_cadr(list), scm_current_module()), ctx);
             return;
-        } else if (strcmp(sym_name, ":propertize") == 0) {
-            // (:propertize ELT PROPS...) - process ELT, ignore PROPS for now
-            if (scm_is_pair(scm_cdr(list))) {
-                SCM elt = scm_cadr(list);
-                process_mode_line_construct(out, elt, win);
-            }
-            free(sym_name);
+        }
+        if (scm_is_eq(car, s_prop)) {
+            if (scm_is_pair(scm_cdr(list)))
+                ml_construct(out, scm_cadr(list), ctx);
             return;
         }
 
-        free(sym_name);
-
-        // Symbol as car: if symbol's value is non-nil, process cadr, else process caddr
-        SCM value = scm_variable_ref(scm_c_lookup(sym_name));
-        if (scm_is_true(value)) {
-            if (scm_is_pair(scm_cdr(list))) {
-                process_mode_line_construct(out, scm_cadr(list), win);
-            }
+        // (SYMBOL then-form else-form) conditional
+        SCM var = scm_module_variable(scm_current_module(), car);
+        bool truthy = scm_is_true(var)
+                   && scm_is_true(scm_variable_bound_p(var))
+                   && scm_is_true(scm_variable_ref(var));
+        if (truthy) {
+            if (scm_is_pair(scm_cdr(list))) ml_construct(out, scm_cadr(list), ctx);
         } else {
-            if (scm_is_pair(scm_cdr(list)) && scm_is_pair(scm_cddr(list))) {
-                process_mode_line_construct(out, scm_caddr(list), win);
-            }
+            if (scm_is_pair(scm_cdr(list)) && scm_is_pair(scm_cddr(list)))
+                ml_construct(out, scm_caddr(list), ctx);
         }
         return;
     }
 
     if (scm_is_integer(car)) {
-        // (INTEGER ELT) - process ELT with padding/truncation
-        int width = scm_to_int(car);
-        if (scm_is_pair(scm_cdr(list))) {
-            // TODO: Implement padding/truncation
-            process_mode_line_construct(out, scm_cadr(list), win);
-        }
+        // (N form) — width hint, just process form
+        if (scm_is_pair(scm_cdr(list))) ml_construct(out, scm_cadr(list), ctx);
         return;
     }
 
-    // Otherwise, process each element of the list
+    // Plain list — recurse each element
     while (scm_is_pair(list)) {
-        process_mode_line_construct(out, scm_car(list), win);
+        ml_construct(out, scm_car(list), ctx);
         list = scm_cdr(list);
     }
 }
 
-// Main recursive processor for mode-line constructs
-static void process_mode_line_construct(StrBuf *out, SCM construct, Window *win) {
-    if (scm_is_false(construct) || scm_is_null(construct)) {
-        // nil means don't display
+static void ml_construct(StrBuf *out, SCM c, Ctx *ctx) {
+    if (scm_is_false(c) || scm_is_null(c)) return;
+
+    if (scm_is_string(c)) {
+        char *s = scm_to_locale_string(c);
+        ml_percent(out, s, ctx);
+        free(s);
         return;
     }
 
-    if (scm_is_string(construct)) {
-        char *str = scm_to_locale_string(construct);
-        process_percent_constructs(out, str, win);
-        free(str);
-        return;
-    }
-
-    if (scm_is_symbol(construct)) {
-        // Look up symbol's value
-        SCM value = scm_variable_ref(scm_c_lookup(scm_to_locale_string(scm_symbol_to_string(construct))));
-        if (scm_is_string(value)) {
-            char *str = scm_to_locale_string(value);
-            strbuf_append(out, str);  // Don't process %-constructs for symbol values
-            free(str);
+    if (scm_is_symbol(c)) {
+        SCM var = scm_module_variable(scm_current_module(), c);
+        if (scm_is_false(var) || scm_is_false(scm_variable_bound_p(var))) return;
+        SCM val = scm_variable_ref(var);
+        if (scm_is_string(val)) {
+            char *s = scm_to_locale_string(val);
+            ml_percent(out, s, ctx);
+            free(s);
         } else {
-            process_mode_line_construct(out, value, win);
+            ml_construct(out, val, ctx);
         }
         return;
     }
 
-    if (scm_is_pair(construct)) {
-        process_mode_line_list(out, construct, win);
-        return;
-    }
+    if (scm_is_pair(c)) { ml_list(out, c, ctx); return; }
 }
 
-// Main entry point
-char* format_mode_line(Window *win) {
+/// API
+
+char *format_mode_line(Window *win) {
     if (!win || !win->buffer) return strdup("");
 
-    // Get buffer-local mode-line-format
-    SCM mode_line_sym = scm_from_utf8_symbol("mode-line-format");
-    SCM format = buffer_local_value(mode_line_sym, win->buffer);
+    static SCM s_fmt = 0, s_tab_width = 0;
+    if (!s_fmt) {
+        s_fmt      = scm_from_utf8_symbol("mode-line-format");
+        s_tab_width = scm_from_utf8_symbol("tab-width");
+        scm_gc_protect_object(s_fmt);
+        scm_gc_protect_object(s_tab_width);
+    }
+
+    SCM tw = buffer_local_value(s_tab_width, win->buffer);
+
+    Ctx ctx = {
+        .win       = win,
+        .buf       = win->buffer,
+        .tab_width = scm_is_integer(tw) ? scm_to_size_t(tw) : 8,
+        .line      = 0,
+        .col       = (size_t)-1,
+    };
 
     StrBuf buf;
     strbuf_init(&buf);
-
-    process_mode_line_construct(&buf, format, win);
-
+    ml_construct(&buf, buffer_local_value(s_fmt, win->buffer), &ctx);
     return buf.data;
 }
 

@@ -747,5 +747,5 @@ INTERVAL-LENGTH specifies how many characters each face segment should be."
 
 
 (load-theme 'modus-vivendi)
-(rainbow-delimiters-mode)
+;; (rainbow-delimiters-mode)
 

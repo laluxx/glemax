@@ -1380,9 +1380,6 @@ static SCM scm_buffer_file_name(SCM buffer_obj) {
     }
 }
 
-
-
-
 /// Buffer local variables
 
 static SCM scm_set_default(SCM symbol, SCM value) {
@@ -1802,7 +1799,6 @@ static SCM scm_window_pixel_height(SCM window_obj) {
     return scm_from_double(win->height);
 }
 
-
 static SCM scm_minibuffer_window_p(SCM window_obj) {
     Window *win;
 
@@ -1848,7 +1844,6 @@ static SCM scm_set_window_buffer(SCM window_obj, SCM buffer_obj) {
 
     return SCM_UNSPECIFIED;
 }
-
 
 static SCM scm_window_try_horizontal_split(SCM window_obj) {
     Window *win;
@@ -1987,8 +1982,6 @@ static SCM scm_get_buffer_window(SCM buffer_or_name) {
     return get_or_make_window_object(win);
 }
 
-
-
 static SCM scm_goto_char(SCM position) {
     if (!scm_is_integer(position)) {
         scm_wrong_type_arg("goto-char", 1, position);
@@ -1999,7 +1992,6 @@ static SCM scm_goto_char(SCM position) {
 
     return scm_from_size_t(result);
 }
-
 
 /// Keymap
 
@@ -2098,6 +2090,7 @@ static const char* get_home_directory(void) {
     return NULL;
 }
 
+// Find and set user-init-file
 static void setup_user_init_file(void) {
     char path[1024];
     char *init_file = NULL;
@@ -2160,52 +2153,6 @@ define_vars:
     free(init_file);
     free(glemax_dir);
 }
-
-// Find and set user-init-file
-/* static void setup_user_init_file(void) { */
-/*     char path[1024]; */
-
-/*     // Try ./init.scm first (current directory) */
-/*     snprintf(path, sizeof(path), "./init.scm"); */
-/*     if (file_exists(path)) { */
-/*         // Get absolute path */
-/*         char abs_path[1024]; */
-/*         if (realpath(path, abs_path)) { */
-/*             scm_c_define("user-init-file", scm_from_locale_string(abs_path)); */
-/*             return; */
-/*         } */
-/*     } */
-
-/*     const char *home = get_home_directory(); */
-/*     if (!home) { */
-/*         scm_c_define("user-init-file", SCM_BOOL_F); */
-/*         return; */
-/*     } */
-
-/*     // Try ~/.glemax */
-/*     snprintf(path, sizeof(path), "%s/.glemax", home); */
-/*     if (file_exists(path)) { */
-/*         scm_c_define("user-init-file", scm_from_locale_string(path)); */
-/*         return; */
-/*     } */
-
-/*     // Try ~/.glemax.d/init.scm */
-/*     snprintf(path, sizeof(path), "%s/.glemax.d/init.scm", home); */
-/*     if (file_exists(path)) { */
-/*         scm_c_define("user-init-file", scm_from_locale_string(path)); */
-/*         return; */
-/*     } */
-
-/*     // Try ~/.config/glemax/init.scm */
-/*     snprintf(path, sizeof(path), "%s/.config/glemax/init.scm", home); */
-/*     if (file_exists(path)) { */
-/*         scm_c_define("user-init-file", scm_from_locale_string(path)); */
-/*         return; */
-/*     } */
-
-/*     // No init file found */
-/*     scm_c_define("user-init-file", SCM_BOOL_F); */
-/* } */
 
 // Add this near the top with other global variables
 static SCM load_path = SCM_UNDEFINED;

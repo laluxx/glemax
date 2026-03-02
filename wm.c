@@ -1321,7 +1321,6 @@ float calculate_minibuffer_height() {
 
 // TODO When minibuffer window height changes we should onliy
 // change the height of windows that touch the bottom of the frame
-// and we should limit the minibuffer height to ‘max-mini-window-height’
 void wm_draw(WindowManager *wm) {
     // Calculate minibuffer height dynamically each frame
     float minibuffer_height = calculate_minibuffer_height();

@@ -40,7 +40,8 @@ typedef struct Buffer {
     size_t pt;
     Region region;
     /* TextProp *props; */
-    IntervalTree intervals;
+    /* IntervalTree intervals; */
+    TextPropStore props;
     SCM local_var_alist;       // Alist of (SYMBOL . VALUE) pairs
     SCM active_minor_modes;    // List of active minor mode symbols
     KeyChordMap *keymap;       // Buffer-local keymap (can be NULL)
@@ -136,6 +137,11 @@ void backward_kill_word();
 typedef struct Window Window;
 
 bool is_pair(uint32_t left, uint32_t right);
+
+/// Draw
+
+void init_draw_cache(void);
+void refresh_draw_config(void);
 
 size_t find_start_position(Buffer *buffer, Window *win, float *out_start_y);
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y);

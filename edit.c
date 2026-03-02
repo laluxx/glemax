@@ -40,122 +40,95 @@ void insert(const char *text) {
 
     size_t insert_pos = current_buffer->pt;
 
-    // Check if we're trying to insert at a read-only position
-    SCM readonly = get_text_property(current_buffer, insert_pos, scm_from_locale_symbol("read-only"));
-    if (scm_is_true(readonly)) {
+    static SCM s_readonly = 0;
+    if (!s_readonly) { s_readonly = scm_from_utf8_symbol("read-only"); scm_gc_protect_object(s_readonly); }
+    if (scm_is_true(get_text_property(current_buffer, insert_pos, s_readonly))) {
         message("Text is read-only");
         return;
     }
 
-    // Get prefix argument (how many times to insert)
     int arg = get_prefix_arg();
     int insert_count = (arg == 0) ? 1 : abs(arg);
 
-    // Calculate how many characters (not bytes) we're inserting per iteration
     size_t char_count = 0;
     for (size_t i = 0; i < len; ) {
         size_t bytes_read;
-        uint32_t ch = utf8_decode(&text[i], len - i, &bytes_read);
+        utf8_decode(&text[i], len - i, &bytes_read);
         if (bytes_read == 0) break;
         i += bytes_read;
         char_count++;
     }
     size_t total_char_count = char_count * insert_count;
 
-    // UNDO: Add boundary if this is a new command
+    // Undo
     undo_boundary_if_needed(current_buffer);
-
-    // UNDO: Record the current point position before insertion
     undo_record_position(current_buffer, current_buffer->pt);
 
-    // Check if tree-sitter is active
+    // Tree-sitter state capture (before mutation)
     bool has_treesit = current_buffer->ts_state && current_buffer->ts_state->tree;
-
-    // Capture tree-sitter state BEFORE modification
-    size_t start_byte = 0;
-    TSPoint start_point = {0, 0};
-    TSPoint new_end_point = {0, 0};
+    size_t  ts_start_byte    = 0;
+    TSPoint ts_start_point   = {0, 0};
+    TSPoint ts_new_end_point = {0, 0};
+    TSTree *ts_old_tree      = NULL;
 
     if (has_treesit) {
-        start_byte = rope_char_to_byte(current_buffer->rope, insert_pos);
-        start_point = treesit_char_to_point(current_buffer, insert_pos);
+        ts_start_byte  = rope_char_to_byte(current_buffer->rope, insert_pos);
+        ts_start_point = treesit_char_to_point(current_buffer, insert_pos);
 
-        // Calculate new_end_point based on inserted content (repeated insert_count times)
-        new_end_point = start_point;
+        ts_new_end_point = ts_start_point;
         for (int repeat = 0; repeat < insert_count; repeat++) {
-            // Scan inserted bytes for newlines
-            size_t bytes_after_last_newline = 0;
-            for (size_t i = 0; i < len; i++) {
-                if (text[i] == '\n') {
-                    new_end_point.row++;
-                    new_end_point.column = 0;
-                    bytes_after_last_newline = 0;
-                } else {
-                    bytes_after_last_newline++;
-                }
-            }
-            // Update column based on whether we had newlines
-            if (bytes_after_last_newline > 0 || new_end_point.row == start_point.row) {
-                new_end_point.column += bytes_after_last_newline;
+            for (size_t i = 0; i < len; ) {
+                size_t bytes_read;
+                uint32_t cp = utf8_decode(&text[i], len - i, &bytes_read);
+                if (bytes_read == 0) break;
+                i += bytes_read;
+                if (cp == '\n') { ts_new_end_point.row++; ts_new_end_point.column = 0; }
+                else            { ts_new_end_point.column += (uint32_t)bytes_read; }
             }
         }
+
+        ts_old_tree = ts_tree_copy(current_buffer->ts_state->tree);
     }
 
-    // Update region mark
-    if (current_buffer->region.mark >= 0 && (size_t)current_buffer->region.mark > insert_pos) {
+    // Region mark
+    if (current_buffer->region.mark >= 0 &&
+        (size_t)current_buffer->region.mark > insert_pos)
         current_buffer->region.mark += total_char_count;
-    }
 
-    // Perform the rope insertion (insert_count times)
+    // Rope insertion
     for (int i = 0; i < insert_count; i++) {
-        size_t current_insert_pos = insert_pos + (i * char_count);
-
-        // UNDO: Record this insertion (BEG . END)
-        undo_record_insert(current_buffer, current_insert_pos, current_insert_pos + char_count);
-
-        current_buffer->rope = rope_insert_chars(
-            current_buffer->rope,
-            current_insert_pos,
-            text,
-            len
-        );
+        size_t cur_pos = insert_pos + ((size_t)i * char_count);
+        undo_record_insert(current_buffer, cur_pos, cur_pos + char_count);
+        current_buffer->rope = rope_insert_chars(current_buffer->rope, cur_pos, text, len);
     }
 
-    // Update tree-sitter if active
+    // Lazily shift ONLY visible properties.
+    textprop_adjust_insert(current_buffer, insert_pos, total_char_count);
+
+
+
     if (has_treesit) {
-        size_t new_end_byte = start_byte + (len * insert_count);
-        treesit_update_tree(
-            current_buffer,
-            start_byte,
-            start_byte,      // old_end_byte = start_byte (nothing was there before)
-            new_end_byte,
-            start_point,
-            start_point,     // old_end_point = start_point (nothing was there before)
-            new_end_point
-        );
+        size_t ts_new_end_byte = ts_start_byte + (len * (size_t)insert_count);
+
+        treesit_update_tree(current_buffer,
+                            ts_start_byte, ts_start_byte, ts_new_end_byte,
+                            ts_start_point, ts_start_point, ts_new_end_point);
+
         treesit_reparse_if_needed(current_buffer);
-        treesit_apply_highlights(current_buffer);
+        treesit_apply_highlights_after_edit(current_buffer, ts_old_tree);
+        ts_tree_delete(ts_old_tree);
     }
 
+    // Finalize
     run_post_self_insert_hook();
-
-    // Only adjust text properties if tree-sitter is NOT active
-    if (!has_treesit) {
-        adjust_text_properties(current_buffer, insert_pos, total_char_count);
-    }
-
     adjust_all_window_points_after_modification(insert_pos, total_char_count);
     set_point(current_buffer->pt + total_char_count);
     update_goal_column();
     reset_cursor_blink(current_buffer);
-
     newline_cache_invalidate(current_buffer);
     current_buffer->modified = true;
-
-    // UNDO: Mark that we need a boundary before the next command
-    if (current_buffer->undo_state) {
+    if (current_buffer->undo_state)
         current_buffer->undo_state->boundary_needed = true;
-    }
 }
 
 bool quoted_insert_pending = false;
@@ -180,123 +153,6 @@ bool quoted_insert_interceptor(int key, int action, int mods) {
     quoted_insert_arg = 1;
     return true;
 }
-
-
-/* void insert(const char *text) { */
-/*     if (!text) return; */
-
-/*     size_t len = strlen(text); */
-/*     if (len == 0) return; */
-
-/*     if (current_buffer->read_only) { */
-/*         message("Buffer is read-only: #<buffer %s>", current_buffer->name); */
-/*         return; */
-/*     } */
-
-/*     size_t insert_pos = current_buffer->pt; */
-
-/*     // Check if we're trying to insert at a read-only position */
-/*     SCM readonly = get_text_property(current_buffer, insert_pos, scm_from_locale_symbol("read-only")); */
-/*     if (scm_is_true(readonly)) { */
-/*         message("Text is read-only"); */
-/*         return; */
-/*     } */
-
-/*     // Get prefix argument (how many times to insert) */
-/*     int arg = get_prefix_arg(); */
-/*     int insert_count = (arg == 0) ? 1 : abs(arg); */
-
-/*     // Calculate how many characters (not bytes) we're inserting per iteration */
-/*     size_t char_count = 0; */
-/*     for (size_t i = 0; i < len; ) { */
-/*         size_t bytes_read; */
-/*         uint32_t ch = utf8_decode(&text[i], len - i, &bytes_read); */
-/*         if (bytes_read == 0) break; */
-/*         i += bytes_read; */
-/*         char_count++; */
-/*     } */
-
-/*     size_t total_char_count = char_count * insert_count; */
-
-/*     // Check if tree-sitter is active */
-/*     bool has_treesit = current_buffer->ts_state && current_buffer->ts_state->tree; */
-
-/*     // Capture tree-sitter state BEFORE modification */
-/*     size_t start_byte = 0; */
-/*     TSPoint start_point = {0, 0}; */
-/*     TSPoint new_end_point = {0, 0}; */
-
-/*     if (has_treesit) { */
-/*         start_byte = rope_char_to_byte(current_buffer->rope, insert_pos); */
-/*         start_point = treesit_char_to_point(current_buffer, insert_pos); */
-
-/*         // Calculate new_end_point based on inserted content (repeated insert_count times) */
-/*         new_end_point = start_point; */
-
-/*         for (int repeat = 0; repeat < insert_count; repeat++) { */
-/*             // Scan inserted bytes for newlines */
-/*             size_t bytes_after_last_newline = 0; */
-/*             for (size_t i = 0; i < len; i++) { */
-/*                 if (text[i] == '\n') { */
-/*                     new_end_point.row++; */
-/*                     new_end_point.column = 0; */
-/*                     bytes_after_last_newline = 0; */
-/*                 } else { */
-/*                     bytes_after_last_newline++; */
-/*                 } */
-/*             } */
-
-/*             // Update column based on whether we had newlines */
-/*             if (bytes_after_last_newline > 0 || new_end_point.row == start_point.row) { */
-/*                 new_end_point.column += bytes_after_last_newline; */
-/*             } */
-/*         } */
-/*     } */
-
-/*     // Update region mark */
-/*     if (current_buffer->region.mark >= 0 && (size_t)current_buffer->region.mark > insert_pos) { */
-/*         current_buffer->region.mark += total_char_count; */
-/*     } */
-
-/*     // Perform the rope insertion (insert_count times) */
-/*     for (int i = 0; i < insert_count; i++) { */
-/*         current_buffer->rope = rope_insert_chars( */
-/*             current_buffer->rope, */
-/*             insert_pos + (i * char_count), */
-/*             text, */
-/*             len */
-/*         ); */
-/*     } */
-
-/*     // Update tree-sitter if active */
-/*     if (has_treesit) { */
-/*         size_t new_end_byte = start_byte + (len * insert_count); */
-
-/*         treesit_update_tree( */
-/*             current_buffer, */
-/*             start_byte, */
-/*             start_byte,      // old_end_byte = start_byte (nothing was there before) */
-/*             new_end_byte, */
-/*             start_point, */
-/*             start_point,     // old_end_point = start_point (nothing was there before) */
-/*             new_end_point */
-/*         ); */
-
-/*         treesit_reparse_if_needed(current_buffer); */
-/*         treesit_apply_highlights(current_buffer); */
-/*     } */
-
-/*     // Only adjust text properties if tree-sitter is NOT active */
-/*     if (!has_treesit) { */
-/*         adjust_text_properties(current_buffer, insert_pos, total_char_count); */
-/*     } */
-
-/*     adjust_all_window_points_after_modification(insert_pos, total_char_count); */
-/*     set_point(current_buffer->pt + total_char_count); */
-/*     update_goal_column(); */
-/*     reset_cursor_blink(current_buffer); */
-/*     current_buffer->modified = true; */
-/* } */
 
 // Add this function in main.c or edit.c
 // Helper function to check if there are unmatched closing characters of a specific type after point
@@ -375,13 +231,13 @@ void self_insert_command() {
         bool is_closing = false;
 
         switch (ch) {
-            case '(': closing_char = ')'; should_pair = true; break;
-            case '[': closing_char = ']'; should_pair = true; break;
-            case '{': closing_char = '}'; should_pair = true; break;
-            case '<': closing_char = '>'; should_pair = true; break;
-            case '"': closing_char = '"'; should_pair = true; break;
+            case '(':  closing_char = ')';  should_pair = true; break;
+            case '[':  closing_char = ']';  should_pair = true; break;
+            case '{':  closing_char = '}';  should_pair = true; break;
+            case '<':  closing_char = '>';  should_pair = true; break;
+            case '"':  closing_char = '"';  should_pair = true; break;
             case '\'': closing_char = '\''; should_pair = true; break;
-            case '`': closing_char = '`'; should_pair = true; break;
+            case '`':  closing_char = '`';  should_pair = true; break;
 
             case ')':
             case ']':
@@ -455,242 +311,122 @@ void self_insert_command() {
 jmp_buf delete_readonly;
 jmp_buf kill_readonly;
 
+
 size_t delete_impl(size_t pos, size_t count) {
     if (current_buffer->read_only) {
         message("Buffer is read-only: #<buffer %s>", current_buffer->name);
         longjmp(delete_readonly, 1);
     }
 
-    if (count == 0) {
-        size_t text_len = rope_char_length(current_buffer->rope);
-        if (pos == 0) {
-            message("Beginning of buffer");
-        } else if (pos >= text_len) {
-            message("End of buffer");
-        }
-        return pos;
-    }
-
     size_t text_len = rope_char_length(current_buffer->rope);
-    if (pos >= text_len) {
-        message("End of buffer");
-        return pos;
-    }
-
-    if (pos + count > text_len) {
-        count = text_len - pos;
-    }
 
     if (count == 0) {
-        message("End of buffer");
+        if (pos == 0)             message("Beginning of buffer");
+        else if (pos >= text_len) message("End of buffer");
         return pos;
     }
+    if (pos >= text_len) { message("End of buffer"); return pos; }
+    if (pos + count > text_len) count = text_len - pos;
+    if (count == 0) { message("End of buffer"); return pos; }
 
     size_t delete_end = pos + count;
 
-    // Check for read-only text in the deletion range
     if (is_range_readonly(current_buffer, pos, delete_end)) {
         message("Text is read-only");
         longjmp(delete_readonly, 1);
     }
 
-    // UNDO: Add boundary if this is a new command
+    // Undo: save deleted text
     undo_boundary_if_needed(current_buffer);
 
-    // UNDO: Save the text being deleted BEFORE we delete it
     size_t delete_byte_start = rope_char_to_byte(current_buffer->rope, pos);
-    size_t delete_byte_end = rope_char_to_byte(current_buffer->rope, delete_end);
-    size_t delete_byte_len = delete_byte_end - delete_byte_start;
+    size_t delete_byte_end   = rope_char_to_byte(current_buffer->rope, delete_end);
+    size_t delete_byte_len   = delete_byte_end - delete_byte_start;
 
     char *deleted_text = malloc(delete_byte_len + 1);
     if (deleted_text) {
         rope_copy_bytes(current_buffer->rope, delete_byte_start, delete_byte_len,
-                       deleted_text, delete_byte_len);
+                        deleted_text, delete_byte_len);
         deleted_text[delete_byte_len] = '\0';
+        ssize_t undo_pos = (current_buffer->pt >= delete_end)
+                           ? -(ssize_t)pos : (ssize_t)pos;
+        undo_record_delete(current_buffer, deleted_text, delete_byte_len, undo_pos);
     }
-
-    // UNDO: Determine position format (TEXT . POSITION)
-    // If point is at or after the end of deletion, position is negative
-    // If point is before or at the start, position is positive
-    ssize_t undo_position;
-    if (current_buffer->pt >= delete_end) {
-        // Point was at or after the end of deleted text
-        undo_position = -(ssize_t)pos;  // Negative means point at end
-    } else {
-        // Point was at the start or before
-        undo_position = (ssize_t)pos;   // Positive means point at front
-    }
-
-    // UNDO: Record the deletion
-    if (deleted_text) {
-        undo_record_delete(current_buffer, deleted_text, delete_byte_len, undo_position);
-        free(deleted_text);
-    }
-
-    // UNDO: Record point position before deletion
     undo_record_position(current_buffer, current_buffer->pt);
 
-    // Check if tree-sitter is active
+    // Tree-sitter state capture (before mutation)
     bool has_treesit = current_buffer->ts_state && current_buffer->ts_state->tree;
-
-    // Capture tree-sitter state BEFORE modification
-    size_t start_byte = 0;
-    size_t old_end_byte = 0;
-    TSPoint start_point = {0, 0};
-    TSPoint old_end_point = {0, 0};
+    size_t  ts_start_byte    = 0;
+    size_t  ts_old_end_byte  = 0;
+    TSPoint ts_start_point   = {0, 0};
+    TSPoint ts_old_end_point = {0, 0};
+    TSTree *ts_old_tree      = NULL;
 
     if (has_treesit) {
-        start_byte = rope_char_to_byte(current_buffer->rope, pos);
-        old_end_byte = rope_char_to_byte(current_buffer->rope, delete_end);
-        start_point = treesit_char_to_point(current_buffer, pos);
-        old_end_point = treesit_char_to_point(current_buffer, delete_end);
-    }
+        ts_start_byte   = delete_byte_start;
+        ts_old_end_byte = delete_byte_end;
+        ts_start_point  = treesit_char_to_point(current_buffer, pos);
 
-    // Update region mark
-    if (current_buffer->region.mark >= 0) {
-        if ((size_t)current_buffer->region.mark >= delete_end) {
-            current_buffer->region.mark -= count;
-        } else if ((size_t)current_buffer->region.mark > pos) {
-            current_buffer->region.mark = pos;
+        ts_old_end_point = ts_start_point;
+        if (deleted_text) {
+            for (size_t i = 0; i < delete_byte_len; ) {
+                size_t bytes_read;
+                uint32_t cp = utf8_decode(deleted_text + i, delete_byte_len - i, &bytes_read);
+                if (bytes_read == 0) break;
+                i += bytes_read;
+                if (cp == '\n') { ts_old_end_point.row++; ts_old_end_point.column = 0; }
+                else            { ts_old_end_point.column += (uint32_t)bytes_read; }
+            }
+        } else {
+            ts_old_end_point = treesit_char_to_point(current_buffer, delete_end);
         }
+
+        ts_old_tree = ts_tree_copy(current_buffer->ts_state->tree);
     }
 
-    // Perform the deletion
+    free(deleted_text);
+
+    // Region mark
+    if (current_buffer->region.mark >= 0) {
+        if ((size_t)current_buffer->region.mark >= delete_end)
+            current_buffer->region.mark -= count;
+        else if ((size_t)current_buffer->region.mark > pos)
+            current_buffer->region.mark = pos;
+    }
+
+    // Rope deletion
     current_buffer->rope = rope_delete_chars(current_buffer->rope, pos, count);
 
-    // Update tree-sitter if active
+    // Invalidate TSPoint cache
+    if (has_treesit && current_buffer->ts_state) {
+        TSPointCache *pc = &current_buffer->ts_state->point_cache;
+        if (pc->valid && pc->char_pos >= pos)
+            pc->valid = false;
+    }
+
+    // Lazily shift ONLY visible properties.
+    textprop_adjust_delete(current_buffer, pos, delete_end);
+
     if (has_treesit) {
-        size_t new_end_byte = start_byte;
-        TSPoint new_end_point = start_point;
-        treesit_update_tree(
-            current_buffer,
-            start_byte,
-            old_end_byte,
-            new_end_byte,
-            start_point,
-            old_end_point,
-            new_end_point
-        );
+        treesit_update_tree(current_buffer,
+                            ts_start_byte, ts_old_end_byte, ts_start_byte,
+                            ts_start_point, ts_old_end_point, ts_start_point);
+
         treesit_reparse_if_needed(current_buffer);
-        treesit_apply_highlights(current_buffer);
+        treesit_apply_highlights_after_edit(current_buffer, ts_old_tree);
+        ts_tree_delete(ts_old_tree);
     }
 
-    // Only adjust text properties if tree-sitter is NOT active
-    if (!has_treesit) {
-        adjust_text_properties(current_buffer, pos, -(int)count);
-    }
-
+    // Finalize
     adjust_all_window_points_after_modification(pos, -(int)count);
     reset_cursor_blink(current_buffer);
-
     newline_cache_invalidate(current_buffer);
     current_buffer->modified = true;
-
-    // UNDO: Mark that we need a boundary before the next command
-    if (current_buffer->undo_state) {
+    if (current_buffer->undo_state)
         current_buffer->undo_state->boundary_needed = true;
-    }
 
     return pos;
 }
-
-/* size_t delete_impl(size_t pos, size_t count) { */
-/*     if (current_buffer->read_only) { */
-/*         message("Buffer is read-only: #<buffer %s>", current_buffer->name); */
-/*         longjmp(delete_readonly, 1); */
-/*     } */
-
-/*     if (count == 0) { */
-/*         size_t text_len = rope_char_length(current_buffer->rope); */
-/*         if (pos == 0) { */
-/*             message("Beginning of buffer"); */
-/*         } else if (pos >= text_len) { */
-/*             message("End of buffer"); */
-/*         } */
-/*         return pos; */
-/*     } */
-
-/*     size_t text_len = rope_char_length(current_buffer->rope); */
-
-/*     if (pos >= text_len) { */
-/*         message("End of buffer"); */
-/*         return pos; */
-/*     } */
-
-/*     if (pos + count > text_len) { */
-/*         count = text_len - pos; */
-/*     } */
-
-/*     if (count == 0) { */
-/*         message("End of buffer"); */
-/*         return pos; */
-/*     } */
-
-/*     size_t delete_end = pos + count; */
-
-/*     // Check for read-only text in the deletion range */
-/*     if (is_range_readonly(current_buffer, pos, delete_end)) { */
-/*         message("Text is read-only"); */
-/*         longjmp(delete_readonly, 1); */
-/*     } */
-
-/*     // Check if tree-sitter is active */
-/*     bool has_treesit = current_buffer->ts_state && current_buffer->ts_state->tree; */
-
-/*     // Capture tree-sitter state BEFORE modification */
-/*     size_t start_byte = 0; */
-/*     size_t old_end_byte = 0; */
-/*     TSPoint start_point = {0, 0}; */
-/*     TSPoint old_end_point = {0, 0}; */
-
-/*     if (has_treesit) { */
-/*         start_byte = rope_char_to_byte(current_buffer->rope, pos); */
-/*         old_end_byte = rope_char_to_byte(current_buffer->rope, delete_end); */
-/*         start_point = treesit_char_to_point(current_buffer, pos); */
-/*         old_end_point = treesit_char_to_point(current_buffer, delete_end); */
-/*     } */
-
-/*     // Update region mark */
-/*     if (current_buffer->region.mark >= 0) { */
-/*         if ((size_t)current_buffer->region.mark >= delete_end) { */
-/*             current_buffer->region.mark -= count; */
-/*         } else if ((size_t)current_buffer->region.mark > pos) { */
-/*             current_buffer->region.mark = pos; */
-/*         } */
-/*     } */
-
-/*     // Perform the deletion */
-/*     current_buffer->rope = rope_delete_chars(current_buffer->rope, pos, count); */
-
-/*     // Update tree-sitter if active */
-/*     if (has_treesit) { */
-/*         size_t new_end_byte = start_byte; */
-/*         TSPoint new_end_point = start_point; */
-
-/*         treesit_update_tree( */
-/*             current_buffer, */
-/*             start_byte, */
-/*             old_end_byte, */
-/*             new_end_byte, */
-/*             start_point, */
-/*             old_end_point, */
-/*             new_end_point */
-/*         ); */
-
-/*         treesit_reparse_if_needed(current_buffer); */
-/*         treesit_apply_highlights(current_buffer); */
-/*     } */
-
-/*     // Only adjust text properties if tree-sitter is NOT active */
-/*     if (!has_treesit) { */
-/*         adjust_text_properties(current_buffer, pos, -(int)count); */
-/*     } */
-
-/*     adjust_all_window_points_after_modification(pos, -(int)count); */
-/*     reset_cursor_blink(current_buffer); */
-/*     current_buffer->modified = true; */
-/*     return pos; */
-/* } */
 
 // Macro that sets up setjmp and calls delete_impl
 // If longjmp occurs, it returns from the calling function
@@ -2293,23 +2029,15 @@ void kill_region() {
     deactivate_mark();
 }
 
-// TODO Support ARG to yank N times
-// (Who even thinks let me yank the think i've killed 4 kills before)
-// TODO Don’t adjust the syntax if treesit
-// TODO parse if treesit
-
 void yank() {
     const char *clipboard_text = getClipboardString();
-
     if (!clipboard_text || !*clipboard_text) {
         message("Kill ring is empty");
         return;
     }
-
     size_t len = strlen(clipboard_text);
     if (len == 0) return;
 
-    // Check buffer read-only
     if (current_buffer->read_only) {
         message("Buffer is read-only: #<buffer %s>", current_buffer->name);
         return;
@@ -2317,119 +2045,90 @@ void yank() {
 
     size_t insert_pos = current_buffer->pt;
 
-    // Check if we're trying to insert at a read-only position
-    SCM readonly = get_text_property(current_buffer, insert_pos, scm_from_locale_symbol("read-only"));
-    if (scm_is_true(readonly)) {
+    static SCM s_readonly = 0;
+    if (!s_readonly) { s_readonly = scm_from_utf8_symbol("read-only"); scm_gc_protect_object(s_readonly); }
+    if (scm_is_true(get_text_property(current_buffer, insert_pos, s_readonly))) {
         message("Text is read-only");
         return;
     }
 
-    // Get prefix argument (how many times to yank)
-    int arg = get_prefix_arg();
+    int  arg            = get_prefix_arg();
     bool raw_prefix_arg = get_raw_prefix_arg();
+    int  yank_count     = (!raw_prefix_arg && arg != 0) ? abs(arg) : 1;
 
-    // If raw prefix (C-u without number), yank once and exchange point/mark
-    // If numeric arg, yank that many times
-    int yank_count = 1;
-    if (!raw_prefix_arg && arg != 0) {
-        yank_count = abs(arg);
-    }
-
-    // Calculate how many characters (not bytes) we're inserting per yank
     size_t char_count = 0;
     for (size_t i = 0; i < len; ) {
         size_t bytes_read;
-        uint32_t ch = utf8_decode(&clipboard_text[i], len - i, &bytes_read);
+        utf8_decode(&clipboard_text[i], len - i, &bytes_read);
         if (bytes_read == 0) break;
         i += bytes_read;
         char_count++;
     }
-
     size_t total_char_count = char_count * yank_count;
 
-    // Check if tree-sitter is active
-    bool has_treesit = current_buffer->ts_state && current_buffer->ts_state->tree;
+    // Undo
+    undo_boundary_if_needed(current_buffer);
+    undo_record_position(current_buffer, current_buffer->pt);
 
-    // Capture tree-sitter state BEFORE modification
-    size_t start_byte = 0;
-    TSPoint start_point = {0, 0};
-    TSPoint new_end_point = {0, 0};
+    // Tree-sitter state capture (before mutation)
+    bool    has_treesit      = current_buffer->ts_state && current_buffer->ts_state->tree;
+    size_t  ts_start_byte    = 0;
+    TSPoint ts_start_point   = {0, 0};
+    TSPoint ts_new_end_point = {0, 0};
+    TSTree *ts_old_tree      = NULL;
 
     if (has_treesit) {
-        start_byte = rope_char_to_byte(current_buffer->rope, insert_pos);
-        start_point = treesit_char_to_point(current_buffer, insert_pos);
-
-        // Calculate new_end_point based on inserted content (repeated yank_count times)
-        new_end_point = start_point;
-
+        ts_start_byte    = rope_char_to_byte(current_buffer->rope, insert_pos);
+        ts_start_point   = treesit_char_to_point(current_buffer, insert_pos);
+        ts_new_end_point = ts_start_point;
         for (int repeat = 0; repeat < yank_count; repeat++) {
-            // Scan inserted bytes for newlines
-            size_t bytes_after_last_newline = 0;
-            for (size_t i = 0; i < len; i++) {
-                if (clipboard_text[i] == '\n') {
-                    new_end_point.row++;
-                    new_end_point.column = 0;
-                    bytes_after_last_newline = 0;
-                } else {
-                    bytes_after_last_newline++;
-                }
-            }
-
-            // Update column based on whether we had newlines
-            if (bytes_after_last_newline > 0 || new_end_point.row == start_point.row) {
-                new_end_point.column += bytes_after_last_newline;
+            for (size_t i = 0; i < len; ) {
+                size_t   bytes_read;
+                uint32_t cp = utf8_decode(&clipboard_text[i], len - i, &bytes_read);
+                if (bytes_read == 0) break;
+                i += bytes_read;
+                if (cp == '\n') { ts_new_end_point.row++; ts_new_end_point.column = 0; }
+                else            { ts_new_end_point.column += (uint32_t)bytes_read; }
             }
         }
+        ts_old_tree = ts_tree_copy(current_buffer->ts_state->tree);
     }
 
-    // Set mark at beginning of yank
-    current_buffer->region.mark = current_buffer->pt;
+    // Set mark to insert position (yank sets mark)
+    current_buffer->region.mark = (ssize_t)insert_pos;
 
-    // Perform the rope insertion (yank_count times)
+    // Rope insertion
     for (int i = 0; i < yank_count; i++) {
-        current_buffer->rope = rope_insert_chars(
-            current_buffer->rope,
-            insert_pos + (i * char_count),
-            clipboard_text,
-            len
-        );
+        size_t cur_pos = insert_pos + ((size_t)i * char_count);
+        undo_record_insert(current_buffer, cur_pos, cur_pos + char_count);
+        current_buffer->rope = rope_insert_chars(current_buffer->rope, cur_pos,
+                                                  clipboard_text, len);
     }
 
-    // Update tree-sitter if active
+    // Lazily shift ONLY visible properties
+    textprop_adjust_insert(current_buffer, insert_pos, total_char_count);
+
     if (has_treesit) {
-        size_t new_end_byte = start_byte + (len * yank_count);
-
-        treesit_update_tree(
-            current_buffer,
-            start_byte,
-            start_byte,      // old_end_byte = start_byte (nothing was there before)
-            new_end_byte,
-            start_point,
-            start_point,     // old_end_point = start_point (nothing was there before)
-            new_end_point
-        );
-
+        size_t ts_new_end_byte = ts_start_byte + (len * (size_t)yank_count);
+        treesit_update_tree(current_buffer,
+                            ts_start_byte, ts_start_byte, ts_new_end_byte,
+                            ts_start_point, ts_start_point, ts_new_end_point);
         treesit_reparse_if_needed(current_buffer);
-        treesit_apply_highlights(current_buffer);
+        treesit_apply_highlights_after_edit(current_buffer, ts_old_tree);
+        ts_tree_delete(ts_old_tree);
     }
 
-    // Only adjust text properties if tree-sitter is NOT active
-    if (!has_treesit) {
-        adjust_text_properties(current_buffer, insert_pos, total_char_count);
-    }
-
+    // Finalize
     adjust_all_window_points_after_modification(insert_pos, total_char_count);
-    set_point(current_buffer->pt + total_char_count); // End of inserted text
-
-    // If C-u was used (raw prefix arg), exchange point and mark
-    // This leaves point at beginning and mark at end of yanked text
-    if (raw_prefix_arg) {
+    set_point(current_buffer->pt + total_char_count);
+    if (raw_prefix_arg)
         exchange_point_and_mark();
-    }
-
     update_goal_column();
     reset_cursor_blink(current_buffer);
+    newline_cache_invalidate(current_buffer);
     current_buffer->modified = true;
+    if (current_buffer->undo_state)
+        current_buffer->undo_state->boundary_needed = true;
 }
 
 void duplicate_line() {
@@ -3050,19 +2749,6 @@ static size_t next_line_start(Buffer *buffer, size_t pos) {
     return next_line_at_char(buffer, pos);
 }
 
-/* static size_t line_start_at(Buffer *buffer, size_t pos) { */
-/*     if (pos == 0) return 0; */
-/*     size_t line = buffer_char_to_line(buffer, pos); */
-/*     return buffer_line_to_char(buffer, line); */
-/* } */
-
-/* static size_t next_line_start(Buffer *buffer, size_t pos) { */
-/*     size_t text_len = rope_char_length(buffer->rope); */
-/*     if (pos >= text_len) return text_len; */
-/*     size_t line = buffer_char_to_line(buffer, pos); */
-/*     return buffer_line_to_char(buffer, line + 1); */
-/* } */
-
 static bool is_page_boundary(Buffer *buffer, size_t pos) {
     size_t text_len = rope_char_length(buffer->rope);
     if (pos >= text_len) return false;
@@ -3072,7 +2758,6 @@ static bool is_page_boundary(Buffer *buffer, size_t pos) {
     uint32_t ch = rope_char_at(buffer->rope, pos);
     return ch == 0x0C;
 }
-
 
 void forward_page() {
     int arg = get_prefix_arg();
@@ -4198,7 +3883,7 @@ void beginning_of_defun() {
     }
 
     TSNode root = ts_tree_root_node(current_buffer->ts_state->tree);
-    size_t byte_pos = treesit_point_to_byte(current_buffer, current_buffer->pt);
+    size_t byte_pos = treesit_char_to_byte(current_buffer, current_buffer->pt);
     int count = abs(arg);
 
     if (arg > 0) {
@@ -4224,7 +3909,7 @@ void beginning_of_defun() {
             byte_pos = ts_node_start_byte(prev_func);
         }
 
-        size_t char_pos = treesit_byte_to_point(current_buffer, byte_pos);
+        size_t char_pos = treesit_byte_to_char(current_buffer, byte_pos);
         set_point(char_pos);
 
     } else {
@@ -4240,7 +3925,7 @@ void beginning_of_defun() {
             byte_pos = ts_node_start_byte(next_func);
         }
 
-        size_t char_pos = treesit_byte_to_point(current_buffer, byte_pos);
+        size_t char_pos = treesit_byte_to_char(current_buffer, byte_pos);
         set_point(char_pos);
     }
 }
@@ -4255,7 +3940,7 @@ void end_of_defun() {
     }
 
     TSNode root = ts_tree_root_node(current_buffer->ts_state->tree);
-    size_t byte_pos = treesit_point_to_byte(current_buffer, current_buffer->pt);
+    size_t byte_pos = treesit_char_to_byte(current_buffer, current_buffer->pt);
     int count = abs(arg);
 
     if (arg > 0) {
@@ -4282,7 +3967,7 @@ void end_of_defun() {
             byte_pos = ts_node_end_byte(next_func);
         }
 
-        size_t char_pos = treesit_byte_to_point(current_buffer, byte_pos);
+        size_t char_pos = treesit_byte_to_char(current_buffer, byte_pos);
         // Save current position
         size_t saved_pt = current_buffer->pt;
         // Temporarily move point to the end of function
@@ -4309,7 +3994,7 @@ void end_of_defun() {
             byte_pos = ts_node_end_byte(prev_func);
         }
 
-        size_t char_pos = treesit_byte_to_point(current_buffer, byte_pos);
+        size_t char_pos = treesit_byte_to_char(current_buffer, byte_pos);
         // Save current position
         size_t saved_pt = current_buffer->pt;
         // Temporarily move point to the end of function
