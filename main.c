@@ -36,6 +36,14 @@ bool is_argument_function(SCM proc) {
 void before_keychord_hook(const char *notation, KeyChordBinding *binding) {
     clear_minibuffer_message();
 
+    SCM this_command = binding->action.scheme_proc;
+    scm_c_define("this-command", this_command);
+
+    SCM this_command_event;
+    if (notation && strlen(notation) == 1) this_command_event = scm_from_char(notation[0]);
+    else this_command_event = scm_from_locale_string(notation);
+    scm_c_define("this-command-event", this_command_event);
+
     // Store notation for self-insert-command to use
     if (is_scm_proc(binding->action.scheme_proc, "self-insert-command")) {
         last_notation = notation;
@@ -47,46 +55,6 @@ void before_keychord_hook(const char *notation, KeyChordBinding *binding) {
         scm_c_define("pointer-visible", SCM_BOOL_F);
     }
 }
-
-// TODO This is bad we should not *really* apply the face, just render it
-/* void update_region_highlight(Buffer *buf) { */
-/*     // First, remove any existing region face properties */
-/*     // We'll use a special key to track region highlighting */
-/*     SCM region_key = scm_from_locale_symbol("region-overlay"); */
-
-/*     // Clear old region highlighting */
-/*     if (buf->props) { */
-/*         TextProp *prop = buf->props; */
-/*         while (prop) { */
-/*             SCM has_region = get_text_property(buf, prop->start, region_key); */
-/*             if (scm_is_true(has_region)) { */
-/*                 // Remove the face property from this interval */
-/*                 remove_text_properties(buf, prop->start, prop->end); */
-/*             } */
-/*             prop = prop->next; */
-/*         } */
-/*     } */
-
-/*     // Apply new region highlighting if region is active */
-/*     if (buf->region.active && buf->region.mark >= 0) { */
-/*         size_t start, end; */
-/*         if (buf->region.mark < buf->pt) { */
-/*             start = buf->region.mark; */
-/*             end = buf->pt; */
-/*         } else { */
-/*             start = buf->pt; */
-/*             end = buf->region.mark; */
-/*         } */
-
-/*         if (start != end) { */
-/*             SCM face_sym = scm_from_locale_symbol("face"); */
-/*             SCM face_val = scm_from_int(FACE_REGION); */
-/*             put_text_property(buf, start, end, face_sym, face_val); */
-/*             // Mark this as region overlay so we can clean it up later */
-/*             put_text_property(buf, start, end, region_key, SCM_BOOL_T); */
-/*         } */
-/*     } */
-/* } */
 
 void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
     reset_cursor_blink(current_buffer);
@@ -173,6 +141,15 @@ void after_keychord_hook(const char *notation, KeyChordBinding *binding) {
 
     last_command_was_kill = is_kill_command(binding->action.scheme_proc);
     last_command = binding->action.scheme_proc;
+    scm_c_define("last-command", last_command);
+
+    SCM last_command_event;
+    if (notation && strlen(notation) == 1) last_command_event = scm_from_char(notation[0]);
+    else last_command_event = scm_from_locale_string(notation);
+    scm_c_define("last-command-event", last_command_event);
+
+
+
     last_command_was_undo =  is_scm_proc(binding->action.scheme_proc, "undo")
                           || is_scm_proc(binding->action.scheme_proc, "undo-redo")
                           || is_scm_proc(binding->action.scheme_proc, "undo-only");

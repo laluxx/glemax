@@ -534,8 +534,16 @@ static bool partial_completion_match(const char *pattern, const char *candidate)
     return (*p == '\0');
 }
 
-// Try completion - find longest common prefix and track sole match
 static SCM try_completion_internal(const char *string, SCM collection) {
+    // Programmed completion: call (collection string pred action)
+    // action=nil means try-completion
+    if (scm_is_true(scm_procedure_p(collection))) {
+        return scm_call_3(collection,
+                          scm_from_locale_string(string),
+                          completion_predicate,
+                          SCM_BOOL_F);
+    }
+
     if (!scm_is_true(scm_list_p(collection))) {
         return SCM_BOOL_F;
     }
@@ -543,37 +551,28 @@ static SCM try_completion_internal(const char *string, SCM collection) {
     SCM best_match = SCM_BOOL_F;
     size_t best_len = 0;
     int match_count = 0;
-    SCM sole_match = SCM_BOOL_F;  // Track the actual sole match
+    SCM sole_match = SCM_BOOL_F;
 
     SCM tail = collection;
     while (scm_is_pair(tail)) {
         SCM item = scm_car(tail);
-
-        // Convert symbols to strings
-        if (scm_is_symbol(item)) {
-            item = scm_symbol_to_string(item);
-        }
+        if (scm_is_symbol(item)) item = scm_symbol_to_string(item);
 
         if (scm_is_string(item)) {
             char *candidate = scm_to_locale_string(item);
-
             if (partial_completion_match(string, candidate)) {
                 match_count++;
                 size_t len = strlen(candidate);
-
                 if (match_count == 1) {
-                    // First match - save it as both best and sole
                     best_match = item;
                     sole_match = item;
                     best_len = len;
                 } else {
-                    // Multiple matches - find common prefix
                     char *best_str = scm_to_locale_string(best_match);
                     size_t common = 0;
                     while (common < best_len && common < len &&
-                           tolower(best_str[common]) == tolower(candidate[common])) {
+                           tolower(best_str[common]) == tolower(candidate[common]))
                         common++;
-                    }
                     if (common < best_len) {
                         best_match = scm_substring(best_match, scm_from_int(0),
                                                    scm_from_size_t(common));
@@ -587,63 +586,62 @@ static SCM try_completion_internal(const char *string, SCM collection) {
         tail = scm_cdr(tail);
     }
 
-    if (match_count == 0) {
-        return SCM_BOOL_F;
-    } else if (match_count == 1) {
-        // Return the actual sole match string, not SCM_BOOL_T
-        return sole_match;
-    } else {
-        return best_match;
-    }
+    if (match_count == 0)      return SCM_BOOL_F;
+    else if (match_count == 1) return sole_match;
+    else                       return best_match;
 }
 
 // Get all completions
 static SCM all_completions_internal(const char *string, SCM collection) {
-    if (!scm_is_true(scm_list_p(collection))) {
+    // Programmed completion: call (collection string pred action)
+    // action=t means all-completions
+    if (scm_is_true(scm_procedure_p(collection))) {
+        SCM result = scm_call_3(collection,
+                                scm_from_locale_string(string),
+                                completion_predicate,
+                                SCM_BOOL_T);
+        if (scm_is_true(scm_list_p(result))) return result;
         return SCM_EOL;
     }
 
-    SCM matches = SCM_EOL;
+    if (!scm_is_true(scm_list_p(collection))) return SCM_EOL;
 
+    SCM matches = SCM_EOL;
     SCM tail = collection;
     while (scm_is_pair(tail)) {
         SCM item = scm_car(tail);
-
-        // Convert symbols to strings
         SCM item_str = item;
-        if (scm_is_symbol(item)) {
-            item_str = scm_symbol_to_string(item);
-        }
+        if (scm_is_symbol(item)) item_str = scm_symbol_to_string(item);
 
         if (scm_is_string(item_str)) {
             char *candidate = scm_to_locale_string(item_str);
-
-            if (partial_completion_match(string, candidate)) {
+            if (partial_completion_match(string, candidate))
                 matches = scm_cons(item_str, matches);
-            }
             free(candidate);
         }
         tail = scm_cdr(tail);
     }
-
     return scm_reverse(matches);
 }
 
 // Helper: check if string exists exactly in collection
 static bool is_exact_completion(const char *string, SCM collection) {
-    if (!scm_is_true(scm_list_p(collection))) {
-        return false;
+    // Programmed completion: call (collection string pred action)
+    // action='lambda means test exact match
+    if (scm_is_true(scm_procedure_p(collection))) {
+        SCM result = scm_call_3(collection,
+                                scm_from_locale_string(string),
+                                completion_predicate,
+                                scm_from_locale_symbol("lambda"));
+        return scm_is_true(result);
     }
+
+    if (!scm_is_true(scm_list_p(collection))) return false;
 
     SCM tail = collection;
     while (scm_is_pair(tail)) {
         SCM item = scm_car(tail);
-
-        // Convert symbols to strings
-        if (scm_is_symbol(item)) {
-            item = scm_symbol_to_string(item);
-        }
-
+        if (scm_is_symbol(item)) item = scm_symbol_to_string(item);
         if (scm_is_string(item)) {
             char *candidate = scm_to_locale_string(item);
             bool match = (strcasecmp(string, candidate) == 0);
@@ -652,7 +650,6 @@ static bool is_exact_completion(const char *string, SCM collection) {
         }
         tail = scm_cdr(tail);
     }
-
     return false;
 }
 
@@ -847,7 +844,8 @@ static void display_completions(SCM completions, const char *input) {
             put_text_property(completions_buf, start_pos, start_pos + common_len,
                              face_sym, scm_from_int(common_part_face));
         }
-        if (input && *input != '\0' && common_len < items[i].len) {
+
+        if (common_len > 0 && common_len < items[i].len) {
             put_text_property(completions_buf, start_pos + common_len,
                              start_pos + common_len + 1,
                              face_sym, scm_from_int(first_diff_face));
@@ -1016,15 +1014,9 @@ void minibuffer_complete() {
         return;
     }
 
-    if (!scm_is_true(scm_list_p(completion_collection))) {
-        message("Completion collection is not a list!");
-        return;
-    }
-
     bool repeated = is_scm_proc(last_command, "minibuffer-complete");
 
     if (repeated && frame_resized_since_last_complete && last_completion_max_len > 0) {
-        // Resize happened — only scroll if column count wouldn't change
         Buffer *completions_buf = get_buffer("*Completions*");
         Window *completions_win = completions_buf ? get_buffer_window(completions_buf) : NULL;
         if (completions_win) {
@@ -1067,12 +1059,10 @@ void minibuffer_complete() {
             float last_line_y = total_lines * line_height;
 
             if (scroll_bottom >= last_line_y) {
-                // End visible — wrap to top
                 completions_win->scrolly = 0;
                 completions_win->point   = 0;
                 current_buffer->pt       = 0;
             } else {
-                // Scroll down one screen
                 scroll_up_command();
                 completions_win->point = current_buffer->pt;
             }
@@ -1088,8 +1078,10 @@ void minibuffer_complete() {
     char *input = get_minibuffer_contents();
     if (!input) input = strdup("");
 
+    // For empty input with a list collection, return all items.
+    // For a procedure collection, all_completions_internal handles it.
     SCM all_matches;
-    if (*input == '\0') {
+    if (*input == '\0' && scm_is_true(scm_list_p(completion_collection))) {
         all_matches = SCM_EOL;
         SCM tail = completion_collection;
         while (scm_is_pair(tail)) {
@@ -1113,10 +1105,49 @@ void minibuffer_complete() {
         return;
     }
 
+    // Helper: replace minibuffer input (after prompt) with completion string
+    // For file completion the procedure returns the full path from try_completion,
+    // so we always replace the entire input, not just the last component.
+#define REPLACE_MINIBUFFER_INPUT(comp_str)                                      \
+    do {                                                                        \
+        close_completion_window();                                              \
+        Buffer *mb        = selected_frame->wm.minibuffer_window->buffer;       \
+        SCM field_sym     = scm_from_locale_symbol("field");                    \
+        size_t total_len  = rope_char_length(mb->rope);                         \
+        size_t prompt_end = 0;                                                  \
+        for (size_t i = 0; i < total_len; i++) {                                \
+            SCM field = get_text_property(mb, i, field_sym);                    \
+            if (scm_is_true(field)) {                                           \
+                prompt_end = i + 1;                                             \
+            } else {                                                            \
+                break;                                                          \
+            }                                                                   \
+        }                                                                       \
+        size_t old_len = total_len - prompt_end;                                \
+        if (old_len > 0) {                                                      \
+            remove_text_properties(mb, prompt_end, total_len);                  \
+            mb->rope = rope_delete_chars(mb->rope, prompt_end, old_len);        \
+        }                                                                       \
+        size_t comp_len = strlen(comp_str);                                     \
+        mb->rope = rope_insert_chars(mb->rope, prompt_end, comp_str, comp_len); \
+        mb->pt   = prompt_end + comp_len;                                       \
+        selected_frame->wm.minibuffer_window->point = mb->pt;                   \
+    } while (0)
+
     if (match_count == 1) {
         SCM match = scm_car(all_matches);
         if (scm_is_symbol(match)) match = scm_symbol_to_string(match);
         char *completion = scm_to_locale_string(match);
+
+        // For procedure collections, try_completion returns the full path.
+        // Use that instead of the bare all-completions entry.
+        if (scm_is_true(scm_procedure_p(completion_collection))) {
+            SCM full = try_completion_internal(input, completion_collection);
+            if (scm_is_string(full)) {
+                free(completion);
+                completion = scm_to_locale_string(full);
+            }
+        }
 
         if (strcasecmp(input, completion) == 0) {
             message("Sole completion");
@@ -1125,34 +1156,13 @@ void minibuffer_complete() {
             return;
         }
 
-        close_completion_window();
-
-        Buffer *mb        = selected_frame->wm.minibuffer_window->buffer;
-        SCM field_sym     = scm_from_locale_symbol("field");
-        size_t total_len  = rope_char_length(mb->rope);
-        size_t prompt_end = 0;
-
-        for (size_t i = 0; i < total_len; i++) {
-            SCM field = get_text_property(mb, i, field_sym);
-            if (scm_is_false(field) || scm_is_null(field)) { prompt_end = i; break; }
-        }
-
-        size_t old_len = total_len - prompt_end;
-        if (old_len > 0) {
-            remove_text_properties(mb, prompt_end, total_len);
-            mb->rope = rope_delete_chars(mb->rope, prompt_end, old_len);
-        }
-
-        size_t comp_len = strlen(completion);
-        mb->rope = rope_insert_chars(mb->rope, prompt_end, completion, comp_len);
-        mb->pt   = prompt_end + comp_len;
-        selected_frame->wm.minibuffer_window->point = mb->pt;
-
+        REPLACE_MINIBUFFER_INPUT(completion);
         free(completion);
         free(input);
         return;
     }
 
+    // Multiple matches — get longest common prefix via try_completion
     SCM result = try_completion_internal(input, completion_collection);
 
     if (scm_is_false(result)) {
@@ -1161,47 +1171,32 @@ void minibuffer_complete() {
         return;
     }
 
+    // try_completion returns #t when input is already an exact match
+    if (scm_is_true(result) && !scm_is_string(result)) {
+        display_completions(all_matches, input);
+        free(input);
+        return;
+    }
+
     char *completion = scm_to_locale_string(result);
 
     if (strcasecmp(input, completion) != 0) {
-        close_completion_window();
-
-        Buffer *mb        = selected_frame->wm.minibuffer_window->buffer;
-        SCM field_sym     = scm_from_locale_symbol("field");
-        size_t total_len  = rope_char_length(mb->rope);
-        size_t prompt_end = 0;
-
-        for (size_t i = 0; i < total_len; i++) {
-            SCM field = get_text_property(mb, i, field_sym);
-            if (scm_is_false(field) || scm_is_null(field)) { prompt_end = i; break; }
-        }
-
-        size_t old_len = total_len - prompt_end;
-        if (old_len > 0) {
-            remove_text_properties(mb, prompt_end, total_len);
-            mb->rope = rope_delete_chars(mb->rope, prompt_end, old_len);
-        }
-
-        size_t comp_len = strlen(completion);
-        mb->rope = rope_insert_chars(mb->rope, prompt_end, completion, comp_len);
-        mb->pt   = prompt_end + comp_len;
-        selected_frame->wm.minibuffer_window->point = mb->pt;
+        REPLACE_MINIBUFFER_INPUT(completion);
     } else {
         bool is_valid = is_exact_completion(input, completion_collection);
         if (is_valid) message("Complete, but not unique");
         display_completions(all_matches, input);
     }
 
+#undef REPLACE_MINIBUFFER_INPUT
+
     free(completion);
     free(input);
 }
 
-
-
 void minibuffer_complete_and_exit() {
     if (!selected_frame->wm.minibuffer_active) return;
 
-    // If no completion collection, just exit
     if (scm_is_false(completion_collection)) {
         minibuffer_result = get_minibuffer_contents();
         minibuffer_exit_requested = true;
@@ -1212,29 +1207,15 @@ void minibuffer_complete_and_exit() {
     char *input = get_minibuffer_contents();
     if (!input) input = strdup("");
 
-    // Check if input matches any completion exactly
-    bool exact_match = false;
-    SCM tail = completion_collection;
-    while (scm_is_pair(tail)) {
-        SCM item = scm_car(tail);
-
-        SCM item_str = item;
-        if (scm_is_symbol(item)) {
-            item_str = scm_symbol_to_string(item);
-        }
-
-        if (scm_is_string(item_str)) {
-            char *candidate = scm_to_locale_string(item_str);
-            if (strcasecmp(input, candidate) == 0) {
-                exact_match = true;
-                free(candidate);
-                break;
-            }
-            free(candidate);
-        }
-        tail = scm_cdr(tail);
+    // Empty input — exit with empty string so caller can apply its default
+    if (*input == '\0') {
+        minibuffer_result = input;
+        minibuffer_exit_requested = true;
+        minibuffer_abort_requested = false;
+        return;
     }
 
+    bool exact_match = is_exact_completion(input, completion_collection);
     if (exact_match) {
         minibuffer_result = input;
         minibuffer_exit_requested = true;
@@ -1288,21 +1269,14 @@ char *read_from_minibuffer_internal(const char *prompt,
     } else if (scm_is_symbol(hist)) {
         history_symbol = hist;
     } else {
-        // TODO: Handle cons cell (HISTVAR . HISTPOS) for initial position
         history_symbol = scm_from_locale_symbol("minibuffer-history");
     }
 
-    // Ensure the history variable exists
     get_history_variable(history_symbol);
-
-    // Set active history state
     active_history_state = get_or_create_history_state(history_symbol);
-
-    // Reset history position
     set_history_position(history_symbol, -1);
     clear_original_input(history_symbol);
 
-    // Reset state
     minibuffer_exit_requested = false;
     minibuffer_abort_requested = false;
     if (minibuffer_result) {
@@ -1310,35 +1284,22 @@ char *read_from_minibuffer_internal(const char *prompt,
         minibuffer_result = NULL;
     }
 
-    // Setup minibuffer
     activate_minibuffer();
     selected_frame->wm.minibuffer_message_start = 0;
 
     Buffer *mb = selected_frame->wm.minibuffer_window->buffer;
     size_t pos = 0;
 
-    // Insert prompt
     if (prompt) {
         size_t len = strlen(prompt);
         mb->rope = rope_insert_chars(mb->rope, pos, prompt, len);
-
-        put_text_property(mb, pos, len,
-                         scm_from_locale_symbol("read-only"),
-                         SCM_BOOL_T);
-
+        put_text_property(mb, pos, len, scm_from_locale_symbol("read-only"), SCM_BOOL_T);
         int msg_face = face_id_from_name("minibuffer-prompt");
-        put_text_property(mb, pos, len,
-                          scm_from_locale_symbol("face"),
-                          scm_from_int(msg_face));
-
-        put_text_property(mb, pos, len,
-                          scm_from_locale_symbol("field"),
-                          SCM_BOOL_T);
-
+        put_text_property(mb, pos, len, scm_from_locale_symbol("face"), scm_from_int(msg_face));
+        put_text_property(mb, pos, len, scm_from_locale_symbol("field"), SCM_BOOL_T);
         pos += len;
     }
 
-    // Insert initial contents
     if (initial_contents && *initial_contents) {
         size_t len = strlen(initial_contents);
         mb->rope = rope_insert_chars(mb->rope, pos, initial_contents, len);
@@ -1348,25 +1309,21 @@ char *read_from_minibuffer_internal(const char *prompt,
     mb->pt = pos;
     selected_frame->wm.minibuffer_window->point = mb->pt;
 
-    // Enter recursive edit loop
     recursive_edit();
 
-    // After exit, deactivate and get result
     deactivate_minibuffer();
 
     char *result;
     if (minibuffer_abort_requested) {
-        result = strdup("");
+        // C-g — return NULL so callers can distinguish abort from empty RET
+        result = NULL;
     } else {
         result = minibuffer_result ? minibuffer_result : strdup("");
-
-        // Add to history if not empty, not aborted, and recording is enabled
         if (result && *result && record_history) {
             add_to_history(history_symbol, result);
         }
     }
 
-    // Clean up
     minibuffer_result = NULL;
     minibuffer_exit_requested = false;
     minibuffer_abort_requested = false;
@@ -1579,45 +1536,169 @@ static char* abbreviate_home(const char *path) {
     return strdup(path);
 }
 
-Buffer* find_file(const char *filename) {
+#include <dirent.h>
+
+static SCM build_file_completions(const char *typed_path) {
+    // Split into directory part and prefix to match against.
+    // "~/src/gl"  -> dir_part="~/src/"  prefix="gl"
+    // "~/src/"    -> dir_part="~/src/"  prefix=""
+    // "foo"       -> dir_part=""        prefix="foo"
+    char dir_part[PATH_MAX] = "";
+    char prefix[PATH_MAX]   = "";
+
+    const char *last_slash = strrchr(typed_path, '/');
+    if (last_slash) {
+        size_t dir_len = last_slash - typed_path + 1;
+        strncpy(dir_part, typed_path, dir_len);
+        dir_part[dir_len] = '\0';
+        strncpy(prefix, last_slash + 1, PATH_MAX - 1);
+    } else {
+        strncpy(prefix, typed_path, PATH_MAX - 1);
+    }
+
+    // Expand dir_part to a real path we can opendir()
+    char *expanded = expand_tilde(*dir_part ? dir_part : ".");
+    char abs_dir[PATH_MAX];
+    if (realpath(expanded, abs_dir) == NULL)
+        strncpy(abs_dir, expanded, PATH_MAX - 1);
+    free(expanded);
+
+    DIR *d = opendir(abs_dir);
+    if (!d) return SCM_EOL;
+
+    // Four buckets matching Emacs ordering:
+    //   0: "../"
+    //   1: "./"
+    //   2: hidden entries (start with '.' but not "." or "..")
+    //   3: normal entries
+    typedef struct Entry { char name[PATH_MAX + 1]; struct Entry *next; } Entry;
+    Entry *buckets[4] = {NULL, NULL, NULL, NULL};
+    int    counts[4]  = {0,    0,    0,    0};
+
+    struct dirent *de;
+    while ((de = readdir(d)) != NULL) {
+        const char *e = de->d_name;
+
+        // Build the display name: directories get a trailing '/'
+        char display[PATH_MAX + 2];
+        bool is_dotdot = (strcmp(e, "..") == 0);
+        bool is_dot    = (strcmp(e, ".")  == 0);
+
+        if (is_dot || is_dotdot) {
+            snprintf(display, sizeof(display), "%s/", e);
+        } else {
+            char full[PATH_MAX];
+            snprintf(full, sizeof(full), "%s/%s", abs_dir, e);
+            struct stat st;
+            if (stat(full, &st) == 0 && S_ISDIR(st.st_mode))
+                snprintf(display, sizeof(display), "%s/", e);
+            else
+                snprintf(display, sizeof(display), "%s", e);
+        }
+
+        // Filter by prefix
+        if (!string_prefix_p(display, prefix))
+            continue;
+
+        // Assign bucket
+        int b;
+        if (is_dotdot)            b = 0;
+        else if (is_dot)          b = 1;
+        else if (e[0] == '.')     b = 2;
+        else                      b = 3;
+
+        Entry *entry = malloc(sizeof(Entry));
+        strncpy(entry->name, display, PATH_MAX);
+        entry->next  = buckets[b];
+        buckets[b]   = entry;
+        counts[b]++;
+    }
+    closedir(d);
+
+    // Sort each bucket alphabetically
+    for (int b = 0; b < 4; b++) {
+        if (counts[b] < 2) continue;
+
+        char **arr = malloc(counts[b] * sizeof(char *));
+        Entry *cur = buckets[b];
+        for (int i = 0; i < counts[b]; i++, cur = cur->next)
+            arr[i] = cur->name;
+
+        for (int i = 1; i < counts[b]; i++) {
+            char *key = arr[i];
+            int   j   = i - 1;
+            while (j >= 0 && strcmp(arr[j], key) > 0) {
+                arr[j+1] = arr[j];
+                j--;
+            }
+            arr[j+1] = key;
+        }
+
+        cur = buckets[b];
+        for (int i = 0; i < counts[b]; i++, cur = cur->next)
+            cur->name[0] = '\0',
+            strncpy(cur->name, arr[i], PATH_MAX);
+        free(arr);
+    }
+
+    // Build SCM list — bare names only, no dir_part prefix
+    SCM result = SCM_EOL;
+    // Walk buckets in reverse order so scm_cons builds the list forwards
+    for (int b = 3; b >= 0; b--) {
+        // Collect bucket into array for reverse-order consing
+        int cnt = counts[b];
+        if (cnt == 0) continue;
+        char **arr = malloc(cnt * sizeof(char *));
+        Entry *cur = buckets[b];
+        for (int i = 0; i < cnt; i++, cur = cur->next)
+            arr[i] = cur->name;
+
+        for (int i = cnt - 1; i >= 0; i--)
+            result = scm_cons(scm_from_locale_string(arr[i]), result);
+        free(arr);
+    }
+
+    // Free bucket lists
+    for (int b = 0; b < 4; b++) {
+        Entry *cur = buckets[b];
+        while (cur) { Entry *next = cur->next; free(cur); cur = next; }
+    }
+
+    return result;
+}
+
+Buffer *find_file(const char *filename) {
     char *input = NULL;
     bool should_free_input = false;
 
     if (filename == NULL || *filename == '\0') {
-        // Interactive mode - prompt user
-        const char *default_dir = current_buffer->directory ?
-                                  current_buffer->directory : ".";
-
-        char *display_dir = abbreviate_home(default_dir);
-        char initial[PATH_MAX];
-        snprintf(initial, PATH_MAX, "%s/", display_dir);
-        free(display_dir);
-
-        // Use 'file-name-history for find-file
-        SCM hist = scm_from_locale_symbol("file-name-history");
-        input = read_from_minibuffer("Find file: ", initial, hist);
+        SCM read_file_name_func = scm_variable_ref(scm_c_lookup("read-file-name"));
+        SCM result = scm_call_1(read_file_name_func,
+                                scm_from_locale_string("Find file: "));
+        input = scm_to_locale_string(result);
         should_free_input = true;
-
         if (!input || !*input) {
             if (input) free(input);
             return NULL;
         }
     } else {
-        // Programmatic mode - use provided filename
-        input = (char*)filename;
+        input = (char *)filename;
     }
 
     // Expand tilde if present
     char *expanded_input = expand_tilde(input);
     if (should_free_input) free(input);
 
-    // Combine directory with input if input is relative
+    // Combine with default-directory if relative
     char full_path[PATH_MAX];
     if (expanded_input[0] == '/') {
         snprintf(full_path, PATH_MAX, "%s", expanded_input);
     } else {
-        const char *default_dir = current_buffer->directory ?
-                                  current_buffer->directory : ".";
+        SCM dd_val = buffer_local_value(scm_from_locale_symbol("default-directory"),
+                                        current_buffer);
+        const char *default_dir = scm_is_string(dd_val)
+                                  ? scm_to_locale_string(dd_val)
+                                  : "./";
         snprintf(full_path, PATH_MAX, "%s/%s", default_dir, expanded_input);
     }
     free(expanded_input);
@@ -1625,10 +1706,26 @@ Buffer* find_file(const char *filename) {
     // Resolve to absolute path
     char absolute_path[PATH_MAX];
     if (realpath(full_path, absolute_path) == NULL) {
+        // File doesn't exist yet (new file) — use full_path as-is
         snprintf(absolute_path, PATH_MAX, "%s", full_path);
     }
 
-    // Check if buffer already exists for this file
+    // If it's a directory, hand off to dired
+    struct stat st;
+    if (stat(absolute_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        // Ensure trailing slash
+        size_t alen = strlen(absolute_path);
+        if (alen + 2 < PATH_MAX && absolute_path[alen - 1] != '/')
+            absolute_path[alen] = '/', absolute_path[alen + 1] = '\0';
+
+        SCM dired_var = scm_c_lookup("dired");
+        if (scm_is_true(scm_variable_bound_p(dired_var)))
+            scm_call_1(scm_variable_ref(dired_var),
+                       scm_from_locale_string(absolute_path));
+        return current_buffer;
+    }
+
+    // Check if a buffer already exists for this file
     Buffer *buf = all_buffers;
     if (buf) {
         do {
@@ -1641,7 +1738,7 @@ Buffer* find_file(const char *filename) {
         } while (buf != all_buffers);
     }
 
-    // Create buffer name from filename
+    // Create a unique buffer name from the filename
     char *base_name = get_filename_from_path(absolute_path);
     char *buffer_name = strdup(base_name);
     int suffix = 1;
@@ -1651,21 +1748,30 @@ Buffer* find_file(const char *filename) {
         sprintf(buffer_name, "%s<%d>", base_name, suffix++);
     }
 
-    // Create new buffer
+    // Create the buffer
     buf = buffer_create(buffer_name);
     free(buffer_name);
     free(base_name);
 
-    // Set filename and directory
+    // Set filename
     buf->filename = strdup(absolute_path);
-    if (buf->directory) free(buf->directory);
-    buf->directory = get_directory_from_path(absolute_path);
 
-    // Try to read file contents
+    // Set default-directory to the file's directory (with trailing slash)
+    char *dir = get_directory_from_path(absolute_path);
+    size_t dlen = strlen(dir);
+    char *dir_slash = malloc(dlen + 2);
+    memcpy(dir_slash, dir, dlen);
+    if (dir[dlen - 1] != '/') { dir_slash[dlen] = '/'; dir_slash[dlen + 1] = '\0'; }
+    else                       { dir_slash[dlen] = '\0'; }
+    free(dir);
+    buffer_set(scm_from_locale_symbol("default-directory"),
+               scm_from_locale_string(dir_slash), buf);
+    free(dir_slash);
+
+    // Read file contents if the file exists
     if (file_exists(absolute_path)) {
         size_t file_len;
         char *contents = read_file_contents(absolute_path, &file_len);
-
         if (contents) {
             buf->rope = rope_insert_chars(buf->rope, 0, contents, file_len);
             buf->modified = false;
@@ -1683,17 +1789,15 @@ Buffer* find_file(const char *filename) {
     switch_to_buffer(buf);
     buf->pt = 0;
 
-    // Run find-file-hook (which includes set-auto-mode)
+    // Run find-file-hook
     SCM find_file_hook = scm_c_lookup("find-file-hook");
     if (!scm_is_false(scm_variable_bound_p(find_file_hook))) {
         SCM hooks = scm_variable_ref(find_file_hook);
         if (scm_is_true(scm_list_p(hooks))) {
-            // Run each hook function
             while (!scm_is_null(hooks)) {
                 SCM hook = scm_car(hooks);
-                if (scm_is_true(scm_procedure_p(hook))) {
+                if (scm_is_true(scm_procedure_p(hook)))
                     scm_call_0(hook);
-                }
                 hooks = scm_cdr(hooks);
             }
         }
@@ -2099,6 +2203,32 @@ static SCM scm_read_from_minibuffer(SCM prompt, SCM initial, SCM hist) {
     return result_scm;
 }
 
+static SCM scm_read_from_minibuffer_with_completion(SCM prompt, SCM initial, SCM collection, SCM predicate, SCM hist) {
+    if (!scm_is_string(prompt))
+        scm_wrong_type_arg("read-from-minibuffer-with-completion", 1, prompt);
+
+    char *prompt_str = scm_to_locale_string(prompt);
+    char *initial_str = NULL;
+
+    if (!SCM_UNBNDP(initial) && scm_is_string(initial))
+        initial_str = scm_to_locale_string(initial);
+
+    char *result = read_from_minibuffer_with_completion(
+        prompt_str,
+        initial_str,
+        SCM_UNBNDP(collection)  ? SCM_BOOL_F : collection,
+        SCM_UNBNDP(predicate)   ? SCM_BOOL_F : predicate,
+        SCM_UNBNDP(hist)        ? SCM_BOOL_F : hist
+    );
+
+    free(prompt_str);
+    if (initial_str) free(initial_str);
+
+    SCM result_scm = scm_from_locale_string(result ? result : "");
+    free(result);
+    return result_scm;
+}
+
 static SCM scm_execute_extended_command(void) {
     execute_extended_command();
     return SCM_UNSPECIFIED;
@@ -2235,19 +2365,20 @@ static SCM scm_next_history_element(SCM n) {
 }
 
 void init_minibuf_bindings(void) {
-    scm_c_define_gsubr("read-from-minibuffer",           1, 2, 0, scm_read_from_minibuffer);
-    scm_c_define_gsubr("execute-extended-command",       0, 0, 0, scm_execute_extended_command);
-    scm_c_define_gsubr("eval-expression",                0, 0, 0, scm_eval_expression);
-    scm_c_define_gsubr("find-file",                      0, 1, 0, scm_find_file);
-    scm_c_define_gsubr("keyboard-quit",                  0, 0, 0, scm_keyboard_quit);
-    scm_c_define_gsubr("clear-minibuffer-message",       0, 0, 0, scm_clear_minibuffer_message);
-    scm_c_define_gsubr("minibuffer-complete-and-exit",   0, 0, 0, scm_minibuffer_complete_and_exit);
-    scm_c_define_gsubr("minibuffer-complete",            0, 0, 0, scm_minibuffer_complete);
-    scm_c_define_gsubr("all-completions",                2, 0, 0, scm_all_completions);
-    scm_c_define_gsubr("try-completion",                 2, 0, 0, scm_try_completion);
-    scm_c_define_gsubr("minibuffer-next-completion",     0, 1, 0, scm_minibuffer_next_completion);
-    scm_c_define_gsubr("minibuffer-previous-completion", 0, 1, 0, scm_minibuffer_previous_completion);
-    scm_c_define_gsubr("minibuffer-choose-completion",   0, 0, 0, scm_minibuffer_choose_completion);
-    scm_c_define_gsubr("previous-history-element",       0, 1, 0, scm_previous_history_element);
-    scm_c_define_gsubr("next-history-element",           0, 1, 0, scm_next_history_element);
+    scm_c_define_gsubr("read-from-minibuffer",                 1, 2, 0, scm_read_from_minibuffer);
+    scm_c_define_gsubr("read-from-minibuffer-with-completion", 3, 2, 0, scm_read_from_minibuffer_with_completion);
+    scm_c_define_gsubr("execute-extended-command",             0, 0, 0, scm_execute_extended_command);
+    scm_c_define_gsubr("eval-expression",                      0, 0, 0, scm_eval_expression);
+    scm_c_define_gsubr("find-file",                            0, 1, 0, scm_find_file);
+    scm_c_define_gsubr("keyboard-quit",                        0, 0, 0, scm_keyboard_quit);
+    scm_c_define_gsubr("clear-minibuffer-message",             0, 0, 0, scm_clear_minibuffer_message);
+    scm_c_define_gsubr("minibuffer-complete-and-exit",         0, 0, 0, scm_minibuffer_complete_and_exit);
+    scm_c_define_gsubr("minibuffer-complete",                  0, 0, 0, scm_minibuffer_complete);
+    scm_c_define_gsubr("all-completions",                      2, 0, 0, scm_all_completions);
+    scm_c_define_gsubr("try-completion",                       2, 0, 0, scm_try_completion);
+    scm_c_define_gsubr("minibuffer-next-completion",           0, 1, 0, scm_minibuffer_next_completion);
+    scm_c_define_gsubr("minibuffer-previous-completion",       0, 1, 0, scm_minibuffer_previous_completion);
+    scm_c_define_gsubr("minibuffer-choose-completion",         0, 0, 0, scm_minibuffer_choose_completion);
+    scm_c_define_gsubr("previous-history-element",             0, 1, 0, scm_previous_history_element);
+    scm_c_define_gsubr("next-history-element",                 0, 1, 0, scm_next_history_element);
 }

@@ -80,4 +80,8 @@
   '(rainbow-delimiters-mismatched-face        ((t (:foreground "#000000" :background "#dfa0f0"))))
 
   '(escape-glyph                              ((t (:foreground "#0000b0" :weight bold))))
+
+  '(isearch                                   ((t (:foreground "#000000" :background "#f3d000"))))
+  '(isearch-fail                              ((t (:foreground "#000000" :background "#f3d000"))))
+  '(lazy-highlight                            ((t (:foreground "#000000" :background "#bfc9ff"))))
 )

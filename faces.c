@@ -3,6 +3,91 @@
 #include "x11_colors.h"
 #include <fontconfig/fontconfig.h>
 
+/// Dynamic face name registry
+
+// Open-addressing hashmap: string name → int face_id
+// Grows automatically; no fixed cap.
+
+#define DYNFACE_INIT_CAP 64
+
+typedef struct {
+    char *name;   // NULL = empty slot
+    int   id;
+} DynFaceEntry;
+
+static DynFaceEntry *dynface_table = NULL;
+static size_t        dynface_cap   = 0;
+static size_t        dynface_count = 0;
+
+static uint32_t dynface_hash(const char *s) {
+    uint32_t h = 2166136261u;
+    while (*s) { h ^= (uint8_t)*s++; h *= 16777619u; }
+    return h;
+}
+
+// Returns existing id or -1 if not found
+static int dynface_lookup(const char *name) {
+    if (!dynface_table || !dynface_cap) return -1;
+    uint32_t h = dynface_hash(name);
+    size_t   i = h & (dynface_cap - 1);
+    for (size_t probe = 0; probe < dynface_cap; probe++) {
+        DynFaceEntry *e = &dynface_table[i];
+        if (!e->name)                        return -1;  // empty → not present
+        if (strcmp(e->name, name) == 0)      return e->id;
+        i = (i + 1) & (dynface_cap - 1);
+    }
+    return -1;
+}
+
+// Insert (must not already exist; table must have room)
+static void dynface_insert_raw(DynFaceEntry *table, size_t cap,
+                                char *name, int id) {
+    uint32_t h = dynface_hash(name);
+    size_t   i = h & (cap - 1);
+    while (table[i].name) i = (i + 1) & (cap - 1);
+    table[i].name = name;
+    table[i].id   = id;
+}
+
+static bool dynface_grow(void) {
+    size_t new_cap = dynface_cap ? dynface_cap * 2 : DYNFACE_INIT_CAP;
+    DynFaceEntry *new_table = calloc(new_cap, sizeof *new_table);
+    if (!new_table) return false;
+
+    for (size_t i = 0; i < dynface_cap; i++) {
+        if (dynface_table[i].name)
+            dynface_insert_raw(new_table, new_cap,
+                               dynface_table[i].name,
+                               dynface_table[i].id);
+    }
+    free(dynface_table);
+    dynface_table = new_table;
+    dynface_cap   = new_cap;
+    return true;
+}
+
+// Register name→id; grows as needed.
+static bool dynface_register(const char *name, int id) {
+    // Grow when > 70% full
+    if (dynface_count + 1 > dynface_cap * 7 / 10)
+        if (!dynface_grow()) return false;
+
+    char *key = strdup(name);
+    if (!key) return false;
+    dynface_insert_raw(dynface_table, dynface_cap, key, id);
+    dynface_count++;
+    return true;
+}
+
+void dynface_free_all(void) {
+    for (size_t i = 0; i < dynface_cap; i++)
+        free(dynface_table[i].name);
+    free(dynface_table);
+    dynface_table = NULL;
+    dynface_cap   = dynface_count = 0;
+}
+
+
 FaceCache *face_cache = NULL;
 
 // Font cache for variants
@@ -66,8 +151,6 @@ static struct {
     {"box",                                 FACE_BOX},
     {"region",                              FACE_REGION},
 
-    // TODO Support those faces in all themes!
-
     {"shadow",                              FACE_SHADOW},
     {"highlight",                           FACE_HIGHLIGHT},
     {"help-key-binding",                    FACE_HELP_KEY_BINDING},
@@ -90,6 +173,9 @@ static struct {
 
     {"escape-glyph",                         FACE_ESCAPE_GLYPH},
 
+    {"isearch",                              FACE_ISEARCH},
+    {"isearch-fail",                         FACE_ISEARCH_FAIL},
+    {"lazy-highlight",                       FACE_LAZY_HIGHLIGHT},
 
     {NULL, -1}
 };
@@ -332,7 +418,6 @@ void init_faces(void) {
                 face->bg = parse_color("black");
                 face->bg_set = true;
                 break;
-
             case FACE_ERROR:
                 face->fg = parse_color("red1");
                 face->fg_set = true;
@@ -351,8 +436,6 @@ void init_faces(void) {
                 face->bold = true;
                 face->font = get_font_variant(true, false);
                 break;
-
-
             case FACE_FONT_LOCK_BRACKET:
                 face->inherit_from = FACE_FONT_LOCK_PUNCTUATION;
                 break;
@@ -447,12 +530,10 @@ void init_faces(void) {
             case FACE_FONT_LOCK_WARNING:
                 face->inherit_from = FACE_ERROR;
                 break;
-
             case FACE_MINIBUFFER_PROMPT:
                 face->fg = parse_color("medium blue");
                 face->fg_set = true;
                 break;
-
             case FACE_UNDERLINE:
                 face->underline = true;
                 break;
@@ -467,7 +548,6 @@ void init_faces(void) {
                 face->bg_set = true;
                 face->extend = true;
                 break;
-
             case FACE_SHADOW:
                 face->fg = parse_color("grey50");
                 face->fg_set = true;
@@ -500,7 +580,6 @@ void init_faces(void) {
                 face->bold = true;
                 face->font = get_font_variant(true, false);
                 break;
-
             case FACE_RAINBOW_DELIMITERS_DEPTH_1:
                 face->fg = parse_color("#707183");
                 face->fg_set = true;
@@ -545,10 +624,23 @@ void init_faces(void) {
                 face->fg = parse_color("#BB0000");
                 face->fg_set = true;
                 break;
-
             case FACE_ESCAPE_GLYPH:
                 face->fg = parse_color("brown");
                 face->fg_set = true;
+                break;
+            case FACE_ISEARCH:
+                face->fg = parse_color("LightSkyBlue1");
+                face->fg_set = true;
+                face->bg = parse_color("magenta3");
+                face->bg_set = true;
+                break;
+            case FACE_ISEARCH_FAIL:
+                face->bg = parse_color("RosyBrown1");
+                face->bg_set = true;
+                break;
+            case FACE_LAZY_HIGHLIGHT:
+                face->bg = parse_color("PaleTurquoise");
+                face->bg_set = true;
                 break;
         }
 
@@ -560,24 +652,16 @@ void init_faces(void) {
     resolve_face_inheritance();
 }
 
+
 void free_faces(void) {
     if (!face_cache) return;
-
-    for (int i = 0; i < face_cache->count; i++) {
+    for (int i = 0; i < face_cache->count; i++)
         free(face_cache->faces[i]);
-    }
-
     free(face_cache->faces);
     free(face_cache);
     face_cache = NULL;
-
-    // Free cached font variants
-    // Note: Don't free the Font* themselves as they may be managed elsewhere
-    cached_font_regular = NULL;
-    cached_font_bold = NULL;
-    cached_font_italic = NULL;
-    cached_font_bold_italic = NULL;
-
+    cached_font_regular = cached_font_bold = cached_font_italic = cached_font_bold_italic = NULL;
+    dynface_free_all();   // replaces the old dynamic_face_names loop
     FcFini();
 }
 
@@ -602,12 +686,12 @@ Font *get_face_font(Face *face) {
 }
 
 int face_id_from_name(const char *name) {
-    for (int i = 0; face_names[i].name != NULL; i++) {
-        if (strcmp(name, face_names[i].name) == 0) {
+    // Builtin faces first
+    for (int i = 0; face_names[i].name != NULL; i++)
+        if (strcmp(name, face_names[i].name) == 0)
             return face_names[i].id;
-        }
-    }
-    return -1;
+    // Dynamic faces via hashmap
+    return dynface_lookup(name);
 }
 
 Face *get_named_face(const char *name) {
@@ -662,7 +746,42 @@ Color parse_color(const char *str) {
     return (Color){1, 0, 0, 1};
 }
 
-/// Scheme bindings
+int register_dynamic_face(const char *name, int inherit_from) {
+    int existing = face_id_from_name(name);
+    if (existing >= 0) return existing;
+
+    if (!face_cache) return -1;
+
+    if (face_cache->count >= face_cache->size) {
+        int new_size = face_cache->size + 64;
+        Face **new_faces = realloc(face_cache->faces, new_size * sizeof(Face*));
+        if (!new_faces) return -1;
+        face_cache->faces = new_faces;
+        face_cache->size  = new_size;
+    }
+
+    int id = face_cache->count;
+
+    Face *face = create_face(id);
+    face->font         = get_font_variant(false, false);
+    face->inherit_from = inherit_from;
+
+    face_cache->faces[id] = face;
+    face_cache->count++;
+
+    if (!dynface_register(name, id)) {
+        // Rollback
+        free(face);
+        face_cache->faces[id] = NULL;
+        face_cache->count--;
+        return -1;
+    }
+
+    resolve_face_inheritance();
+    return id;
+}
+
+/// SCM
 
 static char *scm_to_c_string(SCM str) {
     if (scm_is_string(str)) {
@@ -806,6 +925,111 @@ static SCM scm_face_id_from_name(SCM name) {
     return scm_from_int(id);
 }
 
+// Parse a keyword or :symbol key into a plain C string ("inherit", "foreground", …)
+// Caller must free the result.
+static char *extract_key(SCM key) {
+    if (scm_is_keyword(key)) {
+        return scm_to_locale_string(
+            scm_symbol_to_string(scm_keyword_to_symbol(key)));
+    }
+    if (scm_is_symbol(key)) {
+        char *raw = scm_to_locale_string(scm_symbol_to_string(key));
+        if (raw && raw[0] == ':') {
+            char *stripped = strdup(raw + 1);
+            free(raw);
+            return stripped;
+        }
+        return raw;
+    }
+    return NULL;
+}
+
+// Walk a defface spec '((t (:key val ...)) ...) and return the first
+// property list whose display condition is t or matches unconditionally.
+static SCM defface_spec_to_plist(SCM spec) {
+    SCM iter = spec;
+    while (scm_is_pair(iter)) {
+        SCM entry = scm_car(iter);
+        if (scm_is_pair(entry)) {
+            SCM display = scm_car(entry);
+            SCM rest    = scm_cdr(entry);
+            // Accept 't' or any non-pair display condition (we don't evaluate
+            // display conditions — just take the first usable entry)
+            if (scm_is_true(display) && scm_is_pair(rest))
+                return scm_car(rest);
+        }
+        iter = scm_cdr(iter);
+    }
+    return SCM_EOL;
+}
+
+static SCM scm_defface_impl(SCM name, SCM spec, SCM docstring) {
+    (void)docstring;
+
+    char *face_name = scm_to_c_string(name);
+    if (!face_name) return SCM_BOOL_F;
+
+    SCM plist = defface_spec_to_plist(spec);
+
+    int   inherit_from = -1;
+    bool  has_fg = false, has_bg = false;
+    bool  bold = false, italic = false;
+    bool  underline = false, strike_through = false;
+    Color fg = {0}, bg = {0};
+
+    SCM pl = plist;
+    while (scm_is_pair(pl) && scm_is_pair(scm_cdr(pl))) {
+        SCM key = scm_car(pl);
+        SCM val = scm_cadr(pl);
+        pl = scm_cddr(pl);
+
+        char *k = extract_key(key);
+        if (!k) continue;
+
+        if (strcmp(k, "inherit") == 0) {
+            char *iname = scm_to_c_string(val);
+            if (iname) { inherit_from = face_id_from_name(iname); free(iname); }
+        } else if (strcmp(k, "foreground") == 0 && scm_is_string(val)) {
+            char *cs = scm_to_locale_string(val);
+            fg = parse_color(cs); has_fg = true; free(cs);
+        } else if (strcmp(k, "background") == 0 && scm_is_string(val)) {
+            char *cs = scm_to_locale_string(val);
+            bg = parse_color(cs); has_bg = true; free(cs);
+        } else if (strcmp(k, "weight") == 0) {
+            char *ws = scm_to_c_string(val);
+            if (ws) { bold = strcmp(ws, "bold") == 0; free(ws); }
+        } else if (strcmp(k, "slant") == 0) {
+            char *ss = scm_to_c_string(val);
+            if (ss) { italic = strcmp(ss, "italic") == 0; free(ss); }
+        } else if (strcmp(k, "underline") == 0) {
+            underline = scm_is_true(val);
+        } else if (strcmp(k, "strike-through") == 0) {
+            strike_through = scm_is_true(val);
+        }
+        free(k);
+    }
+
+    int id = register_dynamic_face(face_name, inherit_from);
+    if (id >= 0) {
+        Face *face = get_face(id);
+        if (face) {
+            if (has_fg)         { face->fg = fg; face->fg_set = true; }
+            if (has_bg)         { face->bg = bg; face->bg_set = true; }
+            if (bold)           { face->bold = true; }
+            if (italic)         { face->italic = true; }
+            if (underline)      { face->underline = true; }
+            if (strike_through) { face->strike_through = true; }
+            if (bold || italic)
+                face->font = get_font_variant(face->bold, face->italic);
+            resolve_face_inheritance();
+        }
+    }
+
+    free(face_name);
+    return SCM_UNSPECIFIED;
+}
+
+
 void init_face_bindings(void) {
     scm_c_define_gsubr("make-face",            1, 0, 0, scm_make_face);
     scm_c_define_gsubr("set-face-foreground!", 2, 0, 0, scm_set_face_foreground);
@@ -813,4 +1037,5 @@ void init_face_bindings(void) {
     scm_c_define_gsubr("face-foreground",      1, 0, 0, scm_face_foreground);
     scm_c_define_gsubr("face-background",      1, 0, 0, scm_face_background);
     scm_c_define_gsubr("face-id-from-name",    1, 0, 0, scm_face_id_from_name);
+    scm_c_define_gsubr("%defface",             2, 1, 1, scm_defface_impl);
 }

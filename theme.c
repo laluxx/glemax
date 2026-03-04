@@ -155,20 +155,32 @@ static void reapply_all_themes(void) {
     // Step 1: Reset all faces to base theme
     for (int i = 0; i < face_cache->count; i++) {
         Face *face = face_cache->faces[i];
-        if (face) {
-            face->fg = base_faces[i].fg;
-            face->bg = base_faces[i].bg;
-            face->fg_set = base_faces[i].fg_set;
-            face->bg_set = base_faces[i].bg_set;
-            face->bold = base_faces[i].bold;
-            face->italic = base_faces[i].italic;
-            face->underline = base_faces[i].underline;
-            face->strike_through = base_faces[i].strike_through;
-            face->box = base_faces[i].box;
-            face->underline_color = base_faces[i].underline_color;
+        if (!face) continue;
+
+        if (i < FACE_BUILTIN_COUNT) {
+            // Builtin faces: restore from snapshot
+            face->fg                   = base_faces[i].fg;
+            face->bg                   = base_faces[i].bg;
+            face->fg_set               = base_faces[i].fg_set;
+            face->bg_set               = base_faces[i].bg_set;
+            face->bold                 = base_faces[i].bold;
+            face->italic               = base_faces[i].italic;
+            face->underline            = base_faces[i].underline;
+            face->strike_through       = base_faces[i].strike_through;
+            face->box                  = base_faces[i].box;
+            face->underline_color      = base_faces[i].underline_color;
             face->strike_through_color = base_faces[i].strike_through_color;
-            face->box_color = base_faces[i].box_color;
-            face->inherit_from = base_faces[i].inherit_from;
+            face->box_color            = base_faces[i].box_color;
+            face->inherit_from         = base_faces[i].inherit_from;
+            face->font = get_font_variant(face->bold, face->italic);
+        } else {
+            // Dynamic faces: clear resolved state so inheritance re-resolves
+            // cleanly. Preserve inherit_from/fg_set/bg_set since those are
+            // the face's own definition set by defface.
+            face->underline      = false;
+            face->strike_through = false;
+            face->box            = false;
+            face->font = get_font_variant(face->bold, face->italic);
         }
     }
 

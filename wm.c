@@ -2286,6 +2286,7 @@ size_t point_at_window_pos(Window *win, float click_x, float click_y) {
     return best_pos;
 }
 
+// TODO It shoul handle control characters like  being 2 columns visually.
 void mouse_set_point(Window *window, int x, int y) {
     size_t new_point = point_at_window_pos(window, x, y);
     set_point(new_point);

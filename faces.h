@@ -80,6 +80,11 @@ typedef enum {
 
     FACE_ESCAPE_GLYPH,
 
+    FACE_ISEARCH,
+    FACE_ISEARCH_FAIL,
+    FACE_LAZY_HIGHLIGHT,
+
+
     FACE_BUILTIN_COUNT,
 } FaceId;
 
@@ -123,6 +128,8 @@ int face_id_from_name(const char *name);
 int face_at_pos(Buffer *buf, size_t pos);
 Font *fontconfig_load_font(const char *family, int size, bool bold, bool italic);
 Color parse_color(const char *str);
+
+int register_dynamic_face(const char *name, int inherit_from);
 
 Font *get_font_variant(bool bold, bool italic);
 void init_face_bindings(void);

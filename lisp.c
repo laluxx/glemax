@@ -1076,7 +1076,6 @@ static SCM scm_keychord_documentation(SCM notation_scm) {
     return result;
 }
 
-
 // Get all keychord bindings as an association list
 static SCM scm_keychord_bindings(void) {
     SCM alist = SCM_EOL;
@@ -1096,8 +1095,6 @@ static SCM scm_keychord_bindings(void) {
 
     return alist;
 }
-
-
 
 /// BUFFER
 
@@ -1130,6 +1127,23 @@ static Buffer* scm_to_buffer(SCM obj) {
 // Type predicate
 static SCM buffer_p(SCM obj) {
     return scm_from_bool(SCM_IS_A_P(obj, buffer_type));
+}
+
+static SCM scm_enable_minor_mode(SCM mode_symbol, SCM buffer_obj) {
+    Buffer *buf = SCM_UNBNDP(buffer_obj) ? current_buffer : scm_to_buffer(buffer_obj);
+    enable_minor_mode(mode_symbol, buf);
+    return SCM_UNSPECIFIED;
+}
+
+static SCM scm_disable_minor_mode(SCM mode_symbol, SCM buffer_obj) {
+    Buffer *buf = SCM_UNBNDP(buffer_obj) ? current_buffer : scm_to_buffer(buffer_obj);
+    disable_minor_mode(mode_symbol, buf);
+    return SCM_UNSPECIFIED;
+}
+
+static SCM scm_minor_mode_active_p(SCM mode_symbol, SCM buffer_obj) {
+    Buffer *buf = SCM_UNBNDP(buffer_obj) ? current_buffer : scm_to_buffer(buffer_obj);
+    return minor_mode_active_p(mode_symbol, buf) ? SCM_BOOL_T : SCM_BOOL_F;
 }
 
 static SCM scm_buffer_size(SCM buffer_obj) {
@@ -1178,49 +1192,31 @@ static SCM scm_switch_to_buffer(SCM buf_or_name) {
     return SCM_BOOL_F;
 }
 
-static SCM scm_kill_buffer(SCM name) {
+static SCM scm_kill_buffer(SCM buffer_or_name) {
+    if (SCM_UNBNDP(buffer_or_name)) {
+        kill_buffer(); // interactive
+        return SCM_BOOL_T;
+    }
+
     Buffer *buf;
-
-    if (SCM_UNBNDP(name)) {
-        buf = current_buffer;
-    } else if (SCM_IS_A_P(name, buffer_type)) {
-        buf = scm_to_buffer(name);
-    } else if (scm_is_string(name)) {
-        char *buffer_name = scm_to_locale_string(name);
-        buf = get_buffer(buffer_name);
-        free(buffer_name);
-
-        if (!buf) {
-            return SCM_BOOL_F;
-        }
+    if (SCM_IS_A_P(buffer_or_name, buffer_type)) {
+        buf = scm_to_buffer(buffer_or_name);
+    } else if (scm_is_string(buffer_or_name)) {
+        char *name = scm_to_locale_string(buffer_or_name);
+        buf = get_buffer(name);
+        free(name);
+        if (!buf) return SCM_BOOL_F;
     } else {
-        scm_wrong_type_arg("kill-buffer", 1, name);
+        scm_wrong_type_arg("kill-buffer", 1, buffer_or_name);
         return SCM_BOOL_F;
     }
 
-    // Don't kill minibuffer
-    if (buf == selected_frame->wm.minibuffer_window->buffer) {
-        message("Cannot kill minibuffer");
-        return SCM_BOOL_F;
-    }
+    do_kill_buffer(buf);
+    return SCM_BOOL_T;
+}
 
-    // Count non-minibuffer buffers
-    int non_minibuf_count = 0;
-    Buffer *temp = all_buffers;
-    do {
-        if (temp != selected_frame->wm.minibuffer_window->buffer) {
-            non_minibuf_count++;
-        }
-        temp = temp->next;
-    } while (temp != all_buffers);
-
-    // Don't kill if it would leave only minibuffer
-    if (non_minibuf_count <= 1) {
-        message("Cannot kill last buffer");
-        return SCM_BOOL_F;
-    }
-
-    kill_buffer(buf);
+static SCM scm_kill_current_buffer(void) {
+    kill_current_buffer();
     return SCM_BOOL_T;
 }
 
@@ -1432,6 +1428,7 @@ static SCM scm_set(SCM symbol, SCM newval) {
     return buffer_set(symbol, newval, current_buffer);
 }
 
+#include <gc/gc.h>
 
 SCM scm_setq_impl(SCM symbol, SCM value) {
     if (!scm_is_symbol(symbol)) {
@@ -1443,11 +1440,16 @@ SCM scm_setq_impl(SCM symbol, SCM value) {
         SCM symbol_str = scm_symbol_to_string(symbol);
         char *c_str = scm_to_locale_string(symbol_str);
         scm_c_module_define(scm_current_module(), c_str, value);
-        free(c_str);
+        /* free(c_str); */
 
         // Check if we're setting frame-resize-pixelwise
-        if (strcmp(c_str, "frame-resize-pixelwise") == 0 && selected_frame) {
+        if (strcmp(c_str, "frame-resize-pixelwise") == 0 && selected_frame)
             update_frame_resize_mode(selected_frame);
+
+        // Check if we're setting gc-cons-threshold
+        if (strcmp(c_str, "gc-free-space-divisor") == 0) {
+            printf("IT RUN!\n");
+            GC_set_free_space_divisor((GC_word)scm_to_size_t(value));
         }
 
         return value;
@@ -1473,9 +1475,11 @@ SCM scm_setq_impl(SCM symbol, SCM value) {
     scm_c_module_define(scm_current_module(), c_str, value);
 
     // Check if we're setting frame-resize-pixelwise
-    if (strcmp(c_str, "frame-resize-pixelwise") == 0 && selected_frame) {
+    if (strcmp(c_str, "frame-resize-pixelwise") == 0 && selected_frame)
         update_frame_resize_mode(selected_frame);
-    }
+
+    if (strcmp(c_str, "gc-free-space-divisor") == 0)
+        GC_set_free_space_divisor((GC_word)scm_to_size_t(value));
 
     free(c_str);
     return value;
@@ -1995,27 +1999,56 @@ static SCM scm_goto_char(SCM position) {
 
 /// Keymap
 
-// Keymap type for Scheme
-static SCM keymap_type;
+static SCM keymap_type;          // owned by Scheme — has finalizer
+static SCM keymap_type_borrowed; // NOT owned by Scheme — no finalizer
+static SCM keymap_object_cache;  // Hash table: KeyChordMap* -> SCM
 
-// Convert KeyChordMap* to SCM
-static SCM keymap_to_scm(KeyChordMap *map) {
-    if (!map) return SCM_BOOL_F;
-
-    return scm_make_foreign_object_1(keymap_type, map);
+static SCM keymap_p(SCM obj) {
+    return scm_from_bool(
+        SCM_IS_A_P(obj, keymap_type) ||
+        SCM_IS_A_P(obj, keymap_type_borrowed)
+    );
 }
 
-// Convert SCM to KeyChordMap*
+static SCM keymap_to_scm_owned(KeyChordMap *map) {
+    // For make-sparse-keymap: Scheme owns it, finalizer will free it
+    if (!map) return SCM_BOOL_F;
+    SCM obj = scm_make_foreign_object_1(keymap_type, map);
+    return obj;
+}
+
+static SCM keymap_to_scm(KeyChordMap *map) {
+    // For wrapping existing C keymaps (global map, buffer keymaps):
+    // cached, no finalizer
+    if (!map) return SCM_BOOL_F;
+
+    SCM key = scm_from_uintptr_t((uintptr_t)map);
+    SCM cached = scm_hashq_ref(keymap_object_cache, key, SCM_BOOL_F);
+    if (scm_is_true(cached)) {
+        return cached;
+    }
+
+    SCM obj = scm_make_foreign_object_1(keymap_type_borrowed, map);
+    scm_hashq_set_x(keymap_object_cache, key, obj);
+    return obj;
+}
+
 static KeyChordMap* scm_to_keymap(SCM obj) {
     if (scm_is_false(obj)) return NULL;
-
-    scm_assert_foreign_object_type(keymap_type, obj);
-    return scm_foreign_object_ref(obj, 0);
+    // Accept either type
+    if (SCM_IS_A_P(obj, keymap_type)) {
+        return scm_foreign_object_ref(obj, 0);
+    }
+    if (SCM_IS_A_P(obj, keymap_type_borrowed)) {
+        return scm_foreign_object_ref(obj, 0);
+    }
+    scm_wrong_type_arg("keymap", 1, obj);
+    return NULL;
 }
 
 static SCM scm_make_sparse_keymap(void) {
     KeyChordMap *map = make_sparse_keymap();
-    return keymap_to_scm(map);
+    return keymap_to_scm_owned(map);  // Scheme owns this one
 }
 
 static SCM scm_use_local_map(SCM keymap_scm) {
@@ -2026,12 +2059,22 @@ static SCM scm_use_local_map(SCM keymap_scm) {
 
 static SCM scm_current_local_map(void) {
     KeyChordMap *map = current_local_map(current_buffer);
-    return keymap_to_scm(map);
+    return keymap_to_scm(map);  // borrowed — buffer owns it
 }
 
 static SCM scm_current_global_map(void) {
     KeyChordMap *map = current_global_map();
-    return keymap_to_scm(map);
+    return keymap_to_scm(map);  // borrowed — global map is static
+}
+
+// Keymap finalizer - called when Scheme GCs the keymap
+// Finalizer ONLY runs for keymap_type (owned), never for keymap_type_borrowed
+static void finalize_keymap(SCM keymap_obj) {
+    KeyChordMap *map = scm_foreign_object_ref(keymap_obj, 0);
+    if (map) {
+        keymap_free(map);
+        free(map);
+    }
 }
 
 static SCM scm_define_key(SCM keymap_scm, SCM key_scm, SCM def_scm) {
@@ -2059,15 +2102,6 @@ static SCM scm_define_key(SCM keymap_scm, SCM key_scm, SCM def_scm) {
     }
 
     return scm_from_bool(result);
-}
-
-// Keymap finalizer - called when Scheme GCs the keymap
-static void finalize_keymap(SCM keymap_obj) {
-    KeyChordMap *map = scm_foreign_object_ref(keymap_obj, 0);
-    if (map) {
-        keymap_free(map);
-        free(map);
-    }
 }
 
 #include <sys/stat.h>
@@ -2429,8 +2463,6 @@ static SCM scm_garbage_collect(void) {
 }
 
 
-
-
 void lisp_init(void) {
 
     scm_c_define("gcs-done", scm_from_size_t(0));
@@ -2458,11 +2490,20 @@ void lisp_init(void) {
     window_object_cache = scm_make_hash_table(scm_from_int(16));
     scm_gc_protect_object(window_object_cache);
 
-
-    // Initialize keymap foreign object type WITH FINALIZER
+    // Owned keymap type (Scheme called make-sparse-keymap, finalizer frees it)
     name = scm_from_utf8_symbol("keymap");
     slots = scm_list_1(scm_from_utf8_symbol("data"));
     keymap_type = scm_make_foreign_object_type(name, slots, finalize_keymap);
+
+    // Borrowed keymap type (wraps C-owned keymaps, no finalizer)
+    name = scm_from_utf8_symbol("keymap-borrowed");
+    slots = scm_list_1(scm_from_utf8_symbol("data"));
+    keymap_type_borrowed = scm_make_foreign_object_type(name, slots, NULL);
+
+    // Cache for borrowed keymaps
+    keymap_object_cache = scm_make_hash_table(scm_from_int(16));
+    scm_gc_protect_object(keymap_object_cache);
+
 
 
     setup_user_init_file();
@@ -2511,6 +2552,7 @@ void lisp_init(void) {
     scm_c_define_gsubr("default-value",                 1, 0, 0, scm_default_value);
     scm_c_define_gsubr("buffer-local-value",            1, 1, 0, scm_buffer_local_value);
 
+
     scm_c_define_gsubr("set",                           2, 0, 0, scm_set);
     scm_c_define_gsubr("setq-impl",                     2, 0, 0, scm_setq_impl);
 
@@ -2550,6 +2592,7 @@ void lisp_init(void) {
     scm_c_define_gsubr("buffer?",                        1, 0, 0, buffer_p);
     scm_c_define_gsubr("switch-to-buffer",               1, 0, 0, scm_switch_to_buffer);
     scm_c_define_gsubr("kill-buffer",                    0, 1, 0, scm_kill_buffer);
+    scm_c_define_gsubr("kill-current-buffer",            0, 0, 0, scm_kill_current_buffer);
     scm_c_define_gsubr("buffer-name",                    0, 1, 0, scm_buffer_name);
     scm_c_define_gsubr("buffer-list",                    0, 0, 0, scm_buffer_list);
     scm_c_define_gsubr("other-buffer",                   0, 0, 0, scm_other_buffer);
@@ -2562,6 +2605,10 @@ void lisp_init(void) {
     scm_c_define_gsubr("append-to-buffer",               2, 1, 0, scm_append_to_buffer);
     scm_c_define_gsubr("buffer-file-name",               0, 1, 0, scm_buffer_file_name);
 
+    // Minor modes
+    scm_c_define_gsubr("enable-minor-mode",             1, 1, 0, scm_enable_minor_mode);
+    scm_c_define_gsubr("disable-minor-mode",            1, 1, 0, scm_disable_minor_mode);
+    scm_c_define_gsubr("minor-mode-active?",           1, 1, 0, scm_minor_mode_active_p);
 
     // Window
     scm_c_define_gsubr("window?",                        1, 0, 0, window_p);
@@ -2585,7 +2632,8 @@ void lisp_init(void) {
     scm_c_define_gsubr("fit-window-to-buffer",           0, 1, 0, scm_fit_window_to_buffer);
     scm_c_define_gsubr("get-buffer-window",              1, 0, 0, scm_get_buffer_window);
 
-    // Keychord
+    // Keymap
+    scm_c_define_gsubr("keymap?",                        1, 0, 0, keymap_p);
     scm_c_define_gsubr("keymap-global-set",              2, 0, 0, scm_keymap_global_set);
     scm_c_define_gsubr("keymap-global-unset",            1, 0, 0, scm_keymap_global_unset);
     scm_c_define_gsubr("keychord-documentation",         1, 0, 0, scm_keychord_documentation);

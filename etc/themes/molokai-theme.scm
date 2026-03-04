@@ -74,4 +74,8 @@
   '(rainbow-delimiters-mismatched-face        ((t (:inherit rainbow-delimiters-unmatched-face))))
 
   '(escape-glyph                              ((t (:foreground "#66d9ef"))))
+
+  '(isearch                                   ((t (:foreground "#1B2229" :background "#b6e63e"))))
+  '(isearch-fail                              ((t (:foreground "#1B2229" :background "#e74c3c"))))
+  '(lazy-highlight                            ((t (:foreground "#1B2229" :background "#9c91e4"))))
 )

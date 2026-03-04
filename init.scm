@@ -103,7 +103,7 @@
 (keymap-global-set "C-x [" backward-page)
 (keymap-global-set "C-x C-p" mark-page)
 (keymap-global-set "C-x l" count-lines-page)
-(keymap-global-set "C-h C-g" count-lines-page)
+(keymap-global-set "C-h C-g" garbage-collect)
 
 (define (setup-self-insert-keys)
   "Bind all printable characters to self-insert-command in global keymap."
@@ -127,8 +127,41 @@
 
 (setup-self-insert-keys)
 
+;; C-x k BUG
+
 (define post-self-insert-hook '())
 
+(define this-command)
+(set-var-doc! this-command
+"The command now being executed.
+The command can set this variable; whatever is put here
+will be in `last-command' during the following command.")
+
+(define this-command-event)
+(set-var-doc! this-command-event
+"Input event of `this-command'.")
+
+(define last-command)
+(set-var-doc! last-command
+"The last command executed.
+Normally a symbol with a function definition, but can be whatever was found
+in the keymap, or whatever the variable `this-command' was set to by that
+command.
+
+The value `mode-exit' is special; it means that the previous command
+read an event that told it to exit, and it did so and unread that event.
+In other words, the present command is the event that made the previous
+command exit.
+
+The value `kill-region' is special; it means that the previous command
+was a kill command.
+
+`last-command' has a separate binding for each terminal device.
+See Info node `(elisp)Multiple Terminals'.")
+
+(define last-command-event)
+(set-var-doc! last-command-event
+"Input event of the last key sequence that called a command.")
 
 
 (define (mark-whole-buffer)
@@ -141,25 +174,181 @@
 ;; TODO
 ;; C-M-u   - backward-up-list
 ;; C-M-d   - down-list
-;; C-S-o   - duplicate-dwim
 ;; C-S-M-o - copy-from-above-command
 
 ;; M-SPC   - cycle-spacing
 ;; M-k     - kill-sentence
 ;; C-M-t   - transpose-sexps
-;; C-x C-l - downcase-region
-;; C-x C-u - upcase-region
+;; C-x C-l - downcase-region/downcase-dwim
+;; C-x C-u - upcase-region/upcase-dwim
 
 ;; C-M-t   - transpose-sexps
 ;; M-C-t   - transpose-sexps
 
-;; C-x ]   - forward-page
-;; C-x [   - backward-page
-;; C-x C-p - mark-page
-;; C-x l   - count-lines-page
-
 ;; Emacs-compatible undo system variables
 
+
+;;; Completion
+
+(defvar-local default-directory "~/"
+  "Name of default directory of current buffer.
+It should be an absolute directory name; on GNU and Unix systems,
+these names start with \"/\" or \"~\" and end with \"/\".
+To interactively change the default directory, use the command `cd'.")
+
+(define (file-name-directory path)
+  "Return the directory part of PATH, or #f if none."
+  (let ((slash (string-rindex path #\/)))
+    (if slash
+        (substring path 0 (+ slash 1))
+        #f)))
+
+(define (file-name-nondirectory path)
+  "Return the filename part of PATH (after last slash)."
+  (let ((slash (string-rindex path #\/)))
+    (if slash
+        (substring path (+ slash 1) (string-length path))
+        path)))
+
+(define (file-exists-p path)
+  (let ((expanded (expand-file-name path)))
+    (file-exists? expanded)))
+
+(define (file-directory-p path)
+  (let ((expanded (expand-file-name path)))
+    (and (file-exists? expanded)
+         (eq? 'directory (stat:type (stat expanded))))))
+
+(define (expand-file-name path)
+  "Expand ~ in PATH."
+  (cond
+   ((string-prefix? "~/" path)
+    (string-append (getenv "HOME") (substring path 1)))
+   ((string=? path "~")
+    (getenv "HOME"))
+   (else path)))
+
+(define (abbreviate-file-name path)
+  "Replace home directory prefix with ~."
+  (let ((home (getenv "HOME")))
+    (if (and home (string-prefix? home path))
+        (string-append "~" (substring path (string-length home)))
+        path)))
+
+(define (directory-files dir)
+  "Return list of filenames in DIR including . and .."
+  (let ((d (opendir dir)))
+    (if (not d) '()
+        (let loop ((entries '()))
+          (let ((e (readdir d)))
+            (if (eof-object? e)
+                (begin (closedir d) entries)
+                (loop (cons e entries))))))))
+
+(define (completion--file-name-table string pred action)
+  (let* ((dir-part (or (file-name-directory string) ""))
+         (prefix   (file-name-nondirectory string))
+         (abs-dir  (expand-file-name
+                    (if (string=? dir-part "") "." dir-part)))
+         (abs-str  (expand-file-name string)))
+
+    (let* ((raw-entries (if (file-directory-p abs-dir)
+                            (directory-files abs-dir)
+                            '()))
+           (display-names
+            (let loop ((entries raw-entries) (acc '()))
+              (if (null? entries)
+                  acc
+                  (let ((e (car entries)))
+                    (if (or (string=? e ".") (string=? e ".."))
+                        (loop (cdr entries) acc)
+                        (let* ((full   (string-append
+                                        abs-dir
+                                        (if (string-suffix? "/" abs-dir) "" "/")
+                                        e))
+                               (is-dir (file-directory-p full))
+                               (name   (if is-dir (string-append e "/") e)))
+                          (loop (cdr entries) (cons name acc))))))))
+           (matches
+            (let loop ((entries display-names) (acc '()))
+              (if (null? entries)
+                  acc
+                  (loop (cdr entries)
+                        (if (string-prefix-ci? prefix (car entries))
+                            (cons (car entries) acc)
+                            acc)))))
+           (sorted
+            (sort matches
+                  (lambda (a b)
+                    (let ((ka (if (string-prefix? "." a) 1 0))
+                          (kb (if (string-prefix? "." b) 1 0)))
+                      (if (= ka kb)
+                          (string<? a b)
+                          (< ka kb)))))))
+
+      (cond
+       ((eq? action #t)
+        ;; Return bare names for display only
+        sorted)
+
+       ((eq? action #f)
+        (cond
+         ((null? sorted)
+          (if (file-directory-p abs-str) string #f))
+         ((null? (cdr sorted))
+          (string-append dir-part (car sorted)))
+         (else
+          (string-append dir-part
+                         (let loop ((pfx (car sorted))
+                                    (rest (cdr sorted)))
+                           (if (null? rest)
+                               pfx
+                               (loop (string-common-prefix pfx (car rest))
+                                     (cdr rest))))))))
+
+       (else
+        (or (file-directory-p abs-str)
+            (let loop ((lst sorted))
+              (cond
+               ((null? lst)                    #f)
+               ((string-ci=? (car lst) prefix) #t)
+               (else (loop (cdr lst)))))))))))
+
+(define (string-common-prefix a b)
+  "Return the longest common prefix of strings A and B."
+  (let loop ((i 0))
+    (if (or (>= i (string-length a))
+            (>= i (string-length b))
+            (not (char-ci=? (string-ref a i) (string-ref b i))))
+        (substring a 0 i)
+        (loop (+ i 1)))))
+
+;; read-file-name — mirrors Emacs read-file-name-default
+
+(define file-name-history '())
+
+(define (read-file-name prompt . args)
+  (let* ((dir (if (and (pair? args) (string? (car args)))
+                  (car args)
+                  default-directory))
+         (display-dir (abbreviate-file-name
+                       (if (string-suffix? "/" dir) dir
+                           (string-append dir "/"))))
+         (result
+          (read-from-minibuffer-with-completion
+           prompt
+           display-dir
+           completion--file-name-table
+           #f
+           'file-name-history)))
+    ;; If result is a directory, return it as-is with trailing slash
+    (let ((expanded (expand-file-name result)))
+      (if (and (file-exists? expanded)
+               (eq? 'directory (stat:type (stat expanded))))
+          (if (string-suffix? "/" expanded)
+              expanded
+              (string-append expanded "/"))
+          result))))
 
 ;;; UNDO
 
@@ -187,6 +376,15 @@ see kill-glemax-query-functions instead.")
 (define page-delimiter "^\014")
 (set-var-doc! page-delimiter
 "Regexp describing line-beginnings that separate pages.")
+
+
+(define gc-free-space-divisor 3)
+(set-var-doc! gc-free-space-divisor
+"Free space divisor for the Boehm garbage collector.
+Must be a positive integer (minimum 1). Controls how aggressively
+the GC runs: lower values collect less often, higher values collect
+more often. Boehm's default is 3. Useful range is roughly 1-16.
+Set to 1 before loading large files to defer collection.")
 
 
 ;; TODO SUPPORT ME!
@@ -295,8 +493,6 @@ When 0, leave the region in place.
 When 1, put the region around the first copy.
 When -1, put the region around the last copy.")
 
-
-;; C-x k BUG
 
 (define split-height-threshold 40)
 (set-var-doc! split-height-threshold

@@ -82,6 +82,15 @@ Return the documentation property associated with `var'."
      (begin body ...))))
 
 
+;;; Faces
+
+(define-syntax defface
+  (syntax-rules ()
+    ((_ name spec)
+     (%defface 'name spec))
+    ((_ name spec doc)
+     (%defface 'name spec doc))))
+
 ;;; Hooks
 
 (define (add-hook hook function)

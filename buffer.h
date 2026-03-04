@@ -34,7 +34,7 @@ typedef struct Buffer {
     struct Buffer *prev; // Previous buffer in circular list
     char *name;
     char *filename;      // Full path to the file (NULL if no file)
-    char *directory;     // Directory of the file or default-directory
+    /* char *directory;     // Directory of the file or default-directory */
     rope_t *rope;
     Cursor cursor;
     size_t pt;
@@ -71,7 +71,10 @@ Buffer *get_buffer_create(const char *name);
 void set_buffer(Buffer *buf);
 void switch_to_buffer(Buffer *buf);
 Buffer *other_buffer();
-void kill_buffer(Buffer *buf);
+/* void kill_buffer(Buffer *buf); */
+void do_kill_buffer(Buffer *buf);
+void kill_buffer();
+void kill_current_buffer();
 
 void next_buffer();
 void previous_buffer();
@@ -127,6 +130,7 @@ bool get_raw_prefix_arg();
 void set_raw_prefix_arg(bool value);
 
 extern SCM last_command;
+extern SCM last_command_event;
 extern bool last_command_was_kill;
 
 bool is_kill_command(SCM proc);

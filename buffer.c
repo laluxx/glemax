@@ -15,6 +15,7 @@ Buffer *current_buffer = NULL;
 bool argument_manually_set = false;
 
 SCM last_command = SCM_BOOL_F;
+SCM last_command_event = SCM_BOOL_F;
 bool last_command_was_kill = false;
 
 
@@ -52,21 +53,36 @@ Buffer* buffer_create(const char *name) {
     buffer->newline_cache.last_line = 0;
     buffer->newline_cache.last_pos  = 0;
 
-
     undo_init(buffer);
-
-    // Initialize filename and directory
-    buffer->filename = NULL;
-    char cwd[PATH_MAX];
-    if (getcwd(cwd, sizeof(cwd)) != NULL) {
-        buffer->directory = strdup(cwd);
-    } else {
-        buffer->directory = strdup(".");
-    }
 
     // Initialize buffer-local variables as empty alist
     buffer->local_var_alist = SCM_EOL;
     scm_gc_protect_object(buffer->local_var_alist);
+
+    // Set default-directory buffer-local to cwd (with trailing slash)
+    char cwd[PATH_MAX];
+    char dir[PATH_MAX + 1];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        size_t len = strlen(cwd);
+        memcpy(dir, cwd, len);
+        if (cwd[len-1] != '/') { dir[len] = '/'; dir[len+1] = '\0'; }
+        else { dir[len] = '\0'; }
+    } else {
+        strcpy(dir, "./");
+    }
+
+    SCM dd_sym = scm_from_locale_symbol("default-directory");
+    SCM dd_val = scm_from_locale_string(dir);
+
+    // Ensure the module variable exists so Scheme can resolve it as a bare variable.
+    // If init.scm hasn't loaded yet (early buffer creation), we create it ourselves.
+    // If it already exists from defvar-local, this just updates it.
+    scm_c_define("default-directory", dd_val);
+
+    // Also set it as a proper buffer-local in this buffer's alist
+    buffer_set(dd_sym, dd_val, buffer);
+
+
     // Initialize keymap as NULL (will use global keymap)
     buffer->keymap = NULL;
     buffer->read_only = false;
@@ -259,35 +275,81 @@ Buffer* other_buffer() {
     return current_buffer;
 }
 
-void kill_buffer(Buffer *buf) {
+#include "minibuf.h"
+
+
+void do_kill_buffer(Buffer *buf) {
     if (!buf) return;
 
-    // Don't kill the last buffer
-    if (buf->next == buf) {
-        message("Cannot kill last buffer");
-        return;
-    }
+    Buffer *minibuf = selected_frame->wm.minibuffer_window->buffer;
+    if (buf == minibuf) return;
 
-    // If killing current buffer, switch to next one first
-    if (buf == current_buffer) {
-        switch_to_buffer(buf->next);
+    // Find a valid replacement (skip minibuffer and the buffer being killed)
+    Buffer *replacement = buf->next;
+    while (replacement == buf || replacement == minibuf) {
+        replacement = replacement->next;
+        if (replacement == buf) {
+            replacement = buffer_create("*scratch*");
+            break;
+        }
     }
 
     // Update all windows pointing to this buffer
     Window *leaves[256];
     int count = 0;
     collect_leaf_windows(selected_frame->wm.root, leaves, &count);
-
     for (int i = 0; i < count; i++) {
         if (leaves[i]->buffer == buf) {
-            leaves[i]->buffer = current_buffer;
-            leaves[i]->point = current_buffer->pt;
+            leaves[i]->buffer = replacement;
+            leaves[i]->point  = replacement->pt;
         }
     }
+
+    if (buf == current_buffer)
+        set_buffer(replacement);
 
     buffer_destroy(buf);
 }
 
+void kill_buffer() {
+    Buffer *minibuf = selected_frame->wm.minibuffer_window->buffer;
+    SCM buffer_names = SCM_EOL;
+    Buffer *buf = all_buffers;
+    do {
+        if (buf != minibuf) {
+            buffer_names = scm_cons(scm_from_locale_string(buf->name), buffer_names);
+        }
+        buf = buf->next;
+    } while (buf != all_buffers);
+
+    char prompt[256];
+    snprintf(prompt, sizeof(prompt), "Kill buffer (default %s): ", current_buffer->name);
+    SCM hist = scm_from_locale_symbol("buffer-name-history");
+    char *input = read_from_minibuffer_with_completion(prompt, NULL,
+                                                       buffer_names, SCM_BOOL_F, hist);
+    // NULL means C-g — do nothing
+    if (!input) return;
+
+    Buffer *target;
+    if (*input == '\0') {
+        // Empty RET — use default (current buffer)
+        target = current_buffer;
+    } else {
+        target = get_buffer(input);
+        if (!target) {
+            message("No buffer named %s", input);
+            free(input);
+            return;
+        }
+    }
+
+    free(input);
+    do_kill_buffer(target);
+}
+
+void kill_current_buffer() {
+    do_kill_buffer(current_buffer);
+}
 
 void next_buffer() {
     int arg = get_prefix_arg();
