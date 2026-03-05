@@ -52,7 +52,7 @@
   '(font-lock-warning-face                    ((t (:inherit warning))))
 
   '(minibuffer-prompt                         ((t (:foreground "#81a2be"))))
-  '(region                                    ((t (:background "#333537"))))
+  '(region                                    ((t (:background "#333537" :extend t))))
 
   '(shadow                                    ((t (:foreground "#5c5e5e"))))
   '(highlight                                 ((t (:foreground "#0d0d0d" :background "#81a2be"))))

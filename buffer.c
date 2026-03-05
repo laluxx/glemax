@@ -612,6 +612,23 @@ void message(const char *format, ...) {
     free(formatted);
 }
 
+void message_for(double seconds, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    va_list args_copy;
+    va_copy(args_copy, args);
+    int needed = vsnprintf(NULL, 0, format, args_copy) + 1;
+    va_end(args_copy);
+    char *formatted = malloc(needed);
+    vsnprintf(formatted, needed, format, args);
+    va_end(args);
+
+    message("%s", formatted);
+    free(formatted);
+
+    selected_frame->message_expiry = getTime() + seconds;
+}
+
 /// Newline cache
 
 void newline_cache_invalidate(Buffer *buf) {
@@ -1247,32 +1264,48 @@ static void draw_face_extension(float x, float y, float max_x,
 }
 
 
-// (uses cached symbols + combined face/boundary lookup)
+// Scans forward from `pos` through face runs only (no per-character work)
+// to check whether any run before `line_end` has a box face.
+// `line_end` must be the char position of the start of the NEXT line
+// (i.e. the result of next_line_at_char(buf, any_pos_on_this_line)),
+// which is already the position right after the '\n'.
+// Cost: O(face-runs on this one logical line) — typically 1-5 tree lookups.
+static bool line_has_box_face_fast(Buffer *buffer, size_t pos, size_t line_end) {
+    while (pos < line_end) {
+        size_t run_end;
+        int    fid  = get_face_id_and_next_change(buffer, pos, line_end, &run_end);
+        Face  *face = get_face(fid);
+        if (face && face->box) return true;
+        pos = run_end;
+    }
+    return false;
+}
+
+// TODO the prolem is that the top line of the box is outside of view, if i apply a box face on the first line of a bufer the top line of the box is up out of view it should be 1 pixel more down
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     Face *default_face = get_face(FACE_DEFAULT);
     Font *default_font = default_face ? get_face_font(default_face) : NULL;
     if (!default_font) return;
 
-    Color base_bg    = theme_cache->base_bg;
+    Color base_bg     = theme_cache->base_bg;
     float line_height = selected_frame->line_height;
-    float max_x = start_x + (win->width - (selected_frame->left_fringe_width +
-                                            selected_frame->right_fringe_width));
+    float max_x       = start_x + (win->width - (selected_frame->left_fringe_width +
+                                                   selected_frame->right_fringe_width));
     size_t buf_len = rope_char_length(buffer->rope);
 
-    // ── Per-frame config (hoisted, uses cached symbols) ───────────────────────
     SCM truncate_lines_val = buffer_local_value(g_sym.truncate_lines, buffer);
     bool truncate_lines    = scm_is_true(truncate_lines_val);
 
-    SCM tab_width_val  = buffer_local_value(g_sym.tab_width, buffer);
+    SCM tab_width_val     = buffer_local_value(g_sym.tab_width, buffer);
     int   tab_width       = scm_to_int(tab_width_val);
     float tab_pixel_width = tab_width * selected_frame->column_width;
 
-    bool stretch_cursor          = scm_get_bool("stretch-cursor", false);
-    bool blink_cursor_mode       = scm_get_bool("blink-cursor-mode", true);
-    bool cursor_in_non_selected  = scm_get_bool("cursor-in-non-selected-windows", true);
-    bool transient_mark_mode     = scm_get_bool("transient-mark-mode", false);
-    bool visible_mark_mode       = scm_get_bool("visible-mark-mode", false);
-    bool crystal_point_mode      = scm_get_bool("crystal-point-mode", false);
+    bool stretch_cursor         = scm_get_bool("stretch-cursor", false);
+    bool blink_cursor_mode      = scm_get_bool("blink-cursor-mode", true);
+    bool cursor_in_non_selected = scm_get_bool("cursor-in-non-selected-windows", true);
+    bool transient_mark_mode    = scm_get_bool("transient-mark-mode", false);
+    bool visible_mark_mode      = scm_get_bool("visible-mark-mode", false);
+    bool crystal_point_mode     = scm_get_bool("crystal-point-mode", false);
     size_t blink_cursor_blinks   = scm_get_size_t("blink-cursor-blinks", 0);
     float  blink_cursor_interval = scm_get_float("blink-cursor-interval", 0.1f);
     float  blink_cursor_delay    = scm_get_float("blink-cursor-delay", 0.1f);
@@ -1284,9 +1317,9 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     bool   is_selected = win && win->is_selected;
     bool   mark_is_set = (buffer->region.mark >= 0);
 
-    bool   has_region   = false;
-    size_t region_start = 0, region_end = 0;
-    Face  *region_face  = get_face(FACE_REGION);
+    bool   has_region    = false;
+    size_t region_start  = 0, region_end = 0;
+    Face  *region_face   = get_face(FACE_REGION);
     bool   region_extend = region_face && region_face->extend;
 
     if (mark_is_set && is_selected && transient_mark_mode && buffer->region.active) {
@@ -1304,20 +1337,49 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     if (win && !win->is_minibuffer)
         start_pos = find_start_position(buffer, win, &scroll_offset_y);
 
-    size_t vis_end_estimate = start_pos + (size_t)(win->height / line_height + 2)
-        * (size_t)(max_x / selected_frame->column_width + 2);
-    textprop_set_viewport(current_buffer, start_pos, vis_end_estimate);
-
+    size_t vis_end_limit = start_pos + (size_t)(win->height / line_height + 2)
+                         * (size_t)(max_x / selected_frame->column_width + 2);
+    if (vis_end_limit > buf_len) vis_end_limit = buf_len;
+    textprop_set_viewport(current_buffer, start_pos, vis_end_limit);
 
     float scroll_offset_x = (win && !win->is_minibuffer && truncate_lines) ? win->scrollx : 0;
     float line_start_x    = start_x - scroll_offset_x;
     float x = line_start_x;
     float y = start_y + (win && !win->is_minibuffer ? win->scrolly : 0) - scroll_offset_y;
 
-    float current_line_height           = line_height;
+    // ── Box geometry ───────────────────────────────────────────────────────────
+    // T = box_line_thickness (1px).
+    //
+    // Every character on a line — before, at, and after any box-faced text —
+    // must be drawn at y-T so the top-border gap is uniform.  We therefore
+    // must know whether the line has a box face BEFORE drawing its first char.
+    //
+    // `current_line_end` = next_line_at_char(buf, any_pos_on_this_line),
+    // i.e. the char position of the first char of the NEXT logical line.
+    // We pass this as the upper bound to line_has_box_face_fast so it scans
+    // face runs only up to the '\n', never into the next line or the rest of
+    // the file.  Cost: O(face-runs on one line), typically 1-5 tree lookups,
+    // called once per logical line.  Wrap-continuation visual lines reuse the
+    // same `current_line_end` — no extra scan.
+    // ──────────────────────────────────────────────────────────────────────────
+
     float box_line_thickness            = 1.0f;
     bool  current_line_has_box          = false;
     bool  previous_line_had_wrapped_box = false;
+    float current_line_height           = line_height;
+
+    // current_line_end: first char of the next logical line after the one
+    // containing start_pos.  Kept in sync whenever we cross a '\n'.
+    size_t current_line_end = next_line_at_char(buffer, start_pos);
+
+    // Eagerly apply box shift for the first rendered line.
+    // The box top border is drawn at y + font_height + T.  Shifting y down
+    // by T means the top border sits at y + font_height, exactly where a
+    // normal line's top would be — fully within the window.
+    if (line_has_box_face_fast(buffer, start_pos, current_line_end)) {
+        y                    -= box_line_thickness;
+        current_line_has_box  = true;
+    }
 
     float cursor_x = 0, cursor_y = 0, cursor_width = 0, cursor_height = 0;
     bool  cursor_found = false;
@@ -1333,18 +1395,16 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     bool  box_span_no_left = false, box_span_no_right = false;
     bool  was_in_box       = false;
 
-    Face  *last_drawn_face  = NULL;
-    Font  *last_drawn_font  = NULL;
-    Color  last_drawn_bg    = base_bg;
+    Face  *last_drawn_face   = NULL;
+    Font  *last_drawn_font   = NULL;
+    Color  last_drawn_bg     = base_bg;
     bool   last_face_had_box = false;
 
     size_t i = start_pos;
 
-    // ── Combined face-id + next-boundary (single tree walk per run) ───────────
     size_t face_run_end;
     int current_face_id = get_face_id_and_next_change(buffer, i, buf_len, &face_run_end);
 
-    // Display property run (separate — display changes are rare, keep separate)
     SCM    current_display_prop = get_text_property(buffer, i, g_sym.display);
     size_t display_run_end      = next_single_property_change(buffer, i, g_sym.display);
 
@@ -1374,15 +1434,10 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
         if (!char_font) char_font = default_font;
 
         float font_height = char_font->ascent + char_font->descent;
-        float effective_font_height = font_height;
 
-        if (face->box) {
-            effective_font_height = font_height + (box_line_thickness * 2);
-            if (!current_line_has_box) {
-                y -= box_line_thickness;
-                current_line_has_box = true;
-            }
-        }
+        float effective_font_height = face->box
+            ? font_height + box_line_thickness * 2
+            : font_height;
         if (effective_font_height > current_line_height)
             current_line_height = effective_font_height;
 
@@ -1393,7 +1448,6 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
 
         if (ch == '\t') {
             char_width = tab_pixel_width;
-            // Use interned g_sym.space — no string allocation
             if (scm_is_pair(current_display_prop) &&
                 scm_is_symbol(scm_car(current_display_prop)) &&
                 scm_is_eq(scm_car(current_display_prop), g_sym.space)) {
@@ -1401,7 +1455,6 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 while (scm_is_pair(plist) && scm_is_pair(scm_cdr(plist))) {
                     SCM key = scm_car(plist);
                     SCM val = scm_cadr(plist);
-                    // Use interned keyword symbols — scm_is_eq, zero allocation
                     if (scm_is_eq(key, g_sym.align_to) && scm_is_number(val)) {
                         float target_x = start_x + (float)scm_to_double(val);
                         char_width = target_x - x;
@@ -1421,6 +1474,9 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             char_width = cached_char_info ? cached_char_info->ax : 0;
         }
 
+        float acw = (ch == '\t') ? char_width
+                                 : (cached_char_info ? cached_char_info->ax : char_width);
+
         bool at_cursor = (i == point);
         bool at_mark   = mark_is_set && is_selected && visible_mark_mode &&
                          !transient_mark_mode &&
@@ -1430,6 +1486,9 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
 
         if (y < window_bottom - current_line_height) break;
 
+        // ══════════════════════════════════════════════════════════════════════
+        // NEWLINE
+        // ══════════════════════════════════════════════════════════════════════
         if (ch == '\n') {
             if (has_bg_span) {
                 draw_background_span(bg_span_start_x, bg_span_y, bg_span_width,
@@ -1453,31 +1512,49 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 has_box_span = false;
             }
             if (at_cursor) {
-                cursor_x = x; cursor_y = y - char_font->descent * 2;
+                cursor_x      = face->box ? x + box_line_thickness : x;
+                cursor_y      = y - char_font->descent * 2;
                 Character *sp = font_get_character(char_font, ' ');
                 cursor_width  = sp ? sp->ax : char_font->ascent;
                 cursor_height = font_height;
                 cursor_color  = get_face(FACE_CURSOR)->bg;
                 cursor_found  = true;
-                if (face->box) { cursor_x += box_line_thickness; cursor_y -= box_line_thickness; }
             }
             if (at_mark && y >= window_bottom && y <= window_top) {
+                float      mx = face->box ? x + box_line_thickness : x;
+                float      my = y - char_font->descent * 2;
                 Character *sp = font_get_character(char_font, ' ');
-                float mw = sp ? sp->ax : char_font->ascent;
-                float mx = x, my = y - char_font->descent * 2;
-                if (face->box) { mx += box_line_thickness; my -= box_line_thickness; }
+                float      mw = sp ? sp->ax : char_font->ascent;
                 quad2D((vec2){mx, my}, (vec2){mw, font_height}, get_face(FACE_VISIBLE_MARK)->bg);
             }
 
             x = line_start_x;
             y -= current_line_height;
             if (previous_line_had_wrapped_box) y -= box_line_thickness * 2;
-            current_line_height = line_height; current_line_has_box = false;
-            was_in_box = false; box_span_no_left = false; box_span_no_right = false;
+            current_line_height           = line_height;
+            current_line_has_box          = false;
+            was_in_box                    = false;
+            box_span_no_left              = false;
+            box_span_no_right             = false;
             previous_line_had_wrapped_box = false;
-            last_drawn_face = NULL; last_drawn_font = NULL;
-            last_drawn_bg = base_bg; last_face_had_box = false;
+            last_drawn_face               = NULL;
+            last_drawn_font               = NULL;
+            last_drawn_bg                 = base_bg;
+            last_face_had_box             = false;
 
+            // i is the '\n'; i+1 is the first char of the next logical line.
+            // next_line_at_char gives the first char of the line after THAT,
+            // which is the tight upper bound for the box scan.
+            // O(1) index lookup + O(face-runs on next line) scan.
+            current_line_end = next_line_at_char(buffer, i + 1);
+            if (line_has_box_face_fast(buffer, i + 1, current_line_end)) {
+                y -= box_line_thickness;
+                current_line_has_box = true;
+            }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // NORMAL CHARACTER
+        // ══════════════════════════════════════════════════════════════════════
         } else {
             if (truncate_lines) {
                 if (x > max_x) {
@@ -1487,13 +1564,24 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     if (has_box_span) { flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, box_span_color, box_line_thickness, box_span_no_left, false); has_box_span = false; }
                     while (rope_iter_next_char(&iter, &ch) && ch != '\n') i++;
                     if (ch == '\n') {
-                        x = line_start_x; y -= current_line_height;
+                        x = line_start_x;
+                        y -= current_line_height;
                         if (previous_line_had_wrapped_box) y -= box_line_thickness * 2;
-                        current_line_height = line_height; current_line_has_box = false;
-                        was_in_box = false; box_span_no_left = false; box_span_no_right = false;
+                        current_line_height           = line_height;
+                        current_line_has_box          = false;
+                        was_in_box                    = false;
+                        box_span_no_left              = false;
+                        box_span_no_right             = false;
                         previous_line_had_wrapped_box = false;
-                        last_drawn_face = NULL; last_drawn_font = NULL;
-                        last_drawn_bg = base_bg; last_face_had_box = false;
+                        last_drawn_face               = NULL;
+                        last_drawn_font               = NULL;
+                        last_drawn_bg                 = base_bg;
+                        last_face_had_box             = false;
+                        current_line_end = next_line_at_char(buffer, i + 1);
+                        if (line_has_box_face_fast(buffer, i + 1, current_line_end)) {
+                            y -= box_line_thickness;
+                            current_line_has_box = true;
+                        }
                     }
                     i += 2; continue;
                 }
@@ -1507,9 +1595,28 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     if (last_drawn_face && y >= window_bottom && y <= window_top)
                         draw_face_extension(x, y, max_x, last_drawn_face, last_drawn_font, last_drawn_bg, box_line_thickness, last_face_had_box);
                     if (has_box_span) { flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, box_span_color, box_line_thickness, box_span_no_left, wcb); has_box_span = false; }
-                    x = start_x; y -= current_line_height; current_line_height = line_height;
-                    if (wcb) { previous_line_had_wrapped_box = true; current_line_has_box = true; y -= 2 * box_line_thickness; box_span_no_left = true; }
-                    else { current_line_has_box = false; was_in_box = false; box_span_no_left = false; previous_line_had_wrapped_box = false; }
+                    x = start_x;
+                    y -= current_line_height;
+                    current_line_height = line_height;
+                    if (wcb) {
+                        // Wrapping on a box char: continuation is also a box line.
+                        previous_line_had_wrapped_box = true;
+                        current_line_has_box          = true;
+                        y                            -= 2 * box_line_thickness;
+                        box_span_no_left              = true;
+                    } else {
+                        // Wrapping on a non-box char: check remainder of this
+                        // logical line (from i onward) using the already-known
+                        // current_line_end.  No extra scan — O(face-runs left).
+                        previous_line_had_wrapped_box = false;
+                        current_line_has_box          = false;
+                        was_in_box                    = false;
+                        box_span_no_left              = false;
+                        if (line_has_box_face_fast(buffer, i, current_line_end)) {
+                            y                    -= box_line_thickness;
+                            current_line_has_box  = true;
+                        }
+                    }
                     box_span_no_right = false;
                     if (y < window_bottom - current_line_height) break;
                 }
@@ -1523,18 +1630,12 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 bg_color = region_face->bg; char_color = region_face->fg; needs_bg = true;
             }
             if (at_cursor) {
-                cursor_x = x; cursor_y = y - char_font->descent * 2;
                 cursor_width  = (ch == '\t' && stretch_cursor) ? char_width : selected_frame->column_width;
                 cursor_height = font_height;
                 cursor_color  = (crystal_point_mode && ch != '\n' && ch != ' ' && ch != '\t')
                                  ? (is_control_char ? get_face(FACE_ESCAPE_GLYPH)->fg : face->fg)
                                  : get_face(FACE_CURSOR)->bg;
-                cursor_found = true;
-                if (i > 0) {
-                    Face *pf = (prev_face_id == FACE_DEFAULT) ? default_face : get_face(prev_face_id);
-                    if (!pf) pf = default_face;
-                    if (pf->box) { cursor_x += box_line_thickness; cursor_y -= box_line_thickness; }
-                }
+                cursor_found  = true;
                 if (should_draw_filled && buffer->cursor.visible)
                     char_color = in_region ? region_face->bg : face->bg;
                 needs_bg = !color_equals(bg_color, base_bg);
@@ -1542,125 +1643,214 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 bg_color = get_face(FACE_VISIBLE_MARK)->bg; char_color = base_bg; needs_bg = true;
             }
 
-            if (y >= window_bottom && y <= window_top) {
-                float draw_x = face->box ? x + box_line_thickness : x;
-                float draw_y = face->box ? y - box_line_thickness : y;
+            float draw_x = x;
+            float draw_y = current_line_has_box ? y - box_line_thickness : y;
 
-                // Background span
+            if (face->box) {
+                if (!was_in_box)
+                    x += box_line_thickness;
+                draw_x = x;
+            } else if (was_in_box) {
+                if (has_box_span) {
+                    flush_box_span(box_span_start_x, box_span_y, box_span_width,
+                                   box_span_height, box_span_color, box_line_thickness,
+                                   box_span_no_left, false);
+                    has_box_span = false;
+                }
+                x += box_line_thickness;
+                was_in_box = false;
+                box_span_no_left = false;
+                draw_x = x;
+            }
+
+            if (at_cursor) {
+                cursor_x = draw_x;
+                cursor_y = draw_y - char_font->descent * 2;
+            }
+            if (at_mark && !in_region && y >= window_bottom && y <= window_top) {
+                Character *sp = font_get_character(char_font, ' ');
+                float mw = sp ? sp->ax : char_font->ascent;
+                quad2D((vec2){draw_x, draw_y - char_font->descent * 2},
+                       (vec2){mw, font_height}, get_face(FACE_VISIBLE_MARK)->bg);
+            }
+
+            if (y >= window_bottom && y <= window_top) {
+
                 if (needs_bg && (!at_cursor || !should_draw_filled || !buffer->cursor.visible)) {
-                    float bg_y = draw_y - char_font->descent * 2, bg_h = font_height;
+                    float bg_x = draw_x;
+                    float bg_y, bg_h, bg_w;
+                    if (face->box) {
+                        bg_y = draw_y - char_font->descent * 2 - box_line_thickness;
+                        bg_h = font_height + box_line_thickness * 2;
+                        bg_w = acw;
+                    } else {
+                        bg_y = draw_y - char_font->descent * 2;
+                        bg_h = font_height;
+                        bg_w = char_width;
+                    }
                     if (has_bg_span && color_equals(bg_color, bg_span_color) &&
                         bg_y == bg_span_y && bg_h == bg_span_height &&
-                        draw_x == bg_span_start_x + bg_span_width) {
-                        bg_span_width += char_width;
+                        fabsf(bg_x - (bg_span_start_x + bg_span_width)) < 0.5f) {
+                        bg_span_width += bg_w;
                     } else {
-                        if (has_bg_span) draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
-                        bg_span_start_x = draw_x; bg_span_y = bg_y; bg_span_width = char_width;
-                        bg_span_height = bg_h; bg_span_color = bg_color; has_bg_span = true;
+                        if (has_bg_span)
+                            draw_background_span(bg_span_start_x, bg_span_y, bg_span_width,
+                                                 bg_span_height, bg_span_color);
+                        bg_span_start_x = bg_x; bg_span_y = bg_y;
+                        bg_span_width   = bg_w; bg_span_height = bg_h;
+                        bg_span_color   = bg_color; has_bg_span = true;
                     }
                 } else if (has_bg_span) {
-                    draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
+                    draw_background_span(bg_span_start_x, bg_span_y, bg_span_width,
+                                         bg_span_height, bg_span_color);
                     has_bg_span = false;
                 }
 
                 if (face->box) {
-                    float acw = (ch == '\t') ? char_width : (cached_char_info ? cached_char_info->ax : char_width);
                     float box_y = draw_y - char_font->descent * 2 - box_line_thickness;
                     float box_h = font_height + box_line_thickness * 2;
                     Color cbc   = face->box_color;
 
                     if (!was_in_box) {
-                        if (has_box_span) { flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, box_span_color, box_line_thickness, box_span_no_left, box_span_no_right); has_box_span = false; }
-                        bool snl = box_span_no_left;
-                        if (!snl) { x += box_line_thickness; draw_x = x; }
-                        box_span_start_x = snl ? x : (x - box_line_thickness);
-                        box_span_y = box_y; box_span_height = box_h; box_span_color = cbc;
-                        box_span_width = acw + box_line_thickness + (snl ? 0 : box_line_thickness);
-                        box_span_no_left = snl; box_span_no_right = false; has_box_span = true;
+                        if (has_box_span) {
+                            flush_box_span(box_span_start_x, box_span_y, box_span_width,
+                                           box_span_height, box_span_color, box_line_thickness,
+                                           box_span_no_left, box_span_no_right);
+                            has_box_span = false;
+                        }
+                        bool snl          = box_span_no_left;
+                        box_span_start_x  = snl ? x : (x - box_line_thickness);
+                        box_span_y        = box_y;
+                        box_span_height   = box_h;
+                        box_span_color    = cbc;
+                        box_span_width    = acw + box_line_thickness + (snl ? 0 : box_line_thickness);
+                        box_span_no_left  = snl;
+                        box_span_no_right = false;
+                        has_box_span      = true;
                     } else {
-                        if (has_box_span && color_equals(cbc, box_span_color) && box_y == box_span_y && box_h == box_span_height) {
+                        if (has_box_span && color_equals(cbc, box_span_color) &&
+                            box_y == box_span_y && box_h == box_span_height) {
                             box_span_width += acw;
                         } else {
-                            if (has_box_span) flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, box_span_color, box_line_thickness, box_span_no_left, box_span_no_right);
-                            box_span_start_x = x - box_line_thickness; box_span_y = box_y;
-                            box_span_width = acw + box_line_thickness * 2; box_span_height = box_h;
-                            box_span_color = cbc; box_span_no_left = false; box_span_no_right = false; has_box_span = true;
+                            if (has_box_span)
+                                flush_box_span(box_span_start_x, box_span_y, box_span_width,
+                                               box_span_height, box_span_color, box_line_thickness,
+                                               box_span_no_left, box_span_no_right);
+                            box_span_start_x  = x - box_line_thickness;
+                            box_span_y        = box_y;
+                            box_span_width    = acw + box_line_thickness * 2;
+                            box_span_height   = box_h;
+                            box_span_color    = cbc;
+                            box_span_no_left  = false;
+                            box_span_no_right = false;
+                            has_box_span      = true;
                         }
                     }
+
                     if (ch != '\t') {
                         if (is_control_char) {
-                            Face *ef = get_face(FACE_ESCAPE_GLYPH);
-                            Color efg = ef ? ef->fg : char_color;
+                            Face    *ef  = get_face(FACE_ESCAPE_GLYPH);
+                            Color    efg = ef ? ef->fg : char_color;
                             uint32_t vis = (ch == 0x7f) ? '?' : (ch + 64);
-                            Color cc = (at_cursor && should_draw_filled && buffer->cursor.visible) ? face->bg : efg;
-                            float a1 = draw_character_with_face('^', draw_x, draw_y, face, char_font, cc, false, char_color, false, char_color);
-                            draw_character_with_face(vis, draw_x+a1, draw_y, face, char_font, efg, face->underline, face->underline_color, face->strike_through, face->strike_through_color);
+                            Color    cc  = (at_cursor && should_draw_filled && buffer->cursor.visible)
+                                           ? face->bg : efg;
+                            float a1 = draw_character_with_face('^', draw_x, draw_y, face, char_font,
+                                           cc, false, char_color, false, char_color);
+                            draw_character_with_face(vis, draw_x + a1, draw_y, face, char_font,
+                                           efg, face->underline, face->underline_color,
+                                           face->strike_through, face->strike_through_color);
                         } else {
-                            draw_character_with_face(ch, draw_x, draw_y, face, char_font, char_color, face->underline, face->underline_color, face->strike_through, face->strike_through_color);
+                            draw_character_with_face(ch, draw_x, draw_y, face, char_font,
+                                           char_color, face->underline, face->underline_color,
+                                           face->strike_through, face->strike_through_color);
                         }
                     } else if (face->underline || face->strike_through) {
-                        if (face->underline)  quad2D((vec2){draw_x, draw_y}, (vec2){tab_pixel_width, 1.f}, face->underline_color);
-                        if (face->strike_through) quad2D((vec2){draw_x, draw_y}, (vec2){tab_pixel_width, 1.f}, face->strike_through_color);
+                        if (face->underline)
+                            quad2D((vec2){draw_x, draw_y}, (vec2){tab_pixel_width, 1.f}, face->underline_color);
+                        if (face->strike_through)
+                            quad2D((vec2){draw_x, draw_y}, (vec2){tab_pixel_width, 1.f}, face->strike_through_color);
                     }
-                    x += acw; was_in_box = true;
-                    last_drawn_face = face; last_drawn_font = char_font; last_drawn_bg = bg_color; last_face_had_box = true;
+
+                    x += acw;
+                    was_in_box       = true;
+                    last_drawn_face  = face; last_drawn_font = char_font;
+                    last_drawn_bg    = bg_color; last_face_had_box = true;
+
                 } else {
-                    if (was_in_box) {
-                        if (has_box_span) { flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, box_span_color, box_line_thickness, box_span_no_left, false); has_box_span = false; }
-                        x += box_line_thickness; was_in_box = false; box_span_no_left = false;
-                    }
                     if (ch != '\t') {
                         if (is_control_char) {
-                            Face *ef = get_face(FACE_ESCAPE_GLYPH);
-                            Color efg = ef ? ef->fg : char_color;
+                            Face    *ef  = get_face(FACE_ESCAPE_GLYPH);
+                            Color    efg = ef ? ef->fg : char_color;
                             uint32_t vis = (ch == 0x7f) ? '?' : (ch + 64);
-                            Color cc = (at_cursor && should_draw_filled && buffer->cursor.visible) ? face->bg : efg;
-                            float a1 = draw_character_with_face('^', draw_x, draw_y, face, char_font, cc, false, char_color, false, char_color);
-                            float a2 = draw_character_with_face(vis, draw_x+a1, draw_y, face, char_font, efg, face->underline, face->underline_color, face->strike_through, face->strike_through_color);
+                            Color    cc  = (at_cursor && should_draw_filled && buffer->cursor.visible)
+                                           ? face->bg : efg;
+                            float a1 = draw_character_with_face('^', draw_x, draw_y, face, char_font,
+                                           cc, false, char_color, false, char_color);
+                            float a2 = draw_character_with_face(vis, draw_x + a1, draw_y, face, char_font,
+                                           efg, face->underline, face->underline_color,
+                                           face->strike_through, face->strike_through_color);
                             x += a1 + a2;
                         } else {
-                            x += draw_character_with_face(ch, draw_x, draw_y, face, char_font, char_color, face->underline, face->underline_color, face->strike_through, face->strike_through_color);
+                            x += draw_character_with_face(ch, draw_x, draw_y, face, char_font,
+                                             char_color, face->underline, face->underline_color,
+                                             face->strike_through, face->strike_through_color);
                         }
                     } else {
                         if (face->underline) {
                             float uly, ult;
-                            if (g_ul.underline_at_descent_line)      uly = draw_y - char_font->descent * 2;
-                            else if (g_ul.use_underline_pos)         uly = draw_y - char_font->descent - char_font->underline_position;
-                            else                                      uly = draw_y - char_font->descent - g_ul.underline_minimum_offset;
+                            if (g_ul.underline_at_descent_line)
+                                uly = draw_y - char_font->descent * 2;
+                            else if (g_ul.use_underline_pos)
+                                uly = draw_y - char_font->descent - char_font->underline_position;
+                            else
+                                uly = draw_y - char_font->descent - g_ul.underline_minimum_offset;
                             ult = g_ul.use_underline_pos ? char_font->underline_thickness : 1.f;
                             quad2D((vec2){draw_x, uly}, (vec2){char_width, ult}, face->underline_color);
                         }
-                        if (face->strike_through) quad2D((vec2){draw_x, draw_y}, (vec2){char_width, 1.f}, face->strike_through_color);
+                        if (face->strike_through)
+                            quad2D((vec2){draw_x, draw_y}, (vec2){char_width, 1.f}, face->strike_through_color);
                         x += char_width;
                     }
-                    last_drawn_face = face; last_drawn_font = char_font; last_drawn_bg = bg_color; last_face_had_box = false;
+                    last_drawn_face  = face; last_drawn_font = char_font;
+                    last_drawn_bg    = bg_color; last_face_had_box = false;
                 }
+
             } else if (y >= window_bottom) {
                 if (face->box) {
-                    float acw = (ch == '\t') ? char_width : (cached_char_info ? cached_char_info->ax : char_width);
-                    if (!was_in_box && !box_span_no_left) x += box_line_thickness;
-                    x += acw; was_in_box = true;
+                    if (!was_in_box) x += box_line_thickness;
+                    x += acw;
+                    was_in_box = true;
                 } else {
-                    if (was_in_box) { x += box_line_thickness; was_in_box = false; box_span_no_left = false; }
+                    if (was_in_box) {
+                        x += box_line_thickness;
+                        was_in_box = false;
+                        box_span_no_left = false;
+                    }
                     x += char_width;
                 }
-                last_drawn_face = face; last_drawn_font = char_font; last_drawn_bg = bg_color; last_face_had_box = face->box;
+                last_drawn_face  = face; last_drawn_font = char_font;
+                last_drawn_bg    = bg_color; last_face_had_box = face->box;
             }
         }
         prev_face_id = current_face_id;
         i++;
     }
 
-    if (has_bg_span)  draw_background_span(bg_span_start_x, bg_span_y, bg_span_width, bg_span_height, bg_span_color);
+    if (has_bg_span)
+        draw_background_span(bg_span_start_x, bg_span_y, bg_span_width,
+                              bg_span_height, bg_span_color);
     if (last_drawn_face && y >= window_bottom && y <= window_top)
-        draw_face_extension(x, y, max_x, last_drawn_face, last_drawn_font, last_drawn_bg, box_line_thickness, last_face_had_box);
-    if (has_box_span) flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, box_span_color, box_line_thickness, box_span_no_left, false);
+        draw_face_extension(x, y, max_x, last_drawn_face, last_drawn_font,
+                            last_drawn_bg, box_line_thickness, last_face_had_box);
+    if (has_box_span)
+        flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height,
+                       box_span_color, box_line_thickness, box_span_no_left, false);
     rope_iter_destroy(&iter);
 
     if (point >= buf_len) {
-        int   fid  = get_text_property_face(buffer, point);
-        Face *face = get_face(fid);
-        Font *cf   = face ? face->font : default_font;
+        int   fid      = get_text_property_face(buffer, point);
+        Face *eob_face = get_face(fid);
+        Font *cf       = eob_face ? eob_face->font : default_font;
         cursor_x = x; cursor_y = y - cf->descent * 2;
         Character *sp = font_get_character(cf, ' ');
         cursor_width  = sp ? sp->ax : cf->ascent;
@@ -1676,10 +1866,10 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
 
     if (should_draw_filled) {
         if (blink_cursor_mode && buffer->cursor.blink_count < blink_cursor_blinks) {
-            double now = getTime();
+            double now      = getTime();
             double interval = buffer->cursor.visible ? blink_cursor_interval : blink_cursor_delay;
             if (now - buffer->cursor.last_blink >= interval) {
-                buffer->cursor.visible = !buffer->cursor.visible;
+                buffer->cursor.visible    = !buffer->cursor.visible;
                 buffer->cursor.last_blink = now;
                 if (buffer->cursor.visible) buffer->cursor.blink_count++;
             }

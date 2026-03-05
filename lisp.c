@@ -446,8 +446,233 @@ static SCM scm_deactivate_mark(void) {
     return SCM_UNSPECIFIED;
 }
 
+/// Arg
 
-// NOTE This is our way to do (interactive) so later M-x will have access
+static SCM sym_interactive_spec = SCM_BOOL_F;
+
+
+void init_interactive_system(void) {
+    // Just a plain Scheme variable, not a parameter object
+    scm_c_define("current-interactive-proc", SCM_BOOL_F);
+
+    sym_interactive_spec = scm_from_utf8_symbol("interactive-spec");
+    scm_gc_protect_object(sym_interactive_spec);
+}
+
+static SCM read_interactive_args(const char *spec) {
+    if (!spec || *spec == '\0') return SCM_EOL;
+
+    SCM args = SCM_EOL;
+    const char *p = spec;
+
+    while (*p) {
+        switch (*p) {
+
+        case 'p': {
+            args = scm_append(scm_list_2(args,
+                    scm_list_1(scm_from_int(get_prefix_arg()))));
+            p++;
+            break;
+        }
+
+        case 'P': {
+            SCM var = scm_c_lookup("prefix-arg");
+            SCM val = scm_is_false(var) ? SCM_BOOL_F : scm_variable_ref(var);
+            SCM raw = scm_is_integer(val) ? val : SCM_BOOL_F;
+            args = scm_append(scm_list_2(args, scm_list_1(raw)));
+            p++;
+            break;
+        }
+
+        case 'r': {
+            if (!current_buffer->region.active || current_buffer->region.mark < 0) {
+                message("The mark is not set now, so there is no region");
+                return SCM_BOOL_F;
+            }
+            size_t pt    = current_buffer->pt;
+            size_t mark  = (size_t)current_buffer->region.mark;
+            size_t start = pt < mark ? pt : mark;
+            size_t end   = pt < mark ? mark : pt;
+            args = scm_append(scm_list_2(args,
+                    scm_list_2(scm_from_size_t(start),
+                               scm_from_size_t(end))));
+            p++;
+            break;
+        }
+
+        case 's': {
+            p++;
+            char prompt[256] = "";
+            size_t i = 0;
+            while (*p && *p != '\n' && i < sizeof(prompt) - 1)
+                prompt[i++] = *p++;
+            prompt[i] = '\0';
+            if (*p == '\n') p++;
+
+            SCM hist  = scm_from_locale_symbol("minibuffer-history");
+            char *input = read_from_minibuffer(prompt, NULL, hist);
+            if (!input) return SCM_BOOL_F;
+            args = scm_append(scm_list_2(args,
+                    scm_list_1(scm_from_locale_string(input))));
+            free(input);
+            break;
+        }
+
+        case 'n': {
+            p++;
+            char prompt[256] = "Number: ";
+            size_t i = 0;
+            char tmp[256] = "";
+            while (*p && *p != '\n' && i < sizeof(tmp) - 1)
+                tmp[i++] = *p++;
+            tmp[i] = '\0';
+            if (*p == '\n') p++;
+            if (i > 0) strncpy(prompt, tmp, sizeof(prompt) - 1);
+
+            SCM hist  = scm_from_locale_symbol("minibuffer-history");
+            char *input = read_from_minibuffer(prompt, NULL, hist);
+            if (!input) return SCM_BOOL_F;
+            int n = atoi(input);
+            free(input);
+            args = scm_append(scm_list_2(args, scm_list_1(scm_from_int(n))));
+            break;
+        }
+
+        case 'b': {
+            p++;
+            char prompt[256] = "Buffer: ";
+            size_t i = 0;
+            char tmp[256] = "";
+            while (*p && *p != '\n' && i < sizeof(tmp) - 1)
+                tmp[i++] = *p++;
+            tmp[i] = '\0';
+            if (*p == '\n') p++;
+            if (i > 0) strncpy(prompt, tmp, sizeof(prompt) - 1);
+
+            Buffer *minibuf = selected_frame->wm.minibuffer_window->buffer;
+            SCM buffer_names = SCM_EOL;
+            Buffer *buf = all_buffers;
+            do {
+                if (buf != minibuf)
+                    buffer_names = scm_cons(scm_from_locale_string(buf->name),
+                                            buffer_names);
+                buf = buf->next;
+            } while (buf != all_buffers);
+
+            SCM hist  = scm_from_locale_symbol("buffer-name-history");
+            char *input = read_from_minibuffer_with_completion(
+                prompt, NULL, buffer_names, SCM_BOOL_F, hist);
+            if (!input) return SCM_BOOL_F;
+            args = scm_append(scm_list_2(args,
+                    scm_list_1(scm_from_locale_string(input))));
+            free(input);
+            break;
+        }
+
+        case 'f': {
+            p++;
+            char prompt[256] = "File: ";
+            size_t i = 0;
+            char tmp[256] = "";
+            while (*p && *p != '\n' && i < sizeof(tmp) - 1)
+                tmp[i++] = *p++;
+            tmp[i] = '\0';
+            if (*p == '\n') p++;
+            if (i > 0) strncpy(prompt, tmp, sizeof(prompt) - 1);
+
+            SCM read_file_name_func = scm_variable_ref(
+                scm_c_lookup("read-file-name"));
+            SCM result = scm_call_1(read_file_name_func,
+                                    scm_from_locale_string(prompt));
+            if (scm_is_false(result)) return SCM_BOOL_F;
+            args = scm_append(scm_list_2(args, scm_list_1(result)));
+            break;
+        }
+
+        default:
+            p++;
+            break;
+        }
+    }
+
+    return args;
+}
+
+typedef struct {
+    SCM proc;
+    SCM args;
+} ApplyData;
+
+static SCM apply_body(void *data) {
+    ApplyData *d = (ApplyData *)data;
+    return scm_apply_0(d->proc, d->args);
+}
+
+SCM call_interactively(SCM proc) {
+    if (!scm_is_true(scm_procedure_p(proc)))
+        return SCM_BOOL_F;
+
+    scm_c_define("current-interactive-proc", proc);
+
+    SCM spec_val = scm_procedure_property(proc, sym_interactive_spec);
+    SCM result = SCM_UNSPECIFIED;
+
+    if (scm_is_false(spec_val)) {
+        // No interactive spec — call with no args
+        result = scm_internal_catch(SCM_BOOL_T,
+                     (scm_t_catch_body)scm_call_0, proc,
+                     error_handler, NULL);
+    } else if (scm_is_string(spec_val)) {
+        char *spec = scm_to_locale_string(spec_val);
+        SCM args = read_interactive_args(spec);
+        free(spec);
+
+        if (scm_is_false(args) && !scm_is_null(args)) {
+            scm_c_define("current-interactive-proc", SCM_BOOL_F);
+            return SCM_UNSPECIFIED;
+        }
+
+        ApplyData data = { proc, args };
+        result = scm_internal_catch(SCM_BOOL_T,
+                     apply_body, &data,
+                     error_handler, NULL);
+    } else {
+        result = scm_internal_catch(SCM_BOOL_T,
+                     (scm_t_catch_body)scm_call_0, proc,
+                     error_handler, NULL);
+    }
+
+    scm_c_define("current-interactive-proc", SCM_BOOL_F);
+    return result;
+}
+
+static SCM scm_call_interactively(SCM proc) {
+    return call_interactively(proc);
+}
+
+static SCM scm_interactive(SCM spec) {
+    (void)spec;
+    return SCM_UNSPECIFIED;
+}
+
+static SCM scm_interactive_form(SCM proc) {
+    if (!scm_is_true(scm_procedure_p(proc))) return SCM_BOOL_F;
+    return scm_procedure_property(proc, sym_interactive_spec);
+}
+
+static SCM scm_commandp(SCM obj) {
+    if (!scm_is_true(scm_procedure_p(obj))) return SCM_BOOL_F;
+    SCM spec = scm_procedure_property(obj, sym_interactive_spec);
+    return scm_is_false(spec) ? SCM_BOOL_F : SCM_BOOL_T;
+}
+
+
+
+
+
+
+// NOTE This is our way to do (interactive) for C functions
+// passed to scheme, so later M-x will have access
 // to all commands registered trough this macro
 #define DEFINE_SCM_COMMAND(scm_name, c_func, doc_string)      \
     static SCM scm_name(SCM arg) {                            \
@@ -461,6 +686,8 @@ static SCM scm_deactivate_mark(void) {
         return SCM_UNSPECIFIED;                               \
     }                                                         \
     static const char* scm_name##_doc = doc_string;
+
+#include "theme.h"
 
 
 DEFINE_SCM_COMMAND(scm_self_insert_command, self_insert_command,
@@ -2407,13 +2634,28 @@ static SCM scm_load_directory(SCM dirname) {
 }
 
 
+/* #define REGISTER_COMMAND(scheme_name, scm_func)                                \ */
+/*   do {                                                                         \ */
+/*     scm_c_define_gsubr(scheme_name, 0, 1, 0, scm_func);                        \ */
+/*     if (scm_func##_doc) {                                                      \ */
+/*       SCM proc = scm_variable_ref(scm_c_lookup(scheme_name));                  \ */
+/*       scm_set_procedure_property_x(proc,                                       \ */
+/*                                    scm_from_utf8_symbol("documentation"),      \ */
+/*                                    scm_from_utf8_string(scm_func##_doc));      \ */
+/*     }                                                                          \ */
+/*   } while (0) */
+
+// This marks the function registered from C as Interactive
 // TODO use this to register all other commands with doc
 #define REGISTER_COMMAND(scheme_name, scm_func)                                \
   do {                                                                         \
     scm_c_define_gsubr(scheme_name, 0, 1, 0, scm_func);                        \
+    SCM _proc = scm_variable_ref(scm_c_lookup(scheme_name));                   \
+    scm_set_procedure_property_x(_proc,                                        \
+                                 scm_from_utf8_symbol("interactive-spec"),     \
+                                 scm_from_utf8_string("p"));                   \
     if (scm_func##_doc) {                                                      \
-      SCM proc = scm_variable_ref(scm_c_lookup(scheme_name));                  \
-      scm_set_procedure_property_x(proc,                                       \
+      scm_set_procedure_property_x(_proc,                                      \
                                    scm_from_utf8_symbol("documentation"),      \
                                    scm_from_utf8_string(scm_func##_doc));      \
     }                                                                          \
@@ -2584,6 +2826,14 @@ void lisp_init(void) {
     scm_c_define_gsubr("negative-argument",              0, 0, 0, scm_negative_argument);
     scm_c_define_gsubr("digit-argument",                 0, 0, 0, scm_digit_argument);
 
+    init_interactive_system();
+    scm_c_define_gsubr("interactive",                   1, 0, 0, scm_interactive);
+    scm_c_define_gsubr("call-interactively",            1, 0, 0, scm_call_interactively);
+    scm_c_define_gsubr("interactive-form",              1, 0, 0, scm_interactive_form);
+    scm_c_define_gsubr("commandp",                      1, 0, 0, scm_commandp);
+
+
+
     /* scm_c_define_gsubr("execute-extended-command",       0, 0, 0, scm_execute_extended_command); */
     /* scm_c_define_gsubr("eval-expression",                0, 0, 0, scm_eval_expression); */
     /* scm_c_define_gsubr("keyboard-quit",                  0, 0, 0, scm_keyboard_quit); */
@@ -2667,6 +2917,7 @@ void lisp_init(void) {
     REGISTER_COMMAND("end-of-visual-line",       scm_end_of_visual_line);
     scm_c_define_gsubr("end-of-buffer",                  0, 1, 0, scm_end_of_buffer);
     scm_c_define_gsubr("beginning-of-buffer",            0, 1, 0, scm_beginning_of_buffer);
+
 
     // Editing
     scm_c_define_gsubr("char-or-string?",                1, 0, 0, scm_char_or_string_p);

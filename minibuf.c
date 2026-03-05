@@ -1337,11 +1337,20 @@ char *read_from_minibuffer(const char *prompt, const char *initial_contents, SCM
 }
 
 void execute_extended_command() {
-    // Get list of all interactive commands
-    SCM all_symbols = scm_c_eval_string("(hash-map->list (lambda (k v) k) (module-obarray (current-module)))");
-    SCM commands = SCM_EOL;
+    int arg = get_prefix_arg();
+    set_prefix_arg(1);
 
+    char prompt[64];
+    if (arg != 1)
+        snprintf(prompt, sizeof(prompt), "%d M-x ", arg);
+    else
+        snprintf(prompt, sizeof(prompt), "M-x ");
+
+    SCM all_symbols = scm_c_eval_string(
+        "(hash-map->list (lambda (k v) k) (module-obarray (current-module)))");
+    SCM commands = SCM_EOL;
     SCM tail = all_symbols;
+
     while (scm_is_pair(tail)) {
         SCM sym = scm_car(tail);
         if (scm_is_symbol(sym)) {
@@ -1349,29 +1358,27 @@ void execute_extended_command() {
             if (scm_is_true(var) && scm_is_true(scm_variable_bound_p(var))) {
                 SCM value = scm_variable_ref(var);
                 if (scm_is_true(scm_procedure_p(value))) {
-                    SCM arity = scm_procedure_minimum_arity(value);
-                    if (scm_is_true(arity)) {
-                        int required = scm_to_int(scm_car(arity));
-                        if (required == 0) {
-                            commands = scm_cons(sym, commands);
-                        }
-                    }
+                    SCM spec = scm_procedure_property(
+                        value, scm_from_utf8_symbol("interactive-spec"));
+                    if (!scm_is_false(spec))
+                        commands = scm_cons(sym, commands);
                 }
             }
         }
         tail = scm_cdr(tail);
     }
 
-    // Use 'extended-command-history for M-x
     SCM hist = scm_from_locale_symbol("extended-command-history");
-    char *input = read_from_minibuffer_with_completion("M-x ", NULL,
-                                                       commands, SCM_BOOL_F, hist);
+    char *input = read_from_minibuffer_with_completion(prompt, NULL,
+                                                        commands, SCM_BOOL_F, hist);
+    if (!input) return;
 
-    if (input && *input) {
+    if (*input) {
         SCM command_sym = scm_from_locale_symbol(input);
         SCM command_var = scm_module_variable(scm_current_module(), command_sym);
 
-        if (scm_is_false(command_var) || scm_is_false(scm_variable_bound_p(command_var))) {
+        if (scm_is_false(command_var) ||
+            scm_is_false(scm_variable_bound_p(command_var))) {
             message("No such command: %s", input);
             free(input);
             return;
@@ -1385,18 +1392,50 @@ void execute_extended_command() {
             return;
         }
 
-        // Execute with error handling
-        SCM result = scm_internal_catch(
-            SCM_BOOL_T,
-            (scm_t_catch_body) scm_call_0, command_func,
-            error_handler, NULL
-        );
-
-        if (scm_is_string(result)) {
-            char *error_msg = scm_to_locale_string(result);
-            message("%s", error_msg);
-            free(error_msg);
+        for (int i = 0; i < abs(arg); i++) {
+            set_prefix_arg(arg < 0 ? -1 : 1);
+            call_interactively(command_func);
         }
+
+        // Find key binding for this command
+        const char *found_notation = NULL;
+
+        for (size_t i = 0; i < keymap.count && !found_notation; i++) {
+            KeyChordBinding *b = &keymap.bindings[i];
+            if (b->action_type == ACTION_SCHEME_PROC &&
+                scm_is_eq(b->action.scheme_proc, command_func))
+                found_notation = b->notation;
+        }
+
+        for (int s = (int)keymap_stack_count - 1; s >= 0 && !found_notation; s--) {
+            KeyChordMap *local = keymap_stack[s];
+            if (!local) continue;
+            for (size_t i = 0; i < local->count && !found_notation; i++) {
+                KeyChordBinding *b = &local->bindings[i];
+                if (b->action_type == ACTION_SCHEME_PROC &&
+                    scm_is_eq(b->action.scheme_proc, command_func))
+                    found_notation = b->notation;
+            }
+        }
+
+        if (found_notation) {
+            char prefix_str[512];
+            snprintf(prefix_str, sizeof(prefix_str),
+                     "You can run the command '%s' with %s", input, found_notation);
+//                     TODO  I want to use    ‘  ’ but for some reason it doesn't apply the face if i use smart quotes.
+            message_for(2.0, "%s", prefix_str);
+
+            Buffer *minibuf = selected_frame->wm.minibuffer_window->buffer;
+            size_t prefix_len   = strlen(prefix_str) - strlen(found_notation);
+            size_t notation_len = strlen(found_notation);
+            int face = face_id_from_name("help-key-binding");
+            put_text_property(minibuf, prefix_len, prefix_len + notation_len,
+                              scm_from_locale_symbol("face"),
+                              scm_from_int(face));
+        }
+
+
+
     }
 
     free(input);
@@ -1421,6 +1460,47 @@ void eval_expression() {
 
     free(input);
 }
+
+
+char *get_current_message(void) {
+    Buffer *minibuf = selected_frame->wm.minibuffer_window->buffer;
+    if (selected_frame->wm.minibuffer_active) return strdup("");
+    size_t len = rope_char_length(minibuf->rope);
+    if (len == 0) return strdup("");
+    size_t byte_len = 0;
+    char *result = rope_to_string(minibuf->rope, &byte_len);
+    if (!result) return strdup("");
+    return result;
+}
+
+/* char *get_current_message(void) { */
+/*     Buffer *minibuf = selected_frame->wm.minibuffer_window->buffer; */
+/*     if (selected_frame->wm.minibuffer_active) return strdup(""); */
+/*     size_t len = rope_char_length(minibuf->rope); */
+/*     if (len == 0) return strdup(""); */
+/*     char *result = rope_to_cstring(minibuf->rope); */
+/*     return result ? result : strdup(""); */
+/* } */
+
+void restore_message(const char *saved) {
+    if (!saved) return;
+    if (selected_frame->wm.minibuffer_active) return;
+    Buffer *minibuf = selected_frame->wm.minibuffer_window->buffer;
+    size_t len = rope_char_length(minibuf->rope);
+    if (len > 0) {
+        clear_text_properties(minibuf);
+        minibuf->rope = rope_delete_chars(minibuf->rope, 0, len);
+    }
+    size_t slen = strlen(saved);
+    if (slen > 0)
+        minibuf->rope = rope_insert_chars(minibuf->rope, 0, saved, slen);
+    selected_frame->wm.minibuffer_window->point = 0;
+    selected_frame->wm.minibuffer_message_start = 0;
+}
+
+
+
+
 
 #include <sys/stat.h>
 #include <libgen.h>  // for dirname/basename
@@ -2364,6 +2444,41 @@ static SCM scm_next_history_element(SCM n) {
     return SCM_UNSPECIFIED;
 }
 
+
+static SCM scm_current_message(void) {
+    char *msg    = get_current_message();
+    SCM   result = scm_from_locale_string(msg);
+    free(msg);
+    return result;
+}
+
+static SCM scm_restore_message(SCM saved) {
+    if (scm_is_string(saved)) {
+        char *s = scm_to_locale_string(saved);
+        restore_message(s);
+        free(s);
+    } else {
+        restore_message("");
+    }
+    return SCM_UNSPECIFIED;
+}
+
+static SCM scm_with_temp_message(SCM msg_scm, SCM thunk) {
+    char *saved = get_current_message();
+
+    if (scm_is_string(msg_scm)) {
+        char *msg = scm_to_locale_string(msg_scm);
+        message("%s", msg);
+        free(msg);
+    }
+
+    SCM result = scm_call_0(thunk);
+
+    restore_message(saved);
+    free(saved);
+    return result;
+}
+
 void init_minibuf_bindings(void) {
     scm_c_define_gsubr("read-from-minibuffer",                 1, 2, 0, scm_read_from_minibuffer);
     scm_c_define_gsubr("read-from-minibuffer-with-completion", 3, 2, 0, scm_read_from_minibuffer_with_completion);
@@ -2381,4 +2496,7 @@ void init_minibuf_bindings(void) {
     scm_c_define_gsubr("minibuffer-choose-completion",         0, 0, 0, scm_minibuffer_choose_completion);
     scm_c_define_gsubr("previous-history-element",             0, 1, 0, scm_previous_history_element);
     scm_c_define_gsubr("next-history-element",                 0, 1, 0, scm_next_history_element);
+    scm_c_define_gsubr("current-message",                      0, 0, 0, scm_current_message);
+    scm_c_define_gsubr("restore-message",                      1, 0, 0, scm_restore_message);
+    scm_c_define_gsubr("with-temp-message",                    2, 0, 0, scm_with_temp_message);
 }

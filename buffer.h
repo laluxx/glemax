@@ -155,3 +155,5 @@ void adjust_all_window_points_after_modification(size_t pos, int delta);
 
 void append_to_buffer(Buffer *buf, const char *text, bool prepend_newline);
 void message(const char *format, ...);
+void message_for(double seconds, const char *format, ...);
+

@@ -146,7 +146,7 @@ Returns the character index where field N begins, or #f."
          (output (dired--run-ls quoted switches))
          (lines  (string-split output #\newline)))
 
-    ;; Header — 2 spaces indent
+    ;; Header
     (let ((hstart (point)))
       (insert (string-append "  " dir ":\n"))
       (put-text-property hstart (point) 'face
@@ -155,7 +155,6 @@ Returns the character index where field N begins, or #f."
     (for-each
      (lambda (line)
        (when (and (> (string-length line) 0)
-                  ;; Skip "total NNN" — scan past leading spaces then check
                   (not (let loop ((i 0))
                          (cond ((>= i (string-length line)) #f)
                                ((char=? (string-ref line i) #\space) (loop (+ i 1)))
@@ -191,59 +190,6 @@ Returns the character index where field N begins, or #f."
                                     (face-id-from-name face-name))))))))
      lines)))
 
-;; (define (dired--insert-listing dir switches)
-;;   "Insert an ls listing for DIR (with trailing /) using SWITCHES."
-;;   (let* ((quoted (string-append "\"" dir "\""))
-;;          (output (dired--run-ls quoted switches))
-;;          (lines  (string-split output #\newline)))
-
-;;     ;; Header — 2 spaces indent
-;;     (let ((hstart (point)))
-;;       (insert (string-append "  " dir ":\n"))
-;;       (put-text-property hstart (point) 'face
-;;                          (face-id-from-name "dired-header")))
-
-;;     (for-each
-;;      (lambda (line)
-;;        (when (and (> (string-length line) 0)
-;;                   ;; Skip "total NNN" line
-;;                   (not (string-prefix? "total" (string-trim line)))
-;;                   ;; Skip --dired metadata
-;;                   (not (string-prefix? "//DIRED" line))
-;;                   (not (string-prefix? "//DIRED-OPTIONS" line)))
-;;          (let* ((line-start (point))
-;;                 (ftype      (string-ref line 0))
-;;                 (fname-col  (dired--skip-fields line 8)))
-;;            (insert line)
-;;            (insert "\n")
-;;            (when (and fname-col (< fname-col (string-length line)))
-;;              (let* ((full-name  (substring line fname-col))
-;;                     (arrow      (string-contains full-name " -> "))
-;;                     (name       (if arrow
-;;                                     (substring full-name 0 arrow)
-;;                                     full-name))
-;;                     (buf-start  (+ line-start fname-col))
-;;                     (buf-end    (+ buf-start (string-length name)))
-;;                     (face-name
-;;                      (cond
-;;                       ((char=? ftype #\d)
-;;                        "dired-directory")
-;;                       ((char=? ftype #\l)
-;;                        "dired-symlink")
-;;                       ((and (char=? ftype #\-)
-;;                             (> (string-length line) 3)
-;;                             (char=? (string-ref line 3) #\x))
-;;                        "dired-executable")
-;;                       ((memv ftype '(#\p #\s #\b #\c))
-;;                        "dired-special")
-;;                       ((dired--ignored-name? name)
-;;                        "dired-ignored")
-;;                       (else #f))))
-;;                (when face-name
-;;                  (put-text-property buf-start buf-end 'face
-;;                                     (face-id-from-name face-name))))))))
-;;      lines)))
-
 ;;; Internal: point / file queries
 
 (define (dired--current-line-filename)
@@ -267,14 +213,12 @@ Returns the character index where field N begins, or #f."
                              fname))))
            (string-append dir actual)))))
 
-;;; Internal: move point to first real entry (skip . and ..)
+;;; Internal: move point to first real entry
 
 (define (dired--goto-first-entry)
   "Move point to the filename column of the first non-dot entry."
   (goto-char 0)
-  ;; Skip header line
   (next-line 1)
-  ;; Skip . and .. entries
   (let loop ()
     (let ((fname (dired--current-line-filename)))
       (when (and fname
@@ -282,7 +226,6 @@ Returns the character index where field N begins, or #f."
                      (string=? (string-trim-right fname) "..")))
         (next-line 1)
         (loop))))
-  ;; Move point to the filename column
   (let* ((bol  (line-beginning-position))
          (line (buffer-substring bol (line-end-position)))
          (col  (dired--skip-fields line 8)))
@@ -315,14 +258,17 @@ Returns the character index where field N begins, or #f."
 ;;; Navigation commands
 
 (define (dired-next-line n)
+  (interactive "p")
   "Move N lines forward in the Dired listing."
-  (next-line (if (number? n) n 1)))
+  (next-line n))
 
 (define (dired-previous-line n)
+  (interactive "p")
   "Move N lines backward in the Dired listing."
-  (previous-line (if (number? n) n 1)))
+  (previous-line n))
 
 (define (dired-up-directory)
+  (interactive "")
   "Navigate to the parent directory."
   (let* ((dir     (buffer-local-value 'dired-directory))
          (trimmed (string-trim-right dir (lambda (c) (char=? c #\/))))
@@ -334,6 +280,7 @@ Returns the character index where field N begins, or #f."
 ;;; Visit commands
 
 (define (dired-find-file)
+  (interactive "")
   "Visit the file or directory on the current line."
   (let ((path (dired--current-file-full-path)))
     (if path
@@ -341,6 +288,7 @@ Returns the character index where field N begins, or #f."
         (message "No file on this line"))))
 
 (define (dired-find-file-other-window)
+  (interactive "")
   "Visit the file on the current line in the other window."
   (let ((path (dired--current-file-full-path)))
     (if (not path)
@@ -350,36 +298,24 @@ Returns the character index where field N begins, or #f."
           (other-window 1)
           (find-file path)))))
 
-
 (define (dired-jump)
-  "Jump to Dired buffer corresponding to current buffer.
-If in a buffer visiting a file, Dired that file's directory and
-move to that file's line in the directory listing.
-
-If the current buffer isn't visiting a file, Dired `default-directory'.
-
-If in Dired already, pop up a level and goto old directory's line.
-In case the proper Dired file line cannot be found, refresh the Dired
-buffer and try again.
-
-When OTHER-WINDOW is non-nil, jump to Dired buffer in other window.
-
-When FILE-NAME is non-nil, jump to its line in Dired.
-Interactively with prefix argument, read FILE-NAME."
+  (interactive "")
+  "Jump to Dired buffer for the current file's directory."
   (find-file default-directory))
-
 
 ;;; Mark / unmark commands
 
 (define (dired-mark)
+  (interactive "")
   "Mark the file on the current line with `*'."
   (let ((path (dired--current-file-full-path)))
     (when path
       (setq dired-marked-files (cons path dired-marked-files))
       (dired--set-mark-char #\* "dired-mark")
-      (dired-next-line 1))))
+      (next-line 1))))
 
 (define (dired-unmark)
+  (interactive "")
   "Unmark the file on the current line."
   (let ((path (dired--current-file-full-path)))
     (when path
@@ -387,26 +323,30 @@ Interactively with prefix argument, read FILE-NAME."
             (filter (lambda (f) (not (string=? f path)))
                     dired-marked-files))
       (dired--set-mark-char #\space #f)
-      (dired-next-line 1))))
+      (next-line 1))))
 
 (define (dired-unmark-backward)
+  (interactive "")
   "Move up one line and unmark it."
-  (dired-previous-line 1)
+  (previous-line 1)
   (dired-unmark)
-  (dired-previous-line 1))
+  (previous-line 1))
 
 (define (dired-flag-file-deletion)
+  (interactive "")
   "Flag the file on the current line for deletion with `D'."
   (let ((path (dired--current-file-full-path)))
     (when path
       (dired--set-mark-char #\D "dired-flagged")
-      (dired-next-line 1))))
+      (next-line 1))))
 
 (define (dired-unmark-all-marks)
+  (interactive "")
   "Remove all marks by reverting the buffer."
   (dired-revert))
 
 (define (dired-toggle-marks)
+  (interactive "")
   "Toggle marks: `*' becomes unmarked and unmarked becomes `*'."
   (beginning-of-buffer)
   (while (< (point) (- (buffer-size) 1))
@@ -425,6 +365,7 @@ Interactively with prefix argument, read FILE-NAME."
 ;;; File operation commands
 
 (define (dired-do-delete)
+  (interactive "")
   "Delete marked files, or the file at point if none are marked."
   (let ((files (dired--get-target-files)))
     (if (null? files)
@@ -438,6 +379,7 @@ Interactively with prefix argument, read FILE-NAME."
           (dired-revert)))))
 
 (define (dired-do-copy)
+  (interactive "")
   "Copy marked files (or file at point) to a destination."
   (let* ((files (dired--get-target-files))
          (dest  (read-file-name "Copy to: ")))
@@ -452,6 +394,7 @@ Interactively with prefix argument, read FILE-NAME."
       (dired-revert))))
 
 (define (dired-do-rename)
+  (interactive "")
   "Rename/move marked files (or file at point) to a destination."
   (let* ((files (dired--get-target-files))
          (dest  (read-file-name "Rename to: ")))
@@ -464,6 +407,7 @@ Interactively with prefix argument, read FILE-NAME."
       (dired-revert))))
 
 (define (dired-do-chmod)
+  (interactive "")
   "Change permissions of marked files (or file at point)."
   (let* ((files (dired--get-target-files))
          (mode  (read-from-minibuffer "Change mode (e.g. 755): ")))
@@ -474,6 +418,7 @@ Interactively with prefix argument, read FILE-NAME."
       (dired-revert))))
 
 (define (dired-do-shell-command)
+  (interactive "")
   "Run a shell command on marked files (or file at point)."
   (let* ((files (dired--get-target-files))
          (cmd   (read-from-minibuffer "Shell command: ")))
@@ -488,6 +433,7 @@ Interactively with prefix argument, read FILE-NAME."
         (message (string-append "Done: " cmd))))))
 
 (define (dired-do-compress)
+  (interactive "")
   "Compress or decompress marked files (or file at point)."
   (let ((files (dired--get-target-files)))
     (for-each
@@ -504,6 +450,7 @@ Interactively with prefix argument, read FILE-NAME."
     (dired-revert)))
 
 (define (dired-create-directory)
+  (interactive "")
   "Create a new directory inside the current Dired directory."
   (let* ((dir  (buffer-local-value 'dired-directory))
          (name (read-from-minibuffer "Create directory: ")))
@@ -517,6 +464,7 @@ Interactively with prefix argument, read FILE-NAME."
 ;;; View / display commands
 
 (define (dired-revert)
+  (interactive "")
   "Revert the current Dired buffer, discarding all marks."
   (let ((dir (buffer-local-value 'dired-directory)))
     (when dir
@@ -528,6 +476,7 @@ Interactively with prefix argument, read FILE-NAME."
       (dired--goto-first-entry))))
 
 (define (dired-sort-toggle)
+  (interactive "")
   "Toggle between sorting by name and sorting by date (-t)."
   (if (string-contains dired-listing-switches "t")
       (setq dired-listing-switches
@@ -539,11 +488,13 @@ Interactively with prefix argument, read FILE-NAME."
   (dired-revert))
 
 (define (dired-hide-details-toggle)
+  (interactive "")
   "Toggle display of permission / owner / size columns."
   (setq dired-hide-details-mode (not dired-hide-details-mode))
   (message (if dired-hide-details-mode "Details hidden" "Details shown")))
 
 (define (dired-summary)
+  (interactive "")
   "Show a one-line summary of the file at point in the echo area."
   (let ((path (dired--current-file-full-path)))
     (if (not path)
@@ -567,6 +518,7 @@ Interactively with prefix argument, read FILE-NAME."
 ;;; Window helper
 
 (define (quit-window)
+  (interactive "")
   "Quit the current window: delete it if others exist, else bury buffer."
   (if (> (length (window-list)) 1)
       (delete-window)
@@ -603,9 +555,7 @@ Interactively with prefix argument, read FILE-NAME."
 (define-key dired-mode-map "?"      dired-summary)
 (define-key dired-mode-map "q"      quit-window)
 
-;; Global keymap
 (keymap-global-set "C-x C-j" dired-jump)
-
 
 ;;; Major mode
 

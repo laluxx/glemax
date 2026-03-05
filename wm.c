@@ -1235,29 +1235,74 @@ float calculate_minibuffer_height() {
     size_t visual_line_count = 1;  // At least one line
     float x = 0;
 
+    /* rope_iter_t iter; */
+    /* rope_iter_init(&iter, buf->rope, 0); */
+
+    /* uint32_t ch; */
+    /* while (rope_iter_next_char(&iter, &ch)) { */
+    /*     if (ch == '\n') { */
+    /*         visual_line_count++; */
+    /*         x = 0; */
+    /*     } else { */
+    /*         // Check if character would exceed line width */
+    /*         if (x + selected_frame->column_width > usable_width) { */
+    /*             visual_line_count++; */
+    /*             x = 0; */
+    /*         } */
+
+    /*         x += selected_frame->column_width; */
+    /*     } */
+    /* } */
+
+    /* rope_iter_destroy(&iter); */
+
+    /* // Calculate desired height based on content */
+    /* float desired_height = selected_frame->line_height * visual_line_count; */
+
+    size_t buf_len = rope_char_length(buf->rope);
+    float box_extra = 0.0f;  // extra pixels from box borders (top + bottom)
+    size_t char_pos = 0;
+
     rope_iter_t iter;
     rope_iter_init(&iter, buf->rope, 0);
 
     uint32_t ch;
     while (rope_iter_next_char(&iter, &ch)) {
+        // Check face at this position for box
+        int fid = get_face_id_and_next_change(buf, char_pos, buf_len, &(size_t){0});
+        Face *face = get_face(fid);
+        if (face && face->box) {
+            float thickness = 1.0f;  // box_line_thickness
+            float candidate = thickness * 2.0f;
+            if (candidate > box_extra) box_extra = candidate;
+        }
+
         if (ch == '\n') {
             visual_line_count++;
             x = 0;
         } else {
-            // Check if character would exceed line width
-            if (x + selected_frame->column_width > usable_width) {
+            float char_width = selected_frame->column_width;
+            if (face) {
+                Font *font = get_face_font(face);
+                if (font) {
+                    Character *ci = font_get_character(font, ch);
+                    if (ci) char_width = ci->ax;
+                }
+            }
+            if (x + char_width > usable_width) {
                 visual_line_count++;
                 x = 0;
             }
-
-            x += selected_frame->column_width;
+            x += char_width;
         }
+        char_pos++;
     }
 
     rope_iter_destroy(&iter);
 
-    // Calculate desired height based on content
-    float desired_height = selected_frame->line_height * visual_line_count;
+    // Calculate desired height based on content, adding box border space if needed
+    float desired_height = selected_frame->line_height * visual_line_count + box_extra * 2;
+
 
     // Get max-mini-window-height constraint
     SCM max_var = scm_c_lookup("max-mini-window-height");

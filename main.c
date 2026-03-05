@@ -888,6 +888,9 @@ static void inner_main (void *data, int argc, char **argv) {
 
     lisp_init(); // IMPORTANT After initializing the windowManager
 
+    // Register the function that will be used to execute procedures bound to keys
+    register_call_interactively(call_interactively);
+
     init_draw_cache();
 
 
@@ -903,6 +906,11 @@ static void inner_main (void *data, int argc, char **argv) {
     double last_timer_check = getTime();
 
     while (!windowShouldClose() && !should_quit) {
+        // Clear timed messages
+        if (selected_frame->message_expiry > 0.0 &&
+            getTime() > selected_frame->message_expiry)
+            {selected_frame->message_expiry = 0.0; message("");}
+
         beginFrame();
         clear_background(face_cache->faces[FACE_DEFAULT]->bg);
         refresh_draw_config();   // once per frame — reads g_ul underline flags

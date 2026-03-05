@@ -105,6 +105,7 @@
 (keymap-global-set "C-x l" count-lines-page)
 (keymap-global-set "C-h C-g" garbage-collect)
 
+
 (define (setup-self-insert-keys)
   "Bind all printable characters to self-insert-command in global keymap."
 
@@ -127,9 +128,9 @@
 
 (setup-self-insert-keys)
 
-;; C-x k BUG
-
 (define post-self-insert-hook '())
+
+
 
 (define this-command)
 (set-var-doc! this-command
@@ -184,9 +185,6 @@ See Info node `(elisp)Multiple Terminals'.")
 
 ;; C-M-t   - transpose-sexps
 ;; M-C-t   - transpose-sexps
-
-;; Emacs-compatible undo system variables
-
 
 ;;; Completion
 
@@ -942,6 +940,15 @@ INTERVAL-LENGTH specifies how many characters each face segment should be."
 (scheme-mode)
 
 
-(load-theme 'modus-vivendi)
+;; (load-theme 'modus-vivendi)
+(load-theme 'dark-one)
 ;; (rainbow-delimiters-mode)
 
+
+
+;; IT WORKS!
+(deftheme 'test-theme "A theme created with the sole scope of testing the theme layering system")
+
+(custom-theme-set-faces 'test-theme
+  '(isearch                                   ((t (:foreground "#000000" :background "#44df44"))))
+)

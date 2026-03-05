@@ -91,6 +91,23 @@ Return the documentation property associated with `var'."
     ((_ name spec doc)
      (%defface 'name spec doc))))
 
+
+;; HACK define so that it works with (interactive)
+(define-syntax define
+  (syntax-rules (interactive)
+    ((_ (name . args) (interactive spec) body ...)
+     (begin
+       (define-values (name)
+         (lambda args body ...))
+       (set-procedure-property! name 'interactive-spec spec)))
+    ((_ (name . args) body ...)
+     (define-values (name)
+       (lambda args body ...)))
+    ((_ name value)
+     (define-values (name) value))
+    ((_ name)
+     (define-values (name) (if #f #f)))))
+
 ;;; Hooks
 
 (define (add-hook hook function)

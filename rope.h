@@ -277,12 +277,12 @@ uint32_t utf8_decode(const char *str, size_t len, size_t *bytes_read) {
     *bytes_read = clen;
     switch (clen) {
         case 1: return first;
-        case 2: return ((first & 0x1F) << 6)  | ((uint8_t)str[1] & 0x3F);
+        case 2: return ((first & 0x1F) << 6)  |  ((uint8_t)str[1] & 0x3F);
         case 3: return ((first & 0x0F) << 12) | (((uint8_t)str[1] & 0x3F) << 6)
-                                               |  ((uint8_t)str[2] & 0x3F);
+                                              |  ((uint8_t)str[2] & 0x3F);
         case 4: return ((first & 0x07) << 18) | (((uint8_t)str[1] & 0x3F) << 12)
-                                               | (((uint8_t)str[2] & 0x3F) << 6)
-                                               |  ((uint8_t)str[3] & 0x3F);
+                                              | (((uint8_t)str[2] & 0x3F) << 6)
+                                              |  ((uint8_t)str[3] & 0x3F);
     }
     return 0xFFFD;
 }

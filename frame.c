@@ -37,6 +37,8 @@ Frame* create_frame(int x, int y, int width, int height) {
     frame->wm.previous_window = NULL;
     frame->wm.minibuffer_message_start = 0;
 
+    frame->message_expiry = 0;
+
     return frame;
 }
 

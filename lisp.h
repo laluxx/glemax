@@ -42,6 +42,11 @@ char* scm_get_string(const char *name, const char *default_value);
 SCM get_or_make_window_object(Window *win);
 SCM scm_setq_impl(SCM symbol, SCM value);
 
+/// Arg
+
+SCM call_interactively(SCM proc);
+void init_interactive_system(void);
+
 
 /// Faces
 

@@ -23,6 +23,8 @@ char *read_from_minibuffer(const char *prompt, const char *initial_contents, SCM
 char *read_from_minibuffer_internal(const char *prompt, const char *initial_contents, SCM hist);
 char *read_from_minibuffer_with_completion(const char *prompt, const char *initial_contents, SCM collection, SCM predicate, SCM hist);
 
+char *get_current_message(void);
+void restore_message(const char *saved);
 
 void execute_extended_command(void);
 void eval_expression(void);

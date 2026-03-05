@@ -18,6 +18,8 @@ typedef struct {
     int column_width;
     // Canonical Y unit.  Height of a line, in pixels.
     int line_height;
+    double message_expiry; // 0 means no expiry (used in message-for),
+                           // each frame should have it's own.
 } Frame;
 
 extern Frame *selected_frame;

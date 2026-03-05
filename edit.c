@@ -3657,6 +3657,9 @@ size_t scan_lists(Buffer *buffer, size_t from, int count, int depth, bool sexpfl
     }
 }
 
+//                v doesn' go here v
+// BUG int main() {message("MEOW");}
+//                    because of  ^
 void forward_list() {
     int arg = get_prefix_arg();
     if (arg == 0) return;

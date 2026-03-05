@@ -152,13 +152,12 @@ void register_theme(const char *name, const char *description) {
 static void reapply_all_themes(void) {
     if (!theme_cache || !face_cache || !base_faces) return;
 
-    // Step 1: Reset all faces to base theme
+    // Step 1: Reset all faces to base snapshot
     for (int i = 0; i < face_cache->count; i++) {
         Face *face = face_cache->faces[i];
         if (!face) continue;
 
         if (i < FACE_BUILTIN_COUNT) {
-            // Builtin faces: restore from snapshot
             face->fg                   = base_faces[i].fg;
             face->bg                   = base_faces[i].bg;
             face->fg_set               = base_faces[i].fg_set;
@@ -172,20 +171,22 @@ static void reapply_all_themes(void) {
             face->strike_through_color = base_faces[i].strike_through_color;
             face->box_color            = base_faces[i].box_color;
             face->inherit_from         = base_faces[i].inherit_from;
-            face->font = get_font_variant(face->bold, face->italic);
+            face->extend               = false;
         } else {
-            // Dynamic faces: clear resolved state so inheritance re-resolves
-            // cleanly. Preserve inherit_from/fg_set/bg_set since those are
-            // the face's own definition set by defface.
-            face->underline      = false;
-            face->strike_through = false;
-            face->box            = false;
-            face->font = get_font_variant(face->bold, face->italic);
+            face->fg_set               = false;
+            face->bg_set               = false;
+            face->bold                 = false;
+            face->italic               = false;
+            face->underline            = false;
+            face->strike_through       = false;
+            face->box                  = false;
+            face->extend               = false;
+            face->inherit_from         = -1;
         }
+        face->font = get_font_variant(face->bold, face->italic);
     }
 
-    // Step 2: Apply each enabled theme in order (from oldest to newest)
-    // Reverse the list since it's stored newest-first
+    // Step 2: Reverse enabled_themes so we apply oldest first
     SCM reversed = SCM_EOL;
     SCM themes = theme_cache->enabled_themes;
     while (!scm_is_null(themes)) {
@@ -193,96 +194,212 @@ static void reapply_all_themes(void) {
         themes = scm_cdr(themes);
     }
 
-    // Apply themes from oldest to newest
+    // Step 3: Apply each theme in order
     while (!scm_is_null(reversed)) {
-        SCM theme_name_scm = scm_car(reversed);
-        SCM theme_name_str = scm_symbol_to_string(theme_name_scm);
-        char *theme_name = scm_to_locale_string(theme_name_str);
+        char *theme_name = scm_to_locale_string(
+            scm_symbol_to_string(scm_car(reversed)));
 
         Theme *theme = get_theme(theme_name);
+        free(theme_name);
+
         if (theme) {
             FaceSpec *spec = theme->face_specs;
             while (spec) {
                 Face *face = get_named_face(spec->face_name);
                 if (face) {
-                    // Reset decorative properties before applying theme specs
-                    // They should only be true if the theme explicitly sets them
-                    face->underline = false;
+                    // A theme spec fully redefines the face —
+                    // clear everything so unspecified attrs don't
+                    // bleed through from the base snapshot
+                    face->fg_set         = false;
+                    face->bg_set         = false;
+                    face->bold           = false;
+                    face->italic         = false;
+                    face->underline      = false;
                     face->strike_through = false;
-                    face->box = false;
+                    face->box            = false;
+                    face->extend         = false;
+                    face->inherit_from   = -1;
 
-                    // Apply inheritance first (if specified)
-                    if (spec->has_inherit) {
+                    if (spec->has_inherit)
                         face->inherit_from = spec->inherit_from;
-                        // When inherit is set, clear explicit color flags
-                        // so inheritance resolution can work
-                        if (!spec->has_fg) {
-                            face->fg_set = false;
-                        }
-                        if (!spec->has_bg) {
-                            face->bg_set = false;
-                        }
-                    }
 
-                    // Apply explicit color properties (these override inheritance)
                     if (spec->has_fg) {
-                        face->fg = spec->fg;
+                        face->fg     = spec->fg;
                         face->fg_set = true;
                     }
                     if (spec->has_bg) {
-                        face->bg = spec->bg;
+                        face->bg     = spec->bg;
                         face->bg_set = true;
                     }
-
-                    // Apply text attributes
-                    if (spec->bold) {
+                    if (spec->bold)
                         face->bold = true;
-                    }
-                    if (spec->italic) {
+                    if (spec->italic)
                         face->italic = true;
-                    }
-
-                    // Apply decorative attributes
                     if (spec->underline) {
                         face->underline = true;
-                        if (spec->has_underline_color) {
+                        if (spec->has_underline_color)
                             face->underline_color = spec->underline_color;
-                        }
                     }
                     if (spec->strike_through) {
                         face->strike_through = true;
-                        if (spec->has_strike_through_color) {
+                        if (spec->has_strike_through_color)
                             face->strike_through_color = spec->strike_through_color;
-                        }
                     }
                     if (spec->box) {
                         face->box = true;
-                        if (spec->has_box_color) {
+                        if (spec->has_box_color)
                             face->box_color = spec->box_color;
-                        }
                     }
-
-                    // Apply extend property
-                    if (spec->has_extend) {
+                    if (spec->has_extend)
                         face->extend = spec->extend;
-                    }
 
-                    // Update font if bold or italic attributes changed
-                    if (spec->bold || spec->italic) {
-                        face->font = get_font_variant(face->bold, face->italic);
-                    }
+                    face->font = get_font_variant(face->bold, face->italic);
                 }
                 spec = spec->next;
             }
         }
 
-        free(theme_name);
         reversed = scm_cdr(reversed);
     }
 
-    // Step 3: Resolve inheritance
+    // Step 4: Resolve inheritance
     resolve_face_inheritance();
 }
+
+/* static void reapply_all_themes(void) { */
+/*     if (!theme_cache || !face_cache || !base_faces) return; */
+
+/*     // Step 1: Reset all faces to base theme */
+/*     for (int i = 0; i < face_cache->count; i++) { */
+/*         Face *face = face_cache->faces[i]; */
+/*         if (!face) continue; */
+
+/*         if (i < FACE_BUILTIN_COUNT) { */
+/*             // Builtin faces: restore from snapshot */
+/*             face->fg                   = base_faces[i].fg; */
+/*             face->bg                   = base_faces[i].bg; */
+/*             face->fg_set               = base_faces[i].fg_set; */
+/*             face->bg_set               = base_faces[i].bg_set; */
+/*             face->bold                 = base_faces[i].bold; */
+/*             face->italic               = base_faces[i].italic; */
+/*             face->underline            = base_faces[i].underline; */
+/*             face->strike_through       = base_faces[i].strike_through; */
+/*             face->box                  = base_faces[i].box; */
+/*             face->underline_color      = base_faces[i].underline_color; */
+/*             face->strike_through_color = base_faces[i].strike_through_color; */
+/*             face->box_color            = base_faces[i].box_color; */
+/*             face->inherit_from         = base_faces[i].inherit_from; */
+/*             face->font = get_font_variant(face->bold, face->italic); */
+/*         } else { */
+/*             // Dynamic faces: clear resolved state so inheritance re-resolves */
+/*             // cleanly. Preserve inherit_from/fg_set/bg_set since those are */
+/*             // the face's own definition set by defface. */
+/*             face->underline      = false; */
+/*             face->strike_through = false; */
+/*             face->box            = false; */
+/*             face->font = get_font_variant(face->bold, face->italic); */
+/*         } */
+/*     } */
+
+/*     // Step 2: Apply each enabled theme in order (from oldest to newest) */
+/*     // Reverse the list since it's stored newest-first */
+/*     SCM reversed = SCM_EOL; */
+/*     SCM themes = theme_cache->enabled_themes; */
+/*     while (!scm_is_null(themes)) { */
+/*         reversed = scm_cons(scm_car(themes), reversed); */
+/*         themes = scm_cdr(themes); */
+/*     } */
+
+/*     // Apply themes from oldest to newest */
+/*     while (!scm_is_null(reversed)) { */
+/*         SCM theme_name_scm = scm_car(reversed); */
+/*         SCM theme_name_str = scm_symbol_to_string(theme_name_scm); */
+/*         char *theme_name = scm_to_locale_string(theme_name_str); */
+
+/*         Theme *theme = get_theme(theme_name); */
+/*         if (theme) { */
+/*             FaceSpec *spec = theme->face_specs; */
+/*             while (spec) { */
+/*                 Face *face = get_named_face(spec->face_name); */
+/*                 if (face) { */
+/*                     // Reset decorative properties before applying theme specs */
+/*                     // They should only be true if the theme explicitly sets them */
+/*                     face->underline = false; */
+/*                     face->strike_through = false; */
+/*                     face->box = false; */
+
+/*                     // Apply inheritance first (if specified) */
+/*                     if (spec->has_inherit) { */
+/*                         face->inherit_from = spec->inherit_from; */
+/*                         // When inherit is set, clear explicit color flags */
+/*                         // so inheritance resolution can work */
+/*                         if (!spec->has_fg) { */
+/*                             face->fg_set = false; */
+/*                         } */
+/*                         if (!spec->has_bg) { */
+/*                             face->bg_set = false; */
+/*                         } */
+/*                     } */
+
+/*                     // Apply explicit color properties (these override inheritance) */
+/*                     if (spec->has_fg) { */
+/*                         face->fg = spec->fg; */
+/*                         face->fg_set = true; */
+/*                     } */
+/*                     if (spec->has_bg) { */
+/*                         face->bg = spec->bg; */
+/*                         face->bg_set = true; */
+/*                     } */
+
+/*                     // Apply text attributes */
+/*                     if (spec->bold) { */
+/*                         face->bold = true; */
+/*                     } */
+/*                     if (spec->italic) { */
+/*                         face->italic = true; */
+/*                     } */
+
+/*                     // Apply decorative attributes */
+/*                     if (spec->underline) { */
+/*                         face->underline = true; */
+/*                         if (spec->has_underline_color) { */
+/*                             face->underline_color = spec->underline_color; */
+/*                         } */
+/*                     } */
+/*                     if (spec->strike_through) { */
+/*                         face->strike_through = true; */
+/*                         if (spec->has_strike_through_color) { */
+/*                             face->strike_through_color = spec->strike_through_color; */
+/*                         } */
+/*                     } */
+/*                     if (spec->box) { */
+/*                         face->box = true; */
+/*                         if (spec->has_box_color) { */
+/*                             face->box_color = spec->box_color; */
+/*                         } */
+/*                     } */
+
+/*                     // Apply extend property */
+/*                     if (spec->has_extend) { */
+/*                         face->extend = spec->extend; */
+/*                     } */
+
+/*                     // Update font if bold or italic attributes changed */
+/*                     if (spec->bold || spec->italic) { */
+/*                         face->font = get_font_variant(face->bold, face->italic); */
+/*                     } */
+/*                 } */
+/*                 spec = spec->next; */
+/*             } */
+/*         } */
+
+/*         free(theme_name); */
+/*         reversed = scm_cdr(reversed); */
+/*     } */
+
+/*     // Step 3: Resolve inheritance */
+/*     resolve_face_inheritance(); */
+/* } */
 
 #include "minibuf.h"
 #include "buffer.h"
