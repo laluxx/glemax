@@ -98,7 +98,6 @@
 
 (define scheme-mode-map (make-sparse-keymap))
 
-(define-key scheme-mode-map "i" self-insert-command)
 
 (define (scheme-mode-setup-treesitter)
   "Initialize tree-sitter for Scheme mode."

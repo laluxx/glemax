@@ -35,3 +35,6 @@ void clear_minibuffer_message(void);
 void minibuffer_complete(void);
 void minibuffer_complete_and_exit(void);
 void init_minibuf_bindings(void);
+
+void recursive_edit(void);
+void exit_recursive_edit(void);

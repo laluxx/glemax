@@ -63,11 +63,9 @@ TODO additional ones set by `derived-mode-add-parents'."
   (syntax-rules ()
     ((_ mode parent-mode name docstring . body)
      (begin
-       ;; Store the parent mode relationship
        (put 'mode 'derived-mode-parent 'parent-mode)
-
-       (define (mode)
-         docstring
+       (defun mode ()
+         (interactive "")
          (kill-all-local-variables)
          (when parent-mode (parent-mode))
          (setq major-mode 'mode)

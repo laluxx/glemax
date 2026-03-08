@@ -142,6 +142,11 @@ typedef struct Window Window;
 
 bool is_pair(uint32_t left, uint32_t right);
 
+/// SCM
+SCM scm_goto_char(SCM pos);
+
+
+
 /// Draw
 
 void init_draw_cache(void);
@@ -153,7 +158,8 @@ void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y);
 void reset_cursor_blink(Buffer *buffer);
 void adjust_all_window_points_after_modification(size_t pos, int delta);
 
-void append_to_buffer(Buffer *buf, const char *text, bool prepend_newline);
+/* void append_to_buffer(Buffer *buf, const char *text, bool prepend_newline); */
+void append_to_buffer(Buffer *target, size_t start, size_t end);
 void message(const char *format, ...);
 void message_for(double seconds, const char *format, ...);
 

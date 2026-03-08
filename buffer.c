@@ -257,7 +257,6 @@ void switch_to_buffer(Buffer *buf) {
     }
 }
 
-
 Buffer* other_buffer() {
     if (!current_buffer || !current_buffer->next) return current_buffer;
 
@@ -312,39 +311,7 @@ void do_kill_buffer(Buffer *buf) {
 }
 
 void kill_buffer() {
-    Buffer *minibuf = selected_frame->wm.minibuffer_window->buffer;
-    SCM buffer_names = SCM_EOL;
-    Buffer *buf = all_buffers;
-    do {
-        if (buf != minibuf) {
-            buffer_names = scm_cons(scm_from_locale_string(buf->name), buffer_names);
-        }
-        buf = buf->next;
-    } while (buf != all_buffers);
-
-    char prompt[256];
-    snprintf(prompt, sizeof(prompt), "Kill buffer (default %s): ", current_buffer->name);
-    SCM hist = scm_from_locale_symbol("buffer-name-history");
-    char *input = read_from_minibuffer_with_completion(prompt, NULL,
-                                                       buffer_names, SCM_BOOL_F, hist);
-    // NULL means C-g — do nothing
-    if (!input) return;
-
-    Buffer *target;
-    if (*input == '\0') {
-        // Empty RET — use default (current buffer)
-        target = current_buffer;
-    } else {
-        target = get_buffer(input);
-        if (!target) {
-            message("No buffer named %s", input);
-            free(input);
-            return;
-        }
-    }
-
-    free(input);
-    do_kill_buffer(target);
+    do_kill_buffer(current_buffer);
 }
 
 void kill_current_buffer() {
@@ -446,6 +413,24 @@ size_t goto_char(size_t pos) {
     return pos;
 }
 
+SCM scm_goto_char(SCM pos) {
+    size_t n;
+    if (SCM_UNBNDP(pos)) {
+        SCM hist = scm_from_locale_symbol("goto-char-history");
+        char *input = read_from_minibuffer("Goto char: ", NULL, hist);
+        if (!input || !*input) {
+            if (input) free(input);
+            return SCM_UNSPECIFIED;
+        }
+        n = (size_t)atoi(input);
+        free(input);
+    } else {
+        n = scm_to_size_t(pos);
+    }
+    goto_char(n);
+    return SCM_UNSPECIFIED;
+}
+
 inline void move_point(int delta) {
     size_t text_len = rope_char_length(current_buffer->rope);
 
@@ -475,27 +460,104 @@ inline void move_point(int delta) {
     set_point(new_pt);
 }
 
-void append_to_buffer(Buffer *buf, const char *text, bool prepend_newline) {
-    if (!buf || !text) return;
+void append_to_buffer(Buffer *target, size_t start, size_t end) {
+    if (!target) return;
+    if (start >= end) return;
 
+    size_t char_len = end - start;
+
+    // Extract text from current buffer using rope_copy_chars
+    // Allocate worst case: 4 bytes per UTF-8 char + null terminator
+    size_t buf_size = char_len * 4 + 1;
+    char *text = malloc(buf_size);
+    if (!text) return;
+    size_t bytes_copied = rope_copy_chars(current_buffer->rope, start, char_len,
+                                          text, buf_size);
+    text[bytes_copied] = '\0';
+
+    // Insert before point in target buffer
+    size_t insert_pos = target->pt;
+    target->rope = rope_insert_chars(target->rope, insert_pos, text, bytes_copied);
+    free(text);
+
+    // Adjust target buffer point and windows
+    target->pt = insert_pos + char_len;
+    Window *leaves[256];
+    int count = 0;
+    collect_leaf_windows(selected_frame->wm.root, leaves, &count);
+    for (int i = 0; i < count; i++) {
+        Window *win = leaves[i];
+        if (win->buffer == target && win->point >= insert_pos)
+            win->point += char_len;
+    }
+    target->modified = true;
+}
+
+/* void append_to_buffer(Buffer *buf, const char *text, bool prepend_newline) { */
+/*     if (!buf || !text) return; */
+
+/*     size_t text_len = strlen(text); */
+/*     if (text_len == 0) return; */
+
+/*     size_t old_end_pos = rope_char_length(buf->rope); */
+/*     size_t end_pos = old_end_pos; */
+
+/*     // Track how many characters we're adding */
+/*     size_t chars_added = 0; */
+
+/*     if (prepend_newline) { */
+/*         buf->rope = rope_insert_chars(buf->rope, end_pos, "\n", 1); */
+/*         end_pos++; */
+/*         chars_added++; */
+/*     } */
+
+/*     buf->rope = rope_insert_chars(buf->rope, end_pos, text, text_len); */
+
+/*     // Count actual characters (not bytes) in the text */
+/*     for (size_t i = 0; i < text_len; ) { */
+/*         size_t bytes_read; */
+/*         utf8_decode(&text[i], text_len - i, &bytes_read); */
+/*         if (bytes_read == 0) break; */
+/*         i += bytes_read; */
+/*         chars_added++; */
+/*     } */
+
+/*     // Update buffer's point if it was at the end */
+/*     if (buf->pt == old_end_pos) { */
+/*         buf->pt = old_end_pos + chars_added; */
+/*     } */
+
+/*     // Update all windows viewing this buffer where point was at the end */
+/*     Window *leaves[256]; */
+/*     int count = 0; */
+/*     collect_leaf_windows(selected_frame->wm.root, leaves, &count); */
+
+/*     for (int i = 0; i < count; i++) { */
+/*         Window *win = leaves[i]; */
+/*         if (win->buffer == buf && win->point == old_end_pos) { */
+/*             win->point = old_end_pos + chars_added; */
+/*         } */
+/*     } */
+
+/*     buf->modified = true; */
+/* } */
+
+
+static void log_to_messages(const char *text) {
+    Buffer *buf = get_buffer("*Messages*");
+    if (!buf || !text) return;
     size_t text_len = strlen(text);
     if (text_len == 0) return;
-
     size_t old_end_pos = rope_char_length(buf->rope);
     size_t end_pos = old_end_pos;
-
-    // Track how many characters we're adding
     size_t chars_added = 0;
-
+    bool prepend_newline = old_end_pos > 0;
     if (prepend_newline) {
         buf->rope = rope_insert_chars(buf->rope, end_pos, "\n", 1);
         end_pos++;
         chars_added++;
     }
-
     buf->rope = rope_insert_chars(buf->rope, end_pos, text, text_len);
-
-    // Count actual characters (not bytes) in the text
     for (size_t i = 0; i < text_len; ) {
         size_t bytes_read;
         utf8_decode(&text[i], text_len - i, &bytes_read);
@@ -503,27 +565,18 @@ void append_to_buffer(Buffer *buf, const char *text, bool prepend_newline) {
         i += bytes_read;
         chars_added++;
     }
-
-    // Update buffer's point if it was at the end
-    if (buf->pt == old_end_pos) {
+    if (buf->pt == old_end_pos)
         buf->pt = old_end_pos + chars_added;
-    }
-
-    // Update all windows viewing this buffer where point was at the end
     Window *leaves[256];
     int count = 0;
     collect_leaf_windows(selected_frame->wm.root, leaves, &count);
-
     for (int i = 0; i < count; i++) {
         Window *win = leaves[i];
-        if (win->buffer == buf && win->point == old_end_pos) {
+        if (win->buffer == buf && win->point == old_end_pos)
             win->point = old_end_pos + chars_added;
-        }
     }
-
     buf->modified = true;
 }
-
 
 void message(const char *format, ...) {
     va_list args;
@@ -606,7 +659,7 @@ void message(const char *format, ...) {
     Buffer *messages_buf = get_buffer("*Messages*");
     if (messages_buf) {
         bool needs_newline = rope_char_length(messages_buf->rope) > 0;
-        append_to_buffer(messages_buf, formatted, needs_newline);
+        log_to_messages(formatted);
     }
 
     free(formatted);

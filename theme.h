@@ -60,4 +60,11 @@ static inline bool color_equals(Color a, Color b) {
     return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
 }
 
+/// SCM
+
+
+SCM scm_load_theme(SCM name);
+SCM scm_disable_theme(SCM name);
+
+
 void init_theme_bindings(void);

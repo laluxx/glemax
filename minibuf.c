@@ -1242,18 +1242,22 @@ char *read_from_minibuffer_with_completion(const char *prompt, const char *initi
 }
 
 // Recursive edit - runs event loop until minibuffer exits
-static void recursive_edit() {
+void recursive_edit(void) {
+    minibuffer_exit_requested = false; // reset at entry, not just exit
     // Run the event loop until minibuffer_exit_requested becomes true
     while (!minibuffer_exit_requested && !windowShouldClose()) {
         beginFrame();
-
-        // Draw everything
         clear_background(face_cache->faces[FACE_DEFAULT]->bg);
         wm_draw(&selected_frame->wm);
-
         endFrame();
     }
+    minibuffer_exit_requested = false;
 }
+
+void exit_recursive_edit(void) {
+    minibuffer_exit_requested = true;
+}
+
 
 char *read_from_minibuffer_internal(const char *prompt,
                                     const char *initial_contents,
@@ -1473,15 +1477,6 @@ char *get_current_message(void) {
     return result;
 }
 
-/* char *get_current_message(void) { */
-/*     Buffer *minibuf = selected_frame->wm.minibuffer_window->buffer; */
-/*     if (selected_frame->wm.minibuffer_active) return strdup(""); */
-/*     size_t len = rope_char_length(minibuf->rope); */
-/*     if (len == 0) return strdup(""); */
-/*     char *result = rope_to_cstring(minibuf->rope); */
-/*     return result ? result : strdup(""); */
-/* } */
-
 void restore_message(const char *saved) {
     if (!saved) return;
     if (selected_frame->wm.minibuffer_active) return;
@@ -1497,9 +1492,6 @@ void restore_message(const char *saved) {
     selected_frame->wm.minibuffer_window->point = 0;
     selected_frame->wm.minibuffer_message_start = 0;
 }
-
-
-
 
 
 #include <sys/stat.h>

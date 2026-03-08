@@ -53,19 +53,38 @@ Return the documentation property associated with `var'."
        (make-variable-buffer-local 'var)))))
 
 (define-syntax defun
-  (syntax-rules (&rest &optional)
-    ;; No special args
+  (syntax-rules (interactive)
+    ;; With interactive as first body form
+    ((_ name (args ...) (interactive spec) body ...)
+     (begin
+       (define (name args ...) body ...)
+       (set-procedure-property! name 'interactive-spec spec)))
+    ;; With &rest and interactive
+    ((_ name (args ... &rest rest-arg) (interactive spec) body ...)
+     (begin
+       (define (name args ... . rest-arg) body ...)
+       (set-procedure-property! name 'interactive-spec spec)))
+    ;; Without interactive
     ((_ name (args ...) body ...)
-     (define (name args ...)
-       body ...))
-
-    ;; With &rest: (defun name (arg1 arg2 &rest rest-args) body ...)
+     (define (name args ...) body ...))
+    ;; With &rest, without interactive
     ((_ name (args ... &rest rest-arg) body ...)
-     (define (name args ... . rest-arg)
-       body ...))
+     (define (name args ... . rest-arg) body ...))))
 
-    ;; TODO: &optional is more complex, would need a different approach
-    ))
+;; (define-syntax defun
+;;   (syntax-rules (&rest &optional)
+;;     ;; No special args
+;;     ((_ name (args ...) body ...)
+;;      (define (name args ...)
+;;        body ...))
+
+;;     ;; With &rest: (defun name (arg1 arg2 &rest rest-args) body ...)
+;;     ((_ name (args ... &rest rest-arg) body ...)
+;;      (define (name args ... . rest-arg)
+;;        body ...))
+
+;;     ;; TODO: &optional is more complex, would need a different approach
+;;     ))
 
 (define-syntax defvar
   (syntax-rules ()
@@ -91,22 +110,6 @@ Return the documentation property associated with `var'."
     ((_ name spec doc)
      (%defface 'name spec doc))))
 
-
-;; HACK define so that it works with (interactive)
-(define-syntax define
-  (syntax-rules (interactive)
-    ((_ (name . args) (interactive spec) body ...)
-     (begin
-       (define-values (name)
-         (lambda args body ...))
-       (set-procedure-property! name 'interactive-spec spec)))
-    ((_ (name . args) body ...)
-     (define-values (name)
-       (lambda args body ...)))
-    ((_ name value)
-     (define-values (name) value))
-    ((_ name)
-     (define-values (name) (if #f #f)))))
 
 ;;; Hooks
 

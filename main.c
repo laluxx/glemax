@@ -871,7 +871,9 @@ static void inner_main (void *data, int argc, char **argv) {
     registerScrollCallback(scroll_callback);
     register_after_keychord_hook(after_keychord_hook);
     register_before_keychord_hook(before_keychord_hook);
+
     register_raw_key_interceptor(quoted_insert_interceptor);
+    register_raw_key_interceptor(describe_key_interceptor);
 
     Buffer *scratch_buffer = buffer_create("*scratch*");
     Buffer *minibuf = buffer_create("minibuf");

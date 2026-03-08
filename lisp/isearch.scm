@@ -15,6 +15,7 @@
 
 ;;; State
 
+
 (defvar-local isearch-mode nil "Non-nil when isearch-mode is active in this buffer.")
 (defvar isearch-string "" "The current incremental search string.")
 (defvar isearch-forward? t "Non-nil means searching forward.")
@@ -38,7 +39,7 @@
 
 ;;; Prompt
 
-(define (isearch-prompt-string)
+(defun isearch-prompt-string ()
   "Return echo-area prompt reflecting current search state."
   (cond
    ((and (not isearch-success?) isearch-wrapped?)
@@ -50,7 +51,7 @@
    (else
     (if isearch-forward? "I-search: " "I-search backward: "))))
 
-(define (isearch-update-message)
+(defun isearch-update-message ()
   "Display the isearch prompt with faces in the echo area."
   (let* ((prompt   (isearch-prompt-string))
          (plen     (string-length prompt))
@@ -68,11 +69,11 @@
 
 ;;; Search
 
-(define (isearch-get-text)
+(defun isearch-get-text ()
   "Return the entire buffer contents as a string."
   (buffer-substring 0 (buffer-size)))
 
-(define (isearch-find-forward str from-pos)
+(defun isearch-find-forward (str from-pos)
   "Search forward for STR starting at FROM-POS. Returns match start or nil."
   (if (string=? str "")
       from-pos
@@ -85,7 +86,7 @@
            ((string=? (substring text pos (+ pos slen)) str) pos)
            (else (loop (+ pos 1))))))))
 
-(define (isearch-find-backward str from-pos)
+(defun isearch-find-backward (str from-pos)
   "Search backward for STR starting at FROM-POS. Returns match start or nil."
   (if (string=? str "")
       from-pos
@@ -99,7 +100,7 @@
            ((string=? (substring text pos (+ pos slen)) str) pos)
            (else (loop (- pos 1))))))))
 
-(define (isearch-longest-match-prefix str)
+(defun isearch-longest-match-prefix (str)
   "Return the length of the longest prefix of STR that exists anywhere in the buffer."
   (let loop ((len (string-length str)))
     (cond
@@ -110,14 +111,14 @@
       len)
      (else (loop (- len 1))))))
 
-(define (isearch-apply-match match-pos)
+(defun isearch-apply-match (match-pos)
   "Move point to match and highlight it."
   (let ((end-pos (+ match-pos (string-length isearch-string))))
     (setq isearch-current-match match-pos)
     (goto-char (if isearch-forward? end-pos match-pos))
     (isearch-highlight match-pos end-pos)))
 
-(define (isearch-try-wrap)
+(defun isearch-try-wrap ()
   "Wrap search once; on second wrap signal failing-overwrapped."
   (let* ((wrap-from (if isearch-forward? 0 (- (buffer-size) 1)))
          (match     (if isearch-forward?
@@ -135,7 +136,7 @@
           (setq isearch-current-match nil)
           nil))))
 
-(define (isearch-update)
+(defun isearch-update ()
   "Re-run search from origin; update point, highlight, and echo area."
   (isearch-clear-highlight)
   (if (string=? isearch-string "")
@@ -162,7 +163,7 @@
               (isearch-try-wrap)))))
   (isearch-update-message))
 
-(define (isearch-repeat forward?)
+(defun isearch-repeat (forward?)
   "Advance to the next/previous occurrence."
   (when (not (string=? isearch-string ""))
     (let* ((cur          isearch-current-match)
@@ -207,7 +208,7 @@
 ;;; Highlight
 
 
-(define (isearch-highlight start end)
+(defun isearch-highlight (start end)
   "Highlight current match with isearch face and all others with lazy-highlight."
   (isearch-clear-highlight)
   (when (< start end)
@@ -230,7 +231,7 @@
     (setq isearch-overlay-start start)
     (setq isearch-overlay-end   end)))
 
-(define (isearch-clear-highlight)
+(defun isearch-clear-highlight ()
   "Remove current match highlight and all lazy-highlight overlays."
   ;; Clear lazy highlights
   (for-each (lambda (range)
@@ -245,11 +246,11 @@
 
 ;;; Entry / exit
 
-(define (isearch-mode arg)
+(defun isearch-mode (arg)
   "Minor mode for incremental search."
   (minor-mode-toggle 'isearch-mode arg nil))
 
-(define (isearch-start forward?)
+(defun isearch-start (forward?)
   "Initialise state and activate isearch-mode."
   (setq isearch-string        "")
   (setq isearch-forward?      forward?)
@@ -262,13 +263,13 @@
   (isearch-mode 1)
   (isearch-update-message))
 
-(define (isearch-exit)
+(defun isearch-exit ()
   "Exit isearch, leaving point at the current match."
   (isearch-clear-highlight)
   (message "")
   (isearch-mode -1))
 
-(define (isearch-abort)
+(defun isearch-abort ()
   "Abort isearch and restore point to origin."
   (isearch-clear-highlight)
   (goto-char isearch-origin)
@@ -277,7 +278,7 @@
 
 ;;; Commands
 
-(define (isearch-printing-char)
+(defun isearch-printing-char ()
   "Append this-command-event to the search string."
   (let* ((event this-command-event)
          (char  (cond
@@ -291,7 +292,7 @@
       (setq isearch-wrap-count 0)
       (isearch-update))))
 
-(define (isearch-delete-char)
+(defun isearch-delete-char ()
   "Remove the last character from the search string."
   (when (> (string-length isearch-string) 0)
     (setq isearch-string
@@ -300,7 +301,7 @@
     (setq isearch-wrap-count 0)
     (isearch-update)))
 
-(define (isearch-repeat-forward)
+(defun isearch-repeat-forward ()
   "Repeat search forward, or if going backward flip to forward from current pos."
   (if isearch-forward?
       (isearch-repeat t)
@@ -315,7 +316,7 @@
                   (point)))
         (isearch-update))))
 
-(define (isearch-repeat-backward)
+(defun isearch-repeat-backward ()
   "Repeat search backward, or if going forward flip to backward from current pos."
   (if (not isearch-forward?)
       (isearch-repeat nil)
@@ -351,7 +352,7 @@
 (define-key isearch-mode-map "DEL"         isearch-delete-char)
 (define-key isearch-mode-map "BS"          isearch-delete-char)
 (define-key isearch-mode-map "<backspace>" isearch-delete-char)
-(define-key isearch-mode-map "C-h"         isearch-delete-char)
+;; (define-key isearch-mode-map "C-h"         isearch-delete-char)
 
 ;;; Minor mode registration
 
@@ -366,11 +367,11 @@
 
 ;;; Global entry points
 
-(define (isearch-forward)
+(defun isearch-forward ()
   "Start incremental search forward."
   (isearch-start t))
 
-(define (isearch-backward)
+(defun isearch-backward ()
   "Start incremental search backward."
   (isearch-start nil))
 

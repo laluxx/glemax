@@ -227,38 +227,140 @@ static size_t find_sexp_start(Buffer *buf, size_t from_pos) {
         return pos;
     }
 }
+static char *eval_expression_print_format(SCM value) {
+    if (!scm_is_integer(value)) return NULL;
 
-void eval_last_sexp() {
+    long n = scm_to_long(value);
+
+    // Get eval-expression-print-maximum-character from Scheme
+    long max_char = 127; // default fallback
+    SCM max_char_var = scm_c_lookup("eval-expression-print-maximum-character");
+    if (scm_is_true(scm_variable_bound_p(max_char_var))) {
+        SCM max_char_val = scm_variable_ref(max_char_var);
+        if (scm_is_integer(max_char_val))
+            max_char = scm_to_long(max_char_val);
+    }
+
+    if (n >= 0 && n <= max_char) {
+        char char_str[16] = {0};
+
+        if (n == 0) {
+            snprintf(char_str, sizeof(char_str), "#\\nul");
+        } else if (n < 32) {
+            // Guile named control characters
+            const char *ctrl_names[] = {
+                "nul", "soh", "stx", "etx", "eot", "enq", "ack", "bel",
+                "bs",  "tab", "newline", "vt", "page", "return", "so", "si",
+                "dle", "dc1", "dc2", "dc3", "dc4", "nak", "syn", "etb",
+                "can", "em",  "sub", "escape", "fs", "gs", "rs", "us"
+            };
+            snprintf(char_str, sizeof(char_str), "#\\%s", ctrl_names[n]);
+        } else if (n == 127) {
+            snprintf(char_str, sizeof(char_str), "#\\delete");
+        } else if (n >= 32 && n < 127) {
+            snprintf(char_str, sizeof(char_str), "#\\%c", (char)n);
+        }
+
+        if (char_str[0]) {
+            int len = snprintf(NULL, 0, " (#o%lo, #x%lx, %s)", n, n, char_str) + 1;
+            char *buf = malloc(len);
+            if (!buf) return NULL;
+            snprintf(buf, len, " (#o%lo, #x%lx, %s)", n, n, char_str);
+            return buf;
+        }
+    }
+
+    int len = snprintf(NULL, 0, " (#o%lo, #x%lx)", n, n) + 1;
+    char *buf = malloc(len);
+    if (!buf) return NULL;
+    snprintf(buf, len, " (#o%lo, #x%lx)", n, n);
+    return buf;
+}
+
+void eval_last_sexp(void) {
     size_t point = current_buffer->pt;
     if (point == 0) {
         message("Beginning of buffer");
         return;
     }
-
     size_t start = find_sexp_start(current_buffer, point);
-
     if (start >= point) {
         message("No expression before point");
         return;
     }
-
     size_t len = point - start;
     char *expr = malloc(len + 1);
     if (!expr) {
         message("Memory allocation failed");
         return;
     }
-
-    for (size_t i = 0; i < len; i++) {
+    for (size_t i = 0; i < len; i++)
         expr[i] = (char)rope_char_at(current_buffer->rope, start + i);
-    }
     expr[len] = '\0';
-
     bool had_error = false;
     SCM result = safe_eval_string(expr, &had_error);
-    display_eval_result(result, had_error);
-
     free(expr);
+    if (had_error) {
+        display_eval_result(result, had_error);
+        return;
+    }
+    int prefix = get_prefix_arg();
+
+    bool raw_prefix = false;
+    SCM raw_prefix_var = scm_c_lookup("raw-prefix-arg");
+    if (scm_is_true(scm_variable_bound_p(raw_prefix_var)))
+        raw_prefix = scm_is_true(scm_variable_ref(raw_prefix_var));
+
+    bool insert_into_buffer = (argument_manually_set && prefix != 0) || raw_prefix;
+    bool insert_full        = (prefix < 0) || raw_prefix;
+
+    // Print the raw value (no prompt — used for both insert and message)
+    SCM port = scm_open_output_string();
+    scm_write(result, port);
+    char *str = scm_to_locale_string(scm_get_output_string(port));
+
+    if (insert_into_buffer) {
+        set_prefix_arg(1);
+        if (insert_full) {
+            char *full_suffix = eval_expression_print_format(result);
+            if (full_suffix) {
+                int total_len = strlen(str) + strlen(full_suffix) + 1;
+                char *combined = malloc(total_len);
+                if (combined) {
+                    snprintf(combined, total_len, "%s%s", str, full_suffix);
+                    insert(combined);
+                    free(combined);
+                }
+                free(full_suffix);
+            } else {
+                insert(str);
+            }
+        } else {
+            insert(str);
+        }
+    } else {
+        // Show in message, respecting eval-display-prompt and eval-prompt
+        char *suffix = eval_expression_print_format(result);
+        char *value_with_suffix = NULL;
+        if (suffix) {
+            int total_len = strlen(str) + strlen(suffix) + 1;
+            value_with_suffix = malloc(total_len);
+            if (value_with_suffix)
+                snprintf(value_with_suffix, total_len, "%s%s", str, suffix);
+            free(suffix);
+        }
+        const char *display_str = value_with_suffix ? value_with_suffix : str;
+        bool display_prompt = scm_get_bool("eval-display-prompt", true);
+        if (display_prompt) {
+            char *prompt = scm_get_string("eval-prompt", "=> ");
+            message("%s%s", prompt, display_str);
+            free(prompt);
+        } else {
+            message("%s", display_str);
+        }
+        if (value_with_suffix) free(value_with_suffix);
+    }
+    free(str);
 }
 
 void eval_region() {
@@ -485,7 +587,7 @@ static SCM read_interactive_args(const char *spec) {
         }
 
         case 'r': {
-            if (!current_buffer->region.active || current_buffer->region.mark < 0) {
+            if (current_buffer->region.mark < 0) {
                 message("The mark is not set now, so there is no region");
                 return SCM_BOOL_F;
             }
@@ -494,11 +596,27 @@ static SCM read_interactive_args(const char *spec) {
             size_t start = pt < mark ? pt : mark;
             size_t end   = pt < mark ? mark : pt;
             args = scm_append(scm_list_2(args,
-                    scm_list_2(scm_from_size_t(start),
-                               scm_from_size_t(end))));
+                                         scm_list_2(scm_from_size_t(start),
+                                         scm_from_size_t(end))));
             p++;
             break;
         }
+
+        /* case 'r': { */
+        /*     if (!current_buffer->region.active || current_buffer->region.mark < 0) { */
+        /*         message("The mark is not set now, so there is no region"); */
+        /*         return SCM_BOOL_F; */
+        /*     } */
+        /*     size_t pt    = current_buffer->pt; */
+        /*     size_t mark  = (size_t)current_buffer->region.mark; */
+        /*     size_t start = pt < mark ? pt : mark; */
+        /*     size_t end   = pt < mark ? mark : pt; */
+        /*     args = scm_append(scm_list_2(args, */
+        /*             scm_list_2(scm_from_size_t(start), */
+        /*                        scm_from_size_t(end)))); */
+        /*     p++; */
+        /*     break; */
+        /* } */
 
         case 's': {
             p++;
@@ -509,7 +627,7 @@ static SCM read_interactive_args(const char *spec) {
             prompt[i] = '\0';
             if (*p == '\n') p++;
 
-            SCM hist  = scm_from_locale_symbol("minibuffer-history");
+            SCM hist = scm_from_locale_symbol("minibuffer-history");
             char *input = read_from_minibuffer(prompt, NULL, hist);
             if (!input) return SCM_BOOL_F;
             args = scm_append(scm_list_2(args,
@@ -529,7 +647,7 @@ static SCM read_interactive_args(const char *spec) {
             if (*p == '\n') p++;
             if (i > 0) strncpy(prompt, tmp, sizeof(prompt) - 1);
 
-            SCM hist  = scm_from_locale_symbol("minibuffer-history");
+            SCM hist = scm_from_locale_symbol("minibuffer-history");
             char *input = read_from_minibuffer(prompt, NULL, hist);
             if (!input) return SCM_BOOL_F;
             int n = atoi(input);
@@ -538,33 +656,53 @@ static SCM read_interactive_args(const char *spec) {
             break;
         }
 
+        case 'B':
         case 'b': {
+            // 'b' — default is current buffer
+            // 'B' — default is other-buffer (like switch-to-buffer)
+            bool is_B = (*p == 'B');
             p++;
-            char prompt[256] = "Buffer: ";
+            char base_prompt[256] = "";
             size_t i = 0;
             char tmp[256] = "";
             while (*p && *p != '\n' && i < sizeof(tmp) - 1)
                 tmp[i++] = *p++;
             tmp[i] = '\0';
             if (*p == '\n') p++;
-            if (i > 0) strncpy(prompt, tmp, sizeof(prompt) - 1);
+            if (i > 0)
+                strncpy(base_prompt, tmp, sizeof(base_prompt) - 1);
+            else
+                strncpy(base_prompt, is_B ? "Switch to buffer" : "Buffer",
+                        sizeof(base_prompt) - 1);
 
             Buffer *minibuf = selected_frame->wm.minibuffer_window->buffer;
+            Buffer *def_buf = is_B ? other_buffer() : current_buffer;
+
+            // Build completion list — 'B' excludes current buffer like Emacs
             SCM buffer_names = SCM_EOL;
             Buffer *buf = all_buffers;
             do {
-                if (buf != minibuf)
+                if (buf != minibuf && !(is_B && buf == current_buffer))
                     buffer_names = scm_cons(scm_from_locale_string(buf->name),
                                             buffer_names);
                 buf = buf->next;
             } while (buf != all_buffers);
 
-            SCM hist  = scm_from_locale_symbol("buffer-name-history");
+            // Build prompt with default, e.g. "Switch to buffer (default foo): "
+            char full_prompt[512];
+            snprintf(full_prompt, sizeof(full_prompt),
+                     "%s (default %s): ", base_prompt,
+                     def_buf ? def_buf->name : "none");
+
+            SCM hist = scm_from_locale_symbol("buffer-name-history");
             char *input = read_from_minibuffer_with_completion(
-                prompt, NULL, buffer_names, SCM_BOOL_F, hist);
+                full_prompt, NULL, buffer_names, SCM_BOOL_F, hist);
             if (!input) return SCM_BOOL_F;
+
+            // Empty input -> use default
+            const char *chosen = (*input) ? input : (def_buf ? def_buf->name : "");
             args = scm_append(scm_list_2(args,
-                    scm_list_1(scm_from_locale_string(input))));
+                    scm_list_1(scm_from_locale_string(chosen))));
             free(input);
             break;
         }
@@ -691,7 +829,15 @@ static SCM scm_commandp(SCM obj) {
 
 
 DEFINE_SCM_COMMAND(scm_self_insert_command, self_insert_command,
-"Insert the character you type.");
+"Insert the character you type."
+"Whichever character C you type to run this command is inserted."
+"The numeric prefix argument N says how many times to repeat the insertion."
+"Before insertion, `expand-abbrev' is executed if the inserted character does"
+"not have word syntax and the previous character in the buffer does."
+"After insertion, `internal-auto-fill' is called if"
+"`auto-fill-function' is non-nil and if the `auto-fill-chars' table has"
+"a non-nil value for the inserted character.  At the end, it runs"
+"`post-self-insert-hook'.");
 
 
 DEFINE_SCM_COMMAND(my_scm_newline, newline,
@@ -817,20 +963,145 @@ DEFINE_SCM_COMMAND(scm_read_only_mode, read_only_mode,
 
 DEFINE_SCM_COMMAND(scm_save_buffer,                    save_buffer,                    NULL);
 
-DEFINE_SCM_COMMAND(scm_set_mark_command,               set_mark_command,               NULL);
-DEFINE_SCM_COMMAND(scm_delete_indentation,             delete_indentation,             NULL);
+DEFINE_SCM_COMMAND(scm_set_mark_command, set_mark_command,
+"Set the mark where point is, and activate it; or jump to the mark."
+"Setting the mark also alters the region, which is the text"
+"between point and mark; this is the closest equivalent in"
+"Emacs to what some editors call the \"selection\"."
+"\n"
+"With no prefix argument, set the mark at point, and push the"
+"old mark position on local mark ring.  Also push the new mark on"
+"global mark ring, if the previous mark was set in another buffer."
+"\n"
+"When Transient Mark Mode is off, immediately repeating this"
+"command activates `transient-mark-mode' temporarily."
+"\n"
+"With prefix argument (e.g., \\[universal-argument] \\[set-mark-command]),"
+"jump to the mark, and set the mark from"
+"position popped off the local mark ring (this does not affect the global"
+"mark ring).  Use \\[pop-global-mark] to jump to a mark popped off the global"
+"mark ring (see `pop-global-mark')."
+"\n"
+"If `set-mark-command-repeat-pop' is non-nil, repeating"
+"the \\[set-mark-command] command with no prefix argument pops the next position"
+"off the local (or global) mark ring and jumps there."
+"\n"
+"With \\[universal-argument] \\[universal-argument] as prefix"
+"argument, unconditionally set mark where point is, even if"
+"`set-mark-command-repeat-pop' is non-nil."
+"\n"
+"Novice Emacs Lisp programmers often try to use the mark for the wrong"
+"purposes.  See the documentation of `set-mark' for more information.");
+
+
+
+
+DEFINE_SCM_COMMAND(scm_delete_indentation, delete_indentation,
+"Join this line to previous and fix up whitespace at join."
+"If there is a fill prefix, delete it from the beginning of this"
+"line."
+"With prefix ARG, join the current line to the following line."
+"When BEG and END are non-nil, join all lines in the region they"
+"define.  Interactively, BEG and END are, respectively, the start"
+"and end of the region if it is active, else nil.  (The region is"
+"ignored if prefix ARG is given.)");
+
 DEFINE_SCM_COMMAND(scm_delete_char,                    delete_char,                    NULL);
 DEFINE_SCM_COMMAND(scm_delete_backward_char,           delete_backward_char,           NULL);
-DEFINE_SCM_COMMAND(scm_capitalize_word,                capitalize_word,                NULL);
-DEFINE_SCM_COMMAND(scm_downcase_word,                  downcase_word,                  NULL);
-DEFINE_SCM_COMMAND(scm_upcase_word,                    upcase_word,                    NULL);
-DEFINE_SCM_COMMAND(scm_transpose_chars,                transpose_chars,                NULL);
-DEFINE_SCM_COMMAND(scm_transpose_words,                transpose_words,                NULL);
-DEFINE_SCM_COMMAND(scm_forward_list,                   forward_list,                   NULL);
-DEFINE_SCM_COMMAND(scm_backward_list,                  backward_list,                  NULL);
-DEFINE_SCM_COMMAND(scm_forward_sexp,                   forward_sexp,                   NULL);
-DEFINE_SCM_COMMAND(scm_backward_sexp,                  backward_sexp,                  NULL);
-DEFINE_SCM_COMMAND(scm_kill_sexp,                      kill_sexp,                      NULL);
+
+DEFINE_SCM_COMMAND(scm_capitalize_word, capitalize_word,
+"Capitalize from point to the end of word, moving over."
+"With numerical argument ARG, capitalize the next ARG-1 words as well."
+"This gives the word(s) a first character in upper case"
+"and the rest lower case."
+"\n"
+"If point is in the middle of a word, the part of that word before point"
+"is ignored when moving forward."
+"\n"
+"With negative argument, capitalize previous words but do not move.");
+
+DEFINE_SCM_COMMAND(scm_downcase_word, downcase_word,
+"Convert to lower case from point to end of word, moving over."
+"\n"
+"If point is in the middle of a word, the part of that word before point"
+"is ignored when moving forward."
+"\n"
+"With negative argument, convert previous words but do not move.");
+
+DEFINE_SCM_COMMAND(scm_upcase_word, upcase_word,
+"Convert to upper case from point to end of word, moving over."
+"\n"
+"If point is in the middle of a word, the part of that word before point"
+"is ignored when moving forward."
+"\n"
+"With negative argument, convert previous words but do not move."
+"See also `capitalize-word'.");
+
+DEFINE_SCM_COMMAND(scm_transpose_chars, transpose_chars,
+"Interchange characters around point, moving forward one character."
+"With prefix arg ARG, effect is to take character before point"
+"and drag it forward past ARG other characters (backward if ARG negative)."
+"If at end of line, the previous two chars are exchanged.");
+
+DEFINE_SCM_COMMAND(scm_transpose_words, transpose_words,
+"Interchange words around point, leaving point at end of them."
+"With prefix arg ARG, effect is to take word before or around point"
+"and drag it forward past ARG other words (backward if ARG negative)."
+"If ARG is zero, the words around or after point and around or after mark"
+"are interchanged.");
+
+DEFINE_SCM_COMMAND(scm_forward_list, forward_list,
+"Move forward across one balanced group of parentheses."
+"This command will also work on other parentheses-like expressions"
+"defined by the current language mode."
+"With ARG, do it that many times."
+"Negative arg -N means move backward across N groups of parentheses."
+"This command assumes point is not in a string or comment."
+"Calls `forward-list-function' to do the work, if that is non-nil."
+"If INTERACTIVE is non-nil, as it is interactively,"
+"report errors as appropriate for this kind of usage.");
+
+DEFINE_SCM_COMMAND(scm_backward_list, backward_list,
+"Move backward across one balanced group of parentheses."
+"This command will also work on other parentheses-like expressions"
+"defined by the current language mode."
+"With ARG, do it that many times."
+"Negative arg -N means move forward across N groups of parentheses."
+"This command assumes point is not in a string or comment."
+"Uses `forward-list' to do the work."
+"If INTERACTIVE is non-nil, as it is interactively,"
+"report errors as appropriate for this kind of usage.");
+
+DEFINE_SCM_COMMAND(scm_forward_sexp, forward_sexp,
+"Move forward across one balanced expression (sexp)."
+"With ARG, do it that many times.  Negative arg -N means move"
+"backward across N balanced expressions.  This command assumes"
+"point is not in a string or comment.  Calls"
+"`forward-sexp-function' to do the work, if that is non-nil."
+"If unable to move over a sexp, signal `scan-error' with three"
+"arguments: a message, the start of the obstacle (usually a"
+"parenthesis or list marker of some kind), and end of the"
+"obstacle.  If INTERACTIVE is non-nil, as it is interactively,"
+"report errors as appropriate for this kind of usage.");
+
+DEFINE_SCM_COMMAND(scm_backward_sexp, backward_sexp,
+"Move backward across one balanced expression (sexp)."
+"With ARG, do it that many times.  Negative arg -N means"
+"move forward across N balanced expressions."
+"This command assumes point is not in a string or comment."
+"Uses `forward-sexp' to do the work."
+"If INTERACTIVE is non-nil, as it is interactively,"
+"report errors as appropriate for this kind of usage.");
+
+DEFINE_SCM_COMMAND(scm_kill_sexp, kill_sexp,
+"Kill the sexp (balanced expression) following point."
+"With ARG, kill that many sexps after point."
+"Negative arg -N means kill N sexps before point."
+"This command assumes point is not in a string or comment."
+"If INTERACTIVE is non-nil, as it is interactively,"
+"report errors as appropriate for this kind of usage.");
+
+
 
 DEFINE_SCM_COMMAND(scm_mark_sexp, mark_sexp,
 "Set mark ARG sexps from point or move mark one sexp."
@@ -968,9 +1239,31 @@ DEFINE_SCM_COMMAND(scm_count_lines_page, count_lines_page,
 "Report number of lines on current page, and how many are before or after point.");
 
 
+DEFINE_SCM_COMMAND(scm_beginning_of_line, beginning_of_line,
+"Move point to beginning of current line (in the logical order)."
+"With argument N not nil or 1, move forward N - 1 lines first."
+"If point reaches the beginning or end of buffer, it stops there."
+"\n"
+"This function constrains point to the current field unless this moves"
+"point to a different line from the original, unconstrained result."
+"If N is nil or 1, and a front-sticky field starts at point, the point"
+"does not move.  To ignore field boundaries bind"
+"`inhibit-field-text-motion' to t, or use the `forward-line' function"
+"instead.  For instance, `(forward-line 0)' does the same thing as"
+"`(beginning-of-line)', except that it ignores field boundaries.");
 
-DEFINE_SCM_COMMAND(scm_beginning_of_line,              beginning_of_line,              NULL);
-DEFINE_SCM_COMMAND(scm_end_of_line,                    end_of_line,                    NULL);
+DEFINE_SCM_COMMAND(scm_end_of_line, end_of_line,
+"Move point to end of current line (in the logical order)."
+"With argument N not nil or 1, move forward N - 1 lines first."
+"If point reaches the beginning or end of buffer, it stops there."
+"To ignore intangibility, bind `inhibit-point-motion-hooks' to t."
+"\n"
+"This function constrains point to the current field unless this moves"
+"point to a different line from the original, unconstrained result.  If"
+"N is nil or 1, and a rear-sticky field ends at point, the point does"
+"not move.  To ignore field boundaries bind `inhibit-field-text-motion'"
+"to t.");
+
 DEFINE_SCM_COMMAND(scm_beginning_of_visual_line,       beginning_of_visual_line,       NULL);
 DEFINE_SCM_COMMAND(scm_end_of_visual_line,             end_of_visual_line,             NULL);
 
@@ -996,6 +1289,22 @@ DEFINE_SCM_COMMAND(scm_previous_buffer,                previous_buffer,         
 
 DEFINE_SCM_COMMAND(scm_beginning_of_defun,             beginning_of_defun,             NULL);
 DEFINE_SCM_COMMAND(scm_end_of_defun,                   end_of_defun,                   NULL);
+
+DEFINE_SCM_COMMAND(scm_describe_key_briefly, describe_key_briefly,
+"Print the name of the functions KEY-LIST invokes."
+"KEY-LIST is a list of pairs (SEQ . RAW-SEQ) of key sequences, where"
+"RAW-SEQ is the untranslated form of the key sequence SEQ."
+"If INSERT (the prefix arg) is non-nil, insert the message in the buffer."
+"\n"
+"While reading KEY-LIST interactively, this command temporarily enables"
+"menu items or tool-bar buttons that are disabled to allow getting help"
+"on them."
+"\n"
+"BUFFER is the buffer in which to lookup those keys; it defaults to the"
+"current buffer.");
+
+DEFINE_SCM_COMMAND(scm_exit_recursive_edit, exit_recursive_edit,
+"Exit from the innermost recursive edit or minibuffer.");
 
 
 
@@ -1420,13 +1729,10 @@ static SCM scm_switch_to_buffer(SCM buf_or_name) {
 }
 
 static SCM scm_kill_buffer(SCM buffer_or_name) {
-    if (SCM_UNBNDP(buffer_or_name)) {
-        kill_buffer(); // interactive
-        return SCM_BOOL_T;
-    }
-
     Buffer *buf;
-    if (SCM_IS_A_P(buffer_or_name, buffer_type)) {
+    if (SCM_UNBNDP(buffer_or_name)) {
+        buf = current_buffer;
+    } else if (SCM_IS_A_P(buffer_or_name, buffer_type)) {
         buf = scm_to_buffer(buffer_or_name);
     } else if (scm_is_string(buffer_or_name)) {
         char *name = scm_to_locale_string(buffer_or_name);
@@ -1437,7 +1743,6 @@ static SCM scm_kill_buffer(SCM buffer_or_name) {
         scm_wrong_type_arg("kill-buffer", 1, buffer_or_name);
         return SCM_BOOL_F;
     }
-
     do_kill_buffer(buf);
     return SCM_BOOL_T;
 }
@@ -1528,54 +1833,38 @@ static SCM scm_buffer_list(void) {
     return scm_reverse(list);
 }
 
-static SCM scm_append_to_buffer(SCM buffer_or_name, SCM text, SCM prepend_newline_scm) {
+static SCM scm_append_to_buffer(SCM buffer_or_name, SCM start, SCM end) {
     Buffer *buf = NULL;
-
     if (scm_is_string(buffer_or_name)) {
-        // It's a buffer name string
         char *name = scm_to_utf8_string(buffer_or_name);
-        buf = get_buffer(name);
+        buf = get_buffer_create(name);  // creates if doesn't exist, per docstring
         free(name);
-
-        if (!buf) {
-            scm_misc_error("append-to-buffer", "No buffer named ~S", scm_list_1(buffer_or_name));
-            return SCM_UNSPECIFIED;
-        }
     } else if (SCM_IS_A_P(buffer_or_name, buffer_type)) {
-        // It's a buffer object
-        buf = (Buffer*)scm_foreign_object_ref(buffer_or_name, 0);
+        buf = (Buffer *)scm_foreign_object_ref(buffer_or_name, 0);
     } else {
         scm_wrong_type_arg("append-to-buffer", 1, buffer_or_name);
         return SCM_UNSPECIFIED;
     }
 
-    if (!buf) {
-        return SCM_UNSPECIFIED;
+    size_t s, e;
+    if (SCM_UNBNDP(start) || SCM_UNBNDP(end)) {
+        // Interactive: use region
+        if (!current_buffer->region.active || current_buffer->region.mark < 0) {
+            message("The mark is not set now, so there is no region");
+            return SCM_UNSPECIFIED;
+        }
+        size_t pt   = current_buffer->pt;
+        size_t mark = (size_t)current_buffer->region.mark;
+        s = pt < mark ? pt : mark;
+        e = pt < mark ? mark : pt;
+    } else {
+        s = scm_to_size_t(start);
+        e = scm_to_size_t(end);
     }
 
-    // Get the text to append
-    if (!scm_is_string(text)) {
-        scm_wrong_type_arg("append-to-buffer", 2, text);
-        return SCM_UNSPECIFIED;
-    }
-
-    char *text_str = scm_to_utf8_string(text);
-
-    // Get prepend_newline flag (default to #t)
-    bool prepend_newline = true;
-    if (!SCM_UNBNDP(prepend_newline_scm)) {
-        prepend_newline = scm_to_bool(prepend_newline_scm);
-    }
-
-    // Call the C function
-    append_to_buffer(buf, text_str, prepend_newline);
-
-    free(text_str);
+    append_to_buffer(buf, s, e);
     return SCM_UNSPECIFIED;
 }
-
-
-
 
 static SCM scm_buffer_file_name(SCM buffer_obj) {
     Buffer *buf;
@@ -2213,16 +2502,16 @@ static SCM scm_get_buffer_window(SCM buffer_or_name) {
     return get_or_make_window_object(win);
 }
 
-static SCM scm_goto_char(SCM position) {
-    if (!scm_is_integer(position)) {
-        scm_wrong_type_arg("goto-char", 1, position);
-    }
+/* static SCM scm_goto_char(SCM position) { */
+/*     if (!scm_is_integer(position)) { */
+/*         scm_wrong_type_arg("goto-char", 1, position); */
+/*     } */
 
-    size_t pos = scm_to_size_t(position);
-    size_t result = goto_char(pos);
+/*     size_t pos = scm_to_size_t(position); */
+/*     size_t result = goto_char(pos); */
 
-    return scm_from_size_t(result);
-}
+/*     return scm_from_size_t(result); */
+/* } */
 
 /// Keymap
 
@@ -2633,27 +2922,15 @@ static SCM scm_load_directory(SCM dirname) {
     return SCM_UNSPECIFIED;
 }
 
-
-/* #define REGISTER_COMMAND(scheme_name, scm_func)                                \ */
-/*   do {                                                                         \ */
-/*     scm_c_define_gsubr(scheme_name, 0, 1, 0, scm_func);                        \ */
-/*     if (scm_func##_doc) {                                                      \ */
-/*       SCM proc = scm_variable_ref(scm_c_lookup(scheme_name));                  \ */
-/*       scm_set_procedure_property_x(proc,                                       \ */
-/*                                    scm_from_utf8_symbol("documentation"),      \ */
-/*                                    scm_from_utf8_string(scm_func##_doc));      \ */
-/*     }                                                                          \ */
-/*   } while (0) */
-
 // This marks the function registered from C as Interactive
 // TODO use this to register all other commands with doc
-#define REGISTER_COMMAND(scheme_name, scm_func)                                \
+#define REGISTER_COMMAND(scheme_name, scm_func, spec)                          \
   do {                                                                         \
     scm_c_define_gsubr(scheme_name, 0, 1, 0, scm_func);                        \
     SCM _proc = scm_variable_ref(scm_c_lookup(scheme_name));                   \
     scm_set_procedure_property_x(_proc,                                        \
                                  scm_from_utf8_symbol("interactive-spec"),     \
-                                 scm_from_utf8_string("p"));                   \
+                                 scm_from_utf8_string(spec));                  \
     if (scm_func##_doc) {                                                      \
       scm_set_procedure_property_x(_proc,                                      \
                                    scm_from_utf8_symbol("documentation"),      \
@@ -2661,6 +2938,19 @@ static SCM scm_load_directory(SCM dirname) {
     }                                                                          \
   } while (0)
 
+#define REGISTER_COMMAND_EX(scheme_name, scm_func, req, opt, rst, spec)        \
+  do {                                                                         \
+    scm_c_define_gsubr(scheme_name, req, opt, rst, scm_func);                  \
+    SCM _proc = scm_variable_ref(scm_c_lookup(scheme_name));                   \
+    scm_set_procedure_property_x(_proc,                                        \
+                                 scm_from_utf8_symbol("interactive-spec"),     \
+                                 scm_from_utf8_string(spec));                  \
+    if (scm_func##_doc) {                                                      \
+      scm_set_procedure_property_x(_proc,                                      \
+                                   scm_from_utf8_symbol("documentation"),      \
+                                   scm_from_utf8_string(scm_func##_doc));      \
+    }                                                                          \
+  } while (0)
 
 
 static SCM scm_set_buffer(SCM buffer_or_name) {
@@ -2705,6 +2995,7 @@ static SCM scm_garbage_collect(void) {
 }
 
 
+#include "theme.h"
 void lisp_init(void) {
 
     scm_c_define("gcs-done", scm_from_size_t(0));
@@ -2766,10 +3057,43 @@ void lisp_init(void) {
     init_treesit_bindings();
     init_minibuf_bindings();
 
-    scm_c_define_gsubr("garbage-collect",               0, 0, 0, scm_garbage_collect);
+    char *scm_garbage_collect_doc =
+        "Reclaim storage for Lisp objects no longer needed."
+        "\n"
+        "Garbage collection happens automatically if you cons more than"
+        "`gc-cons-threshold' bytes of Lisp data since previous garbage collection."
+        "garbage-collect normally returns a list with info on amount of space in use,"
+        "where each entry has the form (NAME SIZE USED FREE), where:"
+        "- NAME is a symbol describing the kind of objects this entry represents,"
+        "- SIZE is the number of bytes used by each one,"
+        "- USED is the number of those objects that were found live in the heap,"
+        "- FREE is the number of those objects that are not live but that Emacs"
+        "  keeps around for future allocations (maybe because it does not know how"
+        "  to return them to the OS)."
+        "\n"
+        "Note that calling this function does not guarantee that absolutely all"
+        "unreachable objects will be garbage-collected.  Emacs uses a"
+        "mark-and-sweep garbage collector, but is conservative when it comes to"
+        "collecting objects in some circumstances."
+        "\n"
+        "For further details, see Info node (elisp)Garbage Collection.";
+    REGISTER_COMMAND("garbage-collect", scm_garbage_collect, "p");
+
 
     scm_c_define_gsubr("set-buffer",                    1, 0, 0, scm_set_buffer);
-    scm_c_define_gsubr("goto-char",                     1, 0, 0, scm_goto_char);
+
+    char *scm_goto_char_doc =
+        "Set point to POSITION, a number or marker."
+        "\n"
+        "Beginning of buffer is position (point-min), end is (point-max)."
+        "\n"
+        "The return value is POSITION."
+        "\n"
+        "If called interactively, a numeric prefix argument specifies"
+        "POSITION; without a numeric prefix argument, read POSITION from the"
+        "minibuffer.  The default value is the number at point (if any).";
+    REGISTER_COMMAND("goto-char", scm_goto_char, "");
+
 
     scm_c_define_gsubr("window--try-horizontal-split",  0, 1, 0, scm_window_try_horizontal_split);
     scm_c_define_gsubr("window--try-vertical-split",    0, 1, 0, scm_window_try_vertical_split);
@@ -2777,8 +3101,8 @@ void lisp_init(void) {
     scm_c_define_gsubr("display-buffer",                1, 2, 0, scm_display_buffer);
 
 
-    scm_c_define_gsubr("show-cursor",                   0, 0, 0, scm_show_cursor);
-    scm_c_define_gsubr("hide-cursor",                   0, 0, 0, scm_hide_cursor);
+    scm_c_define_gsubr("show-cursor",                   0, 0, 0, scm_show_cursor); // Why ?
+    scm_c_define_gsubr("hide-cursor",                   0, 0, 0, scm_hide_cursor); // Why ?
 
     // Keymap functions
     scm_c_define_gsubr("make-sparse-keymap",            0, 0, 0, scm_make_sparse_keymap);
@@ -2817,14 +3141,81 @@ void lisp_init(void) {
 
 
     // Eval
-    scm_c_define_gsubr("eval-last-sexp",                 0, 0, 0, scm_eval_last_sexp);
-    scm_c_define_gsubr("eval-buffer",                    0, 0, 0, scm_eval_buffer);
-    scm_c_define_gsubr("eval-region",                    0, 0, 0, scm_eval_region);
+    char *scm_eval_last_sexp_doc =
+        "Evaluate sexp before point; print value in the echo area."
+        "Interactively, EVAL-LAST-SEXP-ARG-INTERNAL is the prefix argument."
+        "With a non `-' prefix argument, print output into current buffer."
+        "\n"
+        "Normally, this function truncates long output according to the"
+        "value of the variables `eval-expression-print-length' and"
+        "`eval-expression-print-level'.  With a prefix argument of zero,"
+        "however, there is no such truncation."
+        "Integer values are printed in several formats (decimal, octal,"
+        "and hexadecimal).  When the prefix argument is -1 or the value"
+        "doesn't exceed `eval-expression-print-maximum-character', an"
+        "integer value is also printed as a character of that codepoint."
+        "\n"
+        "If `eval-expression-debug-on-error' is non-nil, which is the default,"
+        "this command arranges for all errors to enter the debugger.";
+    REGISTER_COMMAND("eval-last-sexp", scm_eval_last_sexp, "p");
+
+    char *scm_eval_buffer_doc =
+        "Execute the accessible portion of current buffer as Lisp code."
+        "You can use \\[narrow-to-region] to limit the part of buffer to be evaluated."
+        "When called from a Lisp program (i.e., not interactively), this"
+        "function accepts up to five optional arguments:"
+        "BUFFER is the buffer to evaluate (nil means use current buffer),"
+        " or a name of a buffer (a string)."
+        "PRINTFLAG controls printing of output by any output functions in the"
+        " evaluated code, such as `print', `princ', and `prin1':"
+        "  a value of nil means discard it; anything else is the stream to print to."
+        "  See Info node `(elisp)Output Streams' for details on streams."
+        "FILENAME specifies the file name to use for `load-history'."
+        "UNIBYTE is obsolete and ignored."
+        "DO-ALLOW-PRINT, if non-nil, specifies that output functions in the"
+        " evaluated code should work normally even if PRINTFLAG is nil, in"
+        " which case the output is displayed in the echo area."
+        "\n"
+        "This function preserves the position of point.";
+    REGISTER_COMMAND("eval-buffer", scm_eval_buffer, "p");
+
+    char *scm_eval_region_doc =
+        "Execute the region as Lisp code."
+        "When called from programs, expects two arguments,"
+        "giving starting and ending indices in the current buffer"
+        "of the text to be executed."
+        "Programs can pass third argument PRINTFLAG which controls output:"
+        " a value of nil means discard it; anything else is stream for printing it."
+        " See Info node `(elisp)Output Streams' for details on streams."
+        "Also the fourth argument READ-FUNCTION, if non-nil, is used"
+        "instead of `read' to read each expression.  It gets one argument"
+        "which is the input stream for reading characters."
+        "\n"
+        "This function does not move point.";
+    REGISTER_COMMAND("eval-region", scm_eval_region, "p");
 
     // Arg
-    scm_c_define_gsubr("universal-argument",             0, 0, 0, scm_universal_argument);
-    scm_c_define_gsubr("negative-argument",              0, 0, 0, scm_negative_argument);
-    scm_c_define_gsubr("digit-argument",                 0, 0, 0, scm_digit_argument);
+    char *scm_universal_argument_doc =
+        "Begin a numeric argument for the following command."
+        "Digits or minus sign following \\[universal-argument] make up the numeric argument."
+        "\\[universal-argument] following the digits or minus sign ends the argument."
+        "\\[universal-argument] without digits or minus sign provides 4 as argument."
+        "Repeating \\[universal-argument] without digits or minus sign"
+        " multiplies the argument by 4 each time."
+        "For some commands, just \\[universal-argument] by itself serves as a flag"
+        "that is different in effect from any particular numeric argument."
+        "These commands include \\[set-mark-command] and \\[start-kbd-macro].";
+    REGISTER_COMMAND("universal-argument", scm_universal_argument, "p");
+
+    char *scm_negative_argument_doc =
+        "Begin a negative numeric argument for the next command."
+        "\\[universal-argument] following digits or minus sign ends the argument.";
+    REGISTER_COMMAND("negative-argument", scm_negative_argument, "p");
+
+    char *scm_digit_argument_doc =
+        "Part of the numeric argument for the next command."""
+        "\\[universal-argument] following digits or minus sign ends the argument.";
+    REGISTER_COMMAND("digit-argument", scm_digit_argument, "p");
 
     init_interactive_system();
     scm_c_define_gsubr("interactive",                   1, 0, 0, scm_interactive);
@@ -2832,27 +3223,122 @@ void lisp_init(void) {
     scm_c_define_gsubr("interactive-form",              1, 0, 0, scm_interactive_form);
     scm_c_define_gsubr("commandp",                      1, 0, 0, scm_commandp);
 
-
-
-    /* scm_c_define_gsubr("execute-extended-command",       0, 0, 0, scm_execute_extended_command); */
-    /* scm_c_define_gsubr("eval-expression",                0, 0, 0, scm_eval_expression); */
-    /* scm_c_define_gsubr("keyboard-quit",                  0, 0, 0, scm_keyboard_quit); */
-
     // Buffer
     scm_c_define_gsubr("buffer?",                        1, 0, 0, buffer_p);
-    scm_c_define_gsubr("switch-to-buffer",               1, 0, 0, scm_switch_to_buffer);
-    scm_c_define_gsubr("kill-buffer",                    0, 1, 0, scm_kill_buffer);
-    scm_c_define_gsubr("kill-current-buffer",            0, 0, 0, scm_kill_current_buffer);
+
+    char *scm_switch_to_buffer_doc =
+        "Display buffer BUFFER-OR-NAME in the selected window."
+        "\n"
+        "WARNING: This is NOT the way to work on another buffer temporarily"
+        "within a Lisp program!  Use `set-buffer' instead.  That avoids"
+        "messing with the `window-buffer' correspondences."
+        "\n"
+        "If the selected window cannot display the specified buffer"
+        "because it is a minibuffer window or strongly dedicated to"
+        "another buffer, call `pop-to-buffer' to select the buffer in"
+        "another window.  In interactive use, if the selected window is"
+        "strongly dedicated to its buffer, the value of the option"
+        "`switch-to-buffer-in-dedicated-window' specifies how to proceed."
+        "\n"
+        "If called interactively, read the buffer name using `read-buffer'."
+        "The variable `confirm-nonexistent-file-or-buffer' determines"
+        "whether to request confirmation before creating a new buffer."
+        "See `read-buffer' for features related to input and completion"
+        "of buffer names."
+        "\n"
+        "BUFFER-OR-NAME may be a buffer, a string (a buffer name), or nil."
+        "If BUFFER-OR-NAME is a string that does not identify an existing"
+        "buffer, create a buffer with that name.  If BUFFER-OR-NAME is"
+        "nil, switch to the buffer returned by `other-buffer'."
+        "\n"
+        "If optional argument NORECORD is non-nil, do not put the buffer"
+        "at the front of the buffer list, and do not make the window"
+        "displaying it the most recently selected one."
+        "\n"
+        "If optional argument FORCE-SAME-WINDOW is non-nil, the buffer"
+        "must be displayed in the selected window when called"
+        "non-interactively; if that is impossible, signal an error rather"
+        "than calling `pop-to-buffer'.  It has no effect when the option"
+        "`switch-to-buffer-obey-display-actions' is non-nil."
+        "\n"
+        "The option `switch-to-buffer-preserve-window-point' can be used"
+        "to make the buffer appear at its last position in the selected"
+        "window."
+        "\n"
+        "If the option `switch-to-buffer-obey-display-actions' is non-nil,"
+        "run the function `pop-to-buffer-same-window' instead."
+        "This may display the buffer in another window as specified by"
+        "`display-buffer-overriding-action', `display-buffer-alist' and"
+        "other display related variables.  If this results in displaying"
+        "the buffer in the selected window, window start and point are adjusted"
+        "as prescribed by the option `switch-to-buffer-preserve-window-point'."
+        "Otherwise, these are left alone."
+        "\n"
+        "In either case, call `display-buffer-record-window' to avoid disrupting"
+        "a sequence of `display-buffer' operations using this window."
+        "\n"
+        "Return the buffer switched to.";
+    REGISTER_COMMAND("switch-to-buffer", scm_switch_to_buffer, "B");
+
+    char *scm_kill_buffer_doc =
+        "Kill the buffer specified by BUFFER-OR-NAME."
+        "The argument may be a buffer or the name of an existing buffer."
+        "Argument nil or omitted means kill the current buffer.  Return t if the"
+        "buffer is actually killed, nil otherwise."
+        "\n"
+        "The functions in `kill-buffer-query-functions' are called with the"
+        "buffer to be killed as the current buffer.  If any of them returns nil,"
+        "the buffer is not killed. TODO The hook `kill-buffer-hook' is run before the"
+        "buffer is actually killed.  The buffer being killed will be current"
+        "while the hook is running.  Functions called by any of these hooks are"
+        "supposed to not change the current buffer.  Neither hook is run for"
+        "internal or temporary buffers created by `get-buffer-create' or"
+        "`generate-new-buffer' with argument INHIBIT-BUFFER-HOOKS non-nil."
+        "\n"
+        "Any processes that have this buffer as the `process-buffer' are killed"
+        "with SIGHUP.  This function calls `replace-buffer-in-windows' for"
+        "cleaning up all windows currently displaying the buffer to be killed.";
+    REGISTER_COMMAND("kill-buffer", scm_kill_buffer, "b");
+
+    char *scm_kill_current_buffer_doc =
+        "Kill the current buffer."
+        "When called in the minibuffer, get out of the minibuffer"
+        "using `abort-recursive-edit'."
+        "\n"
+        "This is like `kill-this-buffer', but it doesn't have to be invoked"
+        "via the menu bar, and pays no attention to the menu-bar's frame.";
+    REGISTER_COMMAND("kill-current-buffer", scm_kill_current_buffer, "");
+
     scm_c_define_gsubr("buffer-name",                    0, 1, 0, scm_buffer_name);
     scm_c_define_gsubr("buffer-list",                    0, 0, 0, scm_buffer_list);
     scm_c_define_gsubr("other-buffer",                   0, 0, 0, scm_other_buffer);
     scm_c_define_gsubr("get-buffer",                     1, 0, 0, scm_get_buffer);
     scm_c_define_gsubr("get-buffer-create",              1, 0, 0, scm_get_buffer_create);
     scm_c_define_gsubr("current-buffer",                 0, 0, 0, scm_current_buffer);
-    scm_c_define_gsubr("next-buffer",                    0, 1, 0, scm_next_buffer);
-    scm_c_define_gsubr("previous-buffer",                0, 1, 0, scm_previous_buffer);
-    scm_c_define_gsubr("append-to-buffer",               2, 1, 0, scm_append_to_buffer);
-    scm_c_define_gsubr("append-to-buffer",               2, 1, 0, scm_append_to_buffer);
+
+    char *scm_next_buffer_doc =
+        "In selected window switch to ARGth next buffer."
+        "Call `switch-to-next-buffer' unless the selected window is the"
+        "minibuffer window or is dedicated to its buffer.";
+    REGISTER_COMMAND("next-buffer", scm_next_buffer, "");
+
+    char *scm_previous_buffer_doc =
+        "In selected window switch to ARGth previous buffer."
+        "Call `switch-to-prev-buffer' unless the selected window is the"
+        "minibuffer window or is dedicated to its buffer.";
+    REGISTER_COMMAND("previous-buffer", scm_previous_buffer, "");
+
+    char *scm_append_to_buffer_doc =
+        "Append to specified BUFFER the text of the region."
+        "The text is inserted into that buffer before its point."
+        "BUFFER can be a buffer or the name of a buffer; this"
+        "function will create BUFFER if it doesn't already exist."
+        "\n"
+        "When calling from a program, give three arguments:"
+        "BUFFER (or buffer name), START and END."
+        "START and END specify the portion of the current buffer to be copied.";
+    REGISTER_COMMAND_EX("append-to-buffer", scm_append_to_buffer, 1, 2, 0, "BAppend to buffer: \nr");
+
     scm_c_define_gsubr("buffer-file-name",               0, 1, 0, scm_buffer_file_name);
 
     // Minor modes
@@ -2879,109 +3365,319 @@ void lisp_init(void) {
 
     scm_c_define_gsubr("minibuffer-window?",             0, 1, 0, scm_minibuffer_window_p);
     scm_c_define_gsubr("set-window-buffer",              2, 0, 0, scm_set_window_buffer);
-    scm_c_define_gsubr("fit-window-to-buffer",           0, 1, 0, scm_fit_window_to_buffer);
+
+    char *scm_fit_window_to_buffer_doc =
+        "Adjust size of WINDOW to display its buffer's contents exactly."
+        "WINDOW must be a live window and defaults to the selected one."
+        "\n"
+        "If WINDOW is part of a vertical combination, adjust WINDOW's"
+        "height.  The new height is calculated from the actual height of"
+        "the accessible portion of its buffer.  The optional argument"
+        "MAX-HEIGHT specifies a maximum height and defaults to the height"
+        "of WINDOW's frame.  The optional argument MIN-HEIGHT specifies a"
+        "minimum height and defaults to `window-min-height'.  Both"
+        "MAX-HEIGHT and MIN-HEIGHT are specified in lines and include mode"
+        "and header line and a bottom divider, if any."
+        "\n"
+        "If WINDOW is part of a horizontal combination and the value of"
+        "the option `fit-window-to-buffer-horizontally' is non-nil, adjust"
+        "WINDOW's width.  The new width of WINDOW is calculated from the"
+        "maximum length of its buffer's lines that follow the current"
+        "start position of WINDOW.  The optional argument MAX-WIDTH"
+        "specifies a maximum width and defaults to the width of WINDOW's"
+        "frame.  The optional argument MIN-WIDTH specifies a minimum width"
+        "and defaults to `window-min-width'.  Both MAX-WIDTH and MIN-WIDTH"
+        "are specified in columns and include fringes, margins, a"
+        "scrollbar and a vertical divider, if any."
+        "\n"
+        "Optional argument PRESERVE-SIZE non-nil means to preserve the"
+        "size of WINDOW (see `window-preserve-size')."
+        "\n"
+        "Fit pixelwise if the option `window-resize-pixelwise' is non-nil."
+        "If WINDOW is its frame's root window and the option"
+        "`fit-frame-to-buffer' is non-nil, call `fit-frame-to-buffer' to"
+        "adjust the frame's size."
+        "\n"
+        "Note that even if this function makes WINDOW large enough to show"
+        "_all_ parts of its buffer you might not see the first part when"
+        "WINDOW was scrolled.  If WINDOW is resized horizontally, you will"
+        "not see the top of its buffer unless WINDOW starts at its minimum"
+        "accessible position.";
+    REGISTER_COMMAND("fit-window-to-buffer", scm_fit_window_to_buffer, "");
+
     scm_c_define_gsubr("get-buffer-window",              1, 0, 0, scm_get_buffer_window);
 
     // Keymap
     scm_c_define_gsubr("keymap?",                        1, 0, 0, keymap_p);
+
+    char *scm_keymap_global_set_doc =
+        "Give KEY a global binding as COMMAND."
+        "When called interactively, KEY is a key sequence.  When called from"
+        "Lisp, KEY is a string that must satisfy `key-valid-p'."
+        "\n"
+        "COMMAND is the command definition to use.  When called interactively,"
+        "this function prompts for COMMAND and accepts only names of known"
+        "commands, i.e., symbols that satisfy the `commandp' predicate.  When"
+        "called from Lisp, COMMAND can be anything that `keymap-set' accepts"
+        "as its DEFINITION argument."
+        "\n"
+        "If COMMAND is a string (which can only happen when this function is"
+        "called from Lisp), it must satisfy `key-valid-p'."
+        ""
+        "The `key-description' convenience function converts a simple"
+        "string of characters to an equivalent form that is acceptable for"
+        "COMMAND."
+        "\n"
+        "Note that if KEY has a local binding in the current buffer,"
+        "that local binding will continue to shadow any global binding"
+        "that you make with this function.";
+    REGISTER_COMMAND("keymap-global-set", scm_keymap_global_set, "");
+
     scm_c_define_gsubr("keymap-global-set",              2, 0, 0, scm_keymap_global_set);
     scm_c_define_gsubr("keymap-global-unset",            1, 0, 0, scm_keymap_global_unset);
     scm_c_define_gsubr("keychord-documentation",         1, 0, 0, scm_keychord_documentation);
     scm_c_define_gsubr("keychord-bindings",              0, 0, 0, scm_keychord_bindings);
 
     // Movement
-    REGISTER_COMMAND("forward-char",          scm_forward_char);
-    REGISTER_COMMAND("backward-char",         scm_backward_char);
-    REGISTER_COMMAND("line-move",             scm_line_move);
-    REGISTER_COMMAND("line-move-logical",     scm_line_move_logical);
-    REGISTER_COMMAND("line-move-visual",      scm_line_move_visual);
-    REGISTER_COMMAND("next-line",             scm_next_line);
-    REGISTER_COMMAND("previous-line",         scm_previous_line);
-    REGISTER_COMMAND("next-logical-line",     scm_next_logical_line);
-    REGISTER_COMMAND("previous-logical-line", scm_previous_logical_line);
+    REGISTER_COMMAND("forward-char",          scm_forward_char,          "p");
+    REGISTER_COMMAND("backward-char",         scm_backward_char,         "p");
+    REGISTER_COMMAND("line-move",             scm_line_move,             "p");
+    REGISTER_COMMAND("line-move-logical",     scm_line_move_logical,     "p");
+    REGISTER_COMMAND("line-move-visual",      scm_line_move_visual,      "p");
+    REGISTER_COMMAND("next-line",             scm_next_line,             "p");
+    REGISTER_COMMAND("previous-line",         scm_previous_line,         "p");
+    REGISTER_COMMAND("next-logical-line",     scm_next_logical_line,     "p");
+    REGISTER_COMMAND("previous-logical-line", scm_previous_logical_line, "p");
+
+    char *scm_forward_word_doc =
+        "Move point forward ARG words (backward if ARG is negative)."
+        "If ARG is omitted or nil, move point forward one word."
+        "Normally returns t."
+        "If an edge of the buffer or a field boundary is reached, point is"
+        "left there and the function returns nil.  Field boundaries are not"
+        "noticed if `inhibit-field-text-motion' is non-nil."
+        "\n"
+        "The word boundaries are normally determined by the buffer's syntax"
+        "table and character script (according to `char-script-table'), but"
+        "`find-word-boundary-function-table', such as set up by `subword-mode',"
+        "can change that.  If a Lisp program needs to move by words determined"
+        "strictly by the syntax table, it should use `forward-word-strictly'"
+        "instead.  See Info node `(elisp) Word Motion' for details.";
+    REGISTER_COMMAND("forward-word", scm_forward_word, "p");
+
+    char *scm_backward_word_doc =
+        "Move backward until encountering the beginning of a word."
+        "With argument ARG, do this that many times."
+        "If ARG is omitted or nil, move point backward one word."
+        "\n"
+        "The word boundaries are normally determined by the buffer's"
+        "syntax table and character script (according to"
+        "`char-script-table'), but `find-word-boundary-function-table',"
+        "such as set up by `subword-mode', can change that.  If a Lisp"
+        "program needs to move by words determined strictly by the syntax"
+        "table, it should use `backward-word-strictly' instead.  See Info"
+        "node `(elisp) Word Motion' for details.";
+    REGISTER_COMMAND("backward-word", scm_backward_word, "p");
+
+    char *scm_forward_paragraph_doc =
+        "Move forward to end of paragraph."
+        "With argument ARG, do it ARG times;"
+        "a negative argument ARG = -N means move backward N paragraphs."
+        "\n"
+        "A line which `paragraph-start' matches either separates paragraphs"
+        "\(if `paragraph-separate' matches it also) or is the first line of a paragraph."
+        "A paragraph end is the beginning of a line which is not part of the paragraph"
+        "to which the end of the previous line belongs, or the end of the buffer."
+        "Returns the count of paragraphs left to move.";
+    REGISTER_COMMAND("forward-paragraph", scm_forward_paragraph, "p");
+
+    char *scm_backward_paragraph_doc =
+        "Move backward to start of paragraph."
+        "With argument ARG, do it ARG times;"
+        "a negative argument ARG = -N means move forward N paragraphs."
+        "\n"
+        "A paragraph start is the beginning of a line which is a"
+        "`paragraph-start' or which is ordinary text and follows a"
+        "`paragraph-separate'ing line; except: if the first real line of a"
+        "paragraph is preceded by a blank line, the paragraph starts at that"
+        "blank line."
+        "\n"
+        "See `forward-paragraph' for more information.";
+    REGISTER_COMMAND("backward-paragraph", scm_backward_paragraph, "p");
+
+    REGISTER_COMMAND("forward-page",             scm_forward_page,     "p");
+    REGISTER_COMMAND("backward-page",            scm_backward_page,    "p");
+    REGISTER_COMMAND("mark-page",                scm_mark_page,        "p");
+    REGISTER_COMMAND("count-lines-page",         scm_count_lines_page, "p");
 
 
-    scm_c_define_gsubr("forward-word",                   0, 1, 0, scm_forward_word);
-    scm_c_define_gsubr("backward-word",                  0, 1, 0, scm_backward_word);
-    scm_c_define_gsubr("forward-paragraph",              0, 1, 0, scm_forward_paragraph);
-    scm_c_define_gsubr("backward-paragraph",             0, 1, 0, scm_backward_paragraph);
-    REGISTER_COMMAND("forward-page",             scm_forward_page);
-    REGISTER_COMMAND("backward-page",            scm_backward_page);
-    REGISTER_COMMAND("mark-page",                scm_mark_page);
-    REGISTER_COMMAND("count-lines-page",         scm_count_lines_page);
+    REGISTER_COMMAND("beginning-of-line",        scm_beginning_of_line,        "p");
+    REGISTER_COMMAND("end-of-line",              scm_end_of_line,              "p");
+    REGISTER_COMMAND("beginning-of-visual-line", scm_beginning_of_visual_line, "p");
+    REGISTER_COMMAND("end-of-visual-line",       scm_end_of_visual_line,       "p");
 
 
-    REGISTER_COMMAND("beginning-of-line",        scm_beginning_of_line);
-    REGISTER_COMMAND("end-of-line",              scm_end_of_line);
-    REGISTER_COMMAND("beginning-of-visual-line", scm_beginning_of_visual_line);
-    REGISTER_COMMAND("end-of-visual-line",       scm_end_of_visual_line);
-    scm_c_define_gsubr("end-of-buffer",                  0, 1, 0, scm_end_of_buffer);
-    scm_c_define_gsubr("beginning-of-buffer",            0, 1, 0, scm_beginning_of_buffer);
+    char *scm_end_of_buffer_doc =
+        "Move point to the end of the buffer."
+        "With numeric arg N, put point N/10 of the way from the end."
+        "If the buffer is narrowed, this command uses the end of the"
+        "accessible part of the buffer."
+        "\n"
+        "Push mark at previous position, unless either a \\[universal-argument] prefix"
+        "is supplied, or Transient Mark mode is enabled and the mark is active.";
+    REGISTER_COMMAND("end-of-buffer", scm_end_of_buffer, "p");
+
+    char *scm_beginning_of_buffer_doc =
+        "Move point to the beginning of the buffer."
+        "With numeric arg N, put point N/10 of the way from the beginning."
+        "If the buffer is narrowed, this command uses the beginning of the"
+        "accessible part of the buffer."
+        "\n"
+        "Push mark at previous position, unless either a \\[universal-argument] prefix"
+        "is supplied, or Transient Mark mode is enabled and the mark is active.";
+    REGISTER_COMMAND("beginning-of-buffer", scm_beginning_of_buffer, "p");
 
 
     // Editing
     scm_c_define_gsubr("char-or-string?",                1, 0, 0, scm_char_or_string_p);
     scm_c_define_gsubr("insert",                         0, 0, 1, scm_insert);
-    REGISTER_COMMAND("self-insert-command",     scm_self_insert_command);
-    scm_c_define_gsubr("quoted-insert",                  0, 0, 0, scm_quoted_insert);
-    scm_c_define_gsubr("delete-backward-char",           0, 1, 0, scm_delete_backward_char);
-    scm_c_define_gsubr("delete-char",                    0, 1, 0, scm_delete_char);
-    scm_c_define_gsubr("delete-blank-lines",             0, 0, 0, scm_delete_blank_lines);
-    scm_c_define_gsubr("delete-indentation",             0, 1, 0, scm_delete_indentation);
-    scm_c_define_gsubr("back-to-indentation",            0, 0, 0, scm_back_to_indentation);
+    REGISTER_COMMAND("self-insert-command",     scm_self_insert_command, "p");
 
+    char *scm_quoted_insert_doc =
+        "Read next input character and insert it."
+        "This is useful for inserting control characters."
+        "With argument, insert ARG copies of the character."
+        "\n"
+        "If the first character you type is an octal digit, the sequence of"
+        "one or more octal digits you type is interpreted to specify a"
+        "character code.  Any character that is not an octal digit terminates"
+        "the sequence.  If the terminator is a RET, it is discarded; any"
+        "other terminator is used itself as input and is inserted."
+        "\n"
+        "The variable `read-quoted-char-radix' specifies the radix for this feature;"
+        "set it to 10 or 16 to use decimal or hex instead of octal.  If you change"
+        "the radix, the characters interpreted as specifying a character code"
+        "change accordingly: 0 to 9 for decimal, 0 to F for hex."
+        "\n"
+        "this function inserts the character anyway, and"
+        "does not handle octal (or decimal or hex) digits specially.  This means"
+        "that if you use overwrite mode as your normal editing mode, you can use"
+        "this function to insert characters when necessary."
+        "\n"
+        "In binary overwrite mode, this function does overwrite, and octal"
+        "\(or decimal or hex) digits are interpreted as a character code.  This"
+        "is intended to be useful for editing binary files.";
+    REGISTER_COMMAND("quoted-insert", scm_quoted_insert, "p");
 
-    REGISTER_COMMAND("read-only-mode",     scm_read_only_mode);
-    REGISTER_COMMAND("save-buffer",        scm_save_buffer);
+    char *scm_delete_backward_char_doc =
+        "Delete the previous N characters (following if N is negative)."
+        "If Transient Mark mode is enabled, the mark is active, and N is 1,"
+        "delete the text in the region and deactivate the mark instead."
+        "To disable this, set option `delete-active-region' to nil."
+        "\n"
+        "Optional second arg KILLFLAG, if non-nil, means to kill (save in"
+        "kill ring) instead of delete.  If called interactively, a numeric"
+        "prefix argument specifies N, and KILLFLAG is also set if a prefix"
+        "argument is used."
+        "\n"
+        "When killing, the killed text is filtered by"
+        "`filter-buffer-substring' before it is saved in the kill ring, so"
+        "the actual saved text might be different from what was killed."
+        "\n"
+        "In Overwrite mode, single character backward deletion may replace"
+        "tabs with spaces so as to back over columns, unless point is at"
+        "the end of the line.";
+    REGISTER_COMMAND("delete-backward-char", scm_delete_backward_char, "p");
 
-    REGISTER_COMMAND("newline",            my_scm_newline);
-    REGISTER_COMMAND("beginning-of-defun", scm_beginning_of_defun);
-    REGISTER_COMMAND("end-of-defun",       scm_end_of_defun);
-    REGISTER_COMMAND("open-line",          scm_open_line);
-    REGISTER_COMMAND("split-line",         scm_split_line);
+    char *scm_delete_char_doc =
+        "Delete the following N characters (previous if N is negative)."
+        "Optional second arg KILLFLAG non-nil means kill instead (save in kill ring)."
+        "Interactively, N is the prefix arg, and KILLFLAG is set if"
+        "N was explicitly specified."
+        "\n"
+        "The command `delete-forward-char' is preferable for interactive use, e.g."
+        "because it respects values of `delete-active-region' and `overwrite-mode'.";
+    REGISTER_COMMAND("delete-char", scm_delete_char, "p");
 
-    scm_c_define_gsubr("capitalize-word",                0, 1, 0, scm_capitalize_word);
-    scm_c_define_gsubr("downcase-word",                  0, 1, 0, scm_downcase_word);
-    scm_c_define_gsubr("upcase-word",                    0, 1, 0, scm_upcase_word);
+    char *scm_delete_blank_lines_doc =
+        "On blank line, delete all surrounding blank lines, leaving just one."
+        "On isolated blank line, delete that one."
+        "On nonblank line, delete any immediately following blank lines.";
+    REGISTER_COMMAND("delete-blank-lines", scm_delete_blank_lines, "p");
 
+    REGISTER_COMMAND("delete-indentation", scm_delete_indentation, "p");
+
+    char *scm_back_to_indentation_doc =
+        "Move point to the first non-whitespace character on this line.";
+    REGISTER_COMMAND("back-to-indentation", scm_back_to_indentation, "p");
+    REGISTER_COMMAND("read-only-mode",      scm_read_only_mode,      "p");
+    REGISTER_COMMAND("save-buffer",         scm_save_buffer,         "p");
+    REGISTER_COMMAND("newline",             my_scm_newline,          "p");
+    REGISTER_COMMAND("beginning-of-defun",  scm_beginning_of_defun,  "p");
+    REGISTER_COMMAND("end-of-defun",        scm_end_of_defun,        "p");
+    REGISTER_COMMAND("open-line",           scm_open_line,           "p");
+    REGISTER_COMMAND("split-line",          scm_split_line,          "p");
+    REGISTER_COMMAND("capitalize-word",     scm_capitalize_word,     "p");
+    REGISTER_COMMAND("downcase-word",       scm_downcase_word,       "p");
+    REGISTER_COMMAND("upcase-word",         scm_upcase_word,         "p");
 
     // Transpose
-    scm_c_define_gsubr("transpose-chars",                0, 1, 0, scm_transpose_chars);
-    scm_c_define_gsubr("transpose-words",                0, 1, 0, scm_transpose_words);
+    REGISTER_COMMAND("transpose-chars", scm_transpose_chars, "p");
+    REGISTER_COMMAND("transpose-words", scm_transpose_words, "p");
 
     // List
-    scm_c_define_gsubr("forward-list",                   0, 1, 0, scm_forward_list);
-    scm_c_define_gsubr("backward-list",                  0, 1, 0, scm_backward_list);
+    REGISTER_COMMAND("forward-list",  scm_forward_list,  "p");
+    REGISTER_COMMAND("backward-list", scm_backward_list, "p");
 
     // Sexps
 
-    scm_c_define_gsubr("forward-sexp",                   0, 1, 0, scm_forward_sexp);
-    scm_c_define_gsubr("backward-sexp",                  0, 1, 0, scm_backward_sexp);
-    scm_c_define_gsubr("kill-sexp",                      0, 1, 0, scm_kill_sexp);
-    REGISTER_COMMAND("mark-sexp",         scm_mark_sexp);
+    REGISTER_COMMAND("forward-sexp",  scm_forward_sexp,  "p");
+    REGISTER_COMMAND("backward-sexp", scm_backward_sexp, "p");
+    REGISTER_COMMAND("kill-sexp",     scm_kill_sexp,     "p");
+    REGISTER_COMMAND("mark-sexp",     scm_mark_sexp,     "p");
 
 
     // Kill/yank
-    REGISTER_COMMAND("kill-line",           scm_kill_line);
-    REGISTER_COMMAND("kill-word",           scm_kill_word);
-    REGISTER_COMMAND("kill-region",         scm_kill_region);
-    REGISTER_COMMAND("copy-region-as-kill", scm_copy_region_as_kill);
-    REGISTER_COMMAND("yank",                scm_yank);
-    REGISTER_COMMAND("duplicate-line",      scm_duplicate_line);
-    REGISTER_COMMAND("duplicate-region",    scm_duplicate_region);
-    REGISTER_COMMAND("duplicate-dwim",      scm_duplicate_dwim);
-
-
-
-    scm_c_define_gsubr("backward-kill-word",             0, 1, 0, scm_backward_kill_word);
-    /* scm_c_define_gsubr("kill-region",                    0, 1, 0, scm_kill_region); */
-    /* scm_c_define_gsubr("yank",                           0, 1, 0, scm_yank); */
+    REGISTER_COMMAND("kill-line",           scm_kill_line,           "p");
+    REGISTER_COMMAND("kill-word",           scm_kill_word,           "p");
+    REGISTER_COMMAND("kill-region",         scm_kill_region,         "p");
+    REGISTER_COMMAND("copy-region-as-kill", scm_copy_region_as_kill, "p");
+    REGISTER_COMMAND("yank",                scm_yank,                "p");
+    REGISTER_COMMAND("duplicate-line",      scm_duplicate_line,      "p");
+    REGISTER_COMMAND("duplicate-region",    scm_duplicate_region,    "p");
+    REGISTER_COMMAND("duplicate-dwim",      scm_duplicate_dwim,      "p");
+    REGISTER_COMMAND("backward-kill-word",  scm_backward_kill_word,  "p");
 
     // Region
-    scm_c_define_gsubr("set-mark-command",               0, 1, 0, scm_set_mark_command);
+    REGISTER_COMMAND("set-mark-command",  scm_set_mark_command,  "p");
     scm_c_define_gsubr("set-mark",                       1, 0, 0, scm_set_mark);
-    scm_c_define_gsubr("exchange-point-and-mark",        0, 0, 0, scm_exchange_point_and_mark);
-    scm_c_define_gsubr("delete-region",                  0, 0, 0, scm_delete_region);
+
+    char *scm_exchange_point_and_mark_doc =
+        "Put the mark where point is now, and point where the mark is now."
+        "This command works even when the mark is not active, and it reactivates"
+        "the mark unless `exchange-point-and-mark-highlight-region' is nil."
+        "\n"
+        "If Transient Mark mode is on, a prefix ARG deactivates the mark if it is"
+        "active, and otherwise avoids reactivating it.  However, if"
+        "`exchange-point-and-mark-highlight-region' is nil, then using a prefix"
+        "argument does reactivate the mark; effectively, when Transient Mark mode"
+        "is on, setting `exchange-point-and-mark-highlight-region' to nil swaps"
+        "the meanings of the presence and absence of a prefix argument."
+        "\n"
+        "If Transient Mark mode is off, a prefix ARG enables Transient Mark mode"
+        "temporarily.";
+    REGISTER_COMMAND("exchange-point-and-mark",  scm_exchange_point_and_mark,  "p");
+
+    char *scm_delete_region_doc =
+        "Delete the text between START and END."
+        "If called interactively, delete the region between point and mark."
+        "This command deletes buffer text without modifying the kill ring.";
+    REGISTER_COMMAND("delete-region",  scm_delete_region,  "p");
+
+    REGISTER_COMMAND("exit-recursive-edit",  scm_exit_recursive_edit,  "p");
+
+    // TODO Continue making stuff interactive from HERE
+
     scm_c_define_gsubr("activate-mark",                  0, 0, 0, scm_activate_mark);
     scm_c_define_gsubr("deactivate-mark",                0, 0, 0, scm_deactivate_mark);
 
@@ -3020,20 +3716,59 @@ void lisp_init(void) {
     // Message
     scm_c_define_gsubr("message",                        1, 0, 1, scm_message);
 
+    // Theme
+    char *scm_load_theme_doc =
+        "Load Custom theme named THEME from its file and possibly enable it."
+        "The theme file is named THEME-theme.el, in one of the directories"
+        "specified by `custom-theme-load-path'."
+        "\n"
+        "Normally, this function also enables THEME.  If optional arg"
+        "NO-ENABLE is non-nil, load the theme but don't enable it, unless"
+        "the theme was already enabled."
+        "\n"
+        "Note that enabling THEME does not disable any other"
+        "already-enabled themes.  If THEME is enabled, it has the highest"
+        "precedence (after `user') among enabled themes.  To disable other"
+        "themes, use `disable-theme'."
+        "\n"
+        "This function is normally called through Customize when setting"
+        "`custom-enabled-themes'.  If used directly in your init file, it"
+        "should be called with a non-nil NO-CONFIRM argument, or after"
+        "`custom-safe-themes' has been loaded."
+        "\n"
+        "Return t if THEME was successfully loaded, nil otherwise.";
+    REGISTER_COMMAND("load-theme", scm_load_theme, "");
+
+    char *scm_disable_theme_doc =
+        "Disable all variable and face settings defined by THEME."
+        "See `custom-enabled-themes' for a list of enabled themes."
+        "\n"
+        "After THEME has been disabled, runs `disable-theme-functions'.";
+    REGISTER_COMMAND("disable-theme", scm_disable_theme, "");
+
+    REGISTER_COMMAND("describe-key-briefly", scm_describe_key_briefly, "");
+
+
 
     // NOTE: Load core macros FIRST - this must happen before any other .scm files
     scm_c_eval_string(
         "(catch #t"
         "  (lambda () (primitive-load \"./lisp/subr.scm\"))"
         "  (lambda (key . args)"
-        "    (message \"Error loading subr.scm: ~s~@?\" key"
-        "      (if (and (pair? args) (pair? (cdr args)))"
-        "          (cadr args)"
-        "          \"\") "
-        "      (if (and (pair? args) (pair? (cdr args)) (pair? (cddr args)))"
-        "          (caddr args)"
-        "          '()))))"
+        "    (display \"Error loading subr.scm: \") (display key) (display \" \") (display args) (newline)))"
     );
+    /* scm_c_eval_string( */
+    /*     "(catch #t" */
+    /*     "  (lambda () (primitive-load \"./lisp/subr.scm\"))" */
+    /*     "  (lambda (key . args)" */
+    /*     "    (message \"Error loading subr.scm: ~s~@?\" key" */
+    /*     "      (if (and (pair? args) (pair? (cdr args)))" */
+    /*     "          (cadr args)" */
+    /*     "          \"\") " */
+    /*     "      (if (and (pair? args) (pair? (cdr args)) (pair? (cddr args)))" */
+    /*     "          (caddr args)" */
+    /*     "          '()))))" */
+    /* ); */
 
 
     // NOTE Preload everything BEFORE loading user init file

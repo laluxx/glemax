@@ -823,7 +823,7 @@ static SCM scm_custom_theme_set_faces(SCM theme_name, SCM rest) {
     return SCM_UNSPECIFIED;
 }
 
-static SCM scm_load_theme(SCM name) {
+SCM scm_load_theme(SCM name) {
     char *theme_name = NULL;
 
     // Check if name argument was provided
@@ -853,7 +853,7 @@ static SCM scm_enable_theme(SCM name) {
     return SCM_UNSPECIFIED;
 }
 
-static SCM scm_disable_theme(SCM name) {
+SCM scm_disable_theme(SCM name) {
     char *theme_name = NULL;
 
     // Check if name argument was provided
@@ -897,9 +897,9 @@ static SCM scm_custom_enabled_themes(void) {
 void init_theme_bindings(void) {
     scm_c_define_gsubr("deftheme",                1, 1, 0, scm_deftheme);
     scm_c_define_gsubr("custom-theme-set-faces",  1, 0, 1, scm_custom_theme_set_faces);
-    scm_c_define_gsubr("load-theme",              0, 1, 0, scm_load_theme);
+    /* scm_c_define_gsubr("load-theme",              0, 1, 0, scm_load_theme); */
     scm_c_define_gsubr("enable-theme",            1, 0, 0, scm_enable_theme);
-    scm_c_define_gsubr("disable-theme",           0, 1, 0, scm_disable_theme);
+    /* scm_c_define_gsubr("disable-theme",           0, 1, 0, scm_disable_theme); */
     scm_c_define_gsubr("custom-available-themes", 0, 0, 0, scm_custom_available_themes);
     scm_c_define_gsubr("custom-enabled-themes",   0, 0, 0, scm_custom_enabled_themes);
 }

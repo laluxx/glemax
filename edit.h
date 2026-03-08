@@ -111,3 +111,12 @@ void mark_sexp();
 /// DEFUN
 void beginning_of_defun();
 void end_of_defun();
+
+
+extern bool g_capture_next_key;
+extern char g_captured_key_notation[256];
+extern bool g_key_was_captured;
+
+
+bool describe_key_interceptor(int key, int action, int mods);
+void describe_key_briefly(void);

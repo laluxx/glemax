@@ -1,4 +1,5 @@
 (keymap-global-set "C-x k" kill-buffer)
+(keymap-global-set "C-x b" switch-to-buffer)
 (keymap-global-set "C-x <left>"  previous-buffer)
 (keymap-global-set "C-x <right>" next-buffer)
 (keymap-global-set "C-b" backward-char)
@@ -104,6 +105,8 @@
 (keymap-global-set "C-x C-p" mark-page)
 (keymap-global-set "C-x l" count-lines-page)
 (keymap-global-set "C-h C-g" garbage-collect)
+(keymap-global-set "C-h c" describe-key-briefly)
+(keymap-global-set "C-M-c" exit-recursive-edit)
 
 
 (define (setup-self-insert-keys)
@@ -940,10 +943,16 @@ INTERVAL-LENGTH specifies how many characters each face segment should be."
 (scheme-mode)
 
 
-;; (load-theme 'modus-vivendi)
-(load-theme 'dark-one)
+(load-theme 'modus-vivendi)
+;; (load-theme 'dark-one)
 ;; (rainbow-delimiters-mode)
 
+
+
+(defvar eval-expression-print-maximum-character 127
+  "The largest integer that will be displayed as a character.
+This affects printing by `eval-expression' (via
+`eval-expression-print-format').")
 
 
 ;; IT WORKS!

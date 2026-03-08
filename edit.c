@@ -5,6 +5,7 @@
 #include "frame.h"
 #include "minibuf.h"
 #include <ctype.h>
+#include <obsidian/keychords.h>
 #include <regex.h>
 
 const char *last_notation = NULL;
@@ -4014,4 +4015,185 @@ void end_of_defun() {
     }
 }
 
+bool g_capture_next_key = false;
+char g_captured_key_notation[256] = {0};
+bool g_key_was_captured = false;
 
+bool describe_key_interceptor(int key, int action, int mods) {
+    if (!g_capture_next_key) return false;
+    if (action != PRESS) return true;
+    // Ignore standalone modifiers
+    if (key == KEY_LEFT_SHIFT   || key == KEY_RIGHT_SHIFT   ||
+        key == KEY_LEFT_CONTROL || key == KEY_RIGHT_CONTROL ||
+        key == KEY_LEFT_ALT     || key == KEY_RIGHT_ALT     ||
+        key == KEY_LEFT_SUPER   || key == KEY_RIGHT_SUPER)
+        return true;
+
+    const char *key_notation = key_to_notation(key, mods);
+
+    // Append to accumulated notation
+    if (g_captured_key_notation[0] != '\0')
+        strncat(g_captured_key_notation, " ",
+                sizeof(g_captured_key_notation) - strlen(g_captured_key_notation) - 1);
+    strncat(g_captured_key_notation, key_notation,
+            sizeof(g_captured_key_notation) - strlen(g_captured_key_notation) - 1);
+
+    // Check if this is a prefix in any keymap
+    bool is_prefix = false;
+    KeyChord chord;
+    if (parse_keychord_notation(g_captured_key_notation, &chord)) {
+        // Check local keymaps
+        for (int s = (int)keymap_stack_count - 1; s >= 0 && !is_prefix; s--) {
+            KeyChordMap *local = keymap_stack[s];
+            if (!local) continue;
+            for (size_t i = 0; i < local->count; i++) {
+                KeyChord *bound = &local->bindings[i].chord;
+                if (bound->length <= chord.length) continue;
+                bool matches = true;
+                for (size_t j = 0; j < chord.length; j++) {
+                    if (bound->keys[j] != chord.keys[j] ||
+                        bound->mods[j] != chord.mods[j]) {
+                        matches = false;
+                        break;
+                    }
+                }
+                if (matches) { is_prefix = true; break; }
+            }
+        }
+        // Check global keymap
+        for (size_t i = 0; i < keymap.count && !is_prefix; i++) {
+            KeyChord *bound = &keymap.bindings[i].chord;
+            if (bound->length <= chord.length) continue;
+            bool matches = true;
+            for (size_t j = 0; j < chord.length; j++) {
+                if (bound->keys[j] != chord.keys[j] ||
+                    bound->mods[j] != chord.mods[j]) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) { is_prefix = true; break; }
+        }
+    }
+
+    if (is_prefix) {
+        char with_dash[258];
+        snprintf(with_dash, sizeof(with_dash), "%s-", g_captured_key_notation);
+        insert(with_dash);
+        return true;
+    }
+
+    // Not a prefix — we have our final chord
+    g_key_was_captured = true;
+    g_capture_next_key = false;
+    exit_recursive_edit();
+    return true;
+}
+
+void describe_key_briefly(void) {
+    scm_c_define("blink-cursor-mode", SCM_BOOL_F);
+    bool do_insert = argument_manually_set;
+
+    g_capture_next_key         = true;
+    g_key_was_captured         = false;
+    g_captured_key_notation[0] = '\0';
+
+    activate_minibuffer();
+    Window *prev_window = selected_frame->wm.previous_window;
+
+    Buffer *mb = selected_frame->wm.minibuffer_window->buffer;
+    const char *prompt = "Describe the following key: ";
+    size_t prompt_len = strlen(prompt);
+    mb->rope = rope_insert_chars(mb->rope, 0, prompt, prompt_len);
+    put_text_property(mb, 0, prompt_len, scm_from_locale_symbol("read-only"), SCM_BOOL_T);
+    put_text_property(mb, 0, prompt_len, scm_from_locale_symbol("face"),
+                      scm_from_int(face_id_from_name("minibuffer-prompt")));
+    put_text_property(mb, 0, prompt_len, scm_from_locale_symbol("field"), SCM_BOOL_T);
+    mb->pt = prompt_len;
+    selected_frame->wm.minibuffer_window->point = prompt_len;
+
+    recursive_edit();
+    deactivate_minibuffer();
+
+    if (!g_key_was_captured) {
+        g_capture_next_key = false;
+        return;
+    }
+
+    const char *notation = g_captured_key_notation;
+    KeyChordBinding *found = NULL;
+
+    // Search previous buffer's local keymap first
+    if (prev_window && prev_window->buffer && prev_window->buffer->keymap)
+        found = keychord_find_binding(prev_window->buffer->keymap, notation);
+
+    // Fall back to global keymap
+    if (!found)
+        found = keychord_find_binding(&keymap, notation);
+
+    const char *command_name = NULL;
+    if (found && found->action_type == ACTION_SCHEME_PROC) {
+        SCM proc = found->action.scheme_proc;
+
+        // 1. Try scm_procedure_name
+        SCM name = scm_procedure_name(proc);
+        if (scm_is_true(name) && scm_is_symbol(name))
+            command_name = scm_to_locale_string(scm_symbol_to_string(name));
+
+        // 2. Try 'name procedure property
+        if (!command_name) {
+            SCM prop = scm_procedure_property(proc, scm_from_utf8_symbol("name"));
+            if (scm_is_true(prop) && scm_is_symbol(prop))
+                command_name = scm_to_locale_string(scm_symbol_to_string(prop));
+        }
+
+        // 3. Try 'documentation property set by REGISTER_COMMAND
+        if (!command_name) {
+            SCM prop = scm_procedure_property(proc, scm_from_utf8_symbol("documentation"));
+            if (scm_is_true(prop) && scm_is_string(prop)) {
+                // documentation exists but won't give us the name
+            }
+        }
+
+        // 4. Try glemax-specific name property set at bind time
+        if (!command_name) {
+            SCM prop = scm_procedure_property(proc, scm_from_utf8_symbol("glemax-name"));
+            if (scm_is_true(prop) && scm_is_string(prop))
+                command_name = scm_to_locale_string(prop);
+        }
+    }
+
+    if (found && found->action_type == ACTION_SCHEME_PROC) {
+        SCM proc = found->action.scheme_proc;
+        SCM name = scm_procedure_name(proc);
+        printf("found binding for '%s', procedure_name=%s\n",
+               notation,
+               scm_is_true(name) ? scm_to_locale_string(scm_symbol_to_string(name)) : "#f");
+        SCM prop = scm_procedure_property(proc, scm_from_utf8_symbol("name"));
+        printf("'name property=%s\n",
+               scm_is_true(prop) ? (scm_is_symbol(prop) ? scm_to_locale_string(scm_symbol_to_string(prop)) : "not-a-symbol") : "#f");
+    }
+
+    char result[512];
+    if (command_name)
+        snprintf(result, sizeof(result), "%s runs the command %s", notation, command_name);
+    else
+        snprintf(result, sizeof(result), "%s is undefined", notation);
+
+    if (do_insert) {
+        set_prefix_arg(1);
+        insert(result);
+    } else {
+        message("%s", result);
+        if (command_name) {
+            Buffer *minibuf = selected_frame->wm.minibuffer_window->buffer;
+            int face = face_id_from_name("help-key-binding");
+            put_text_property(minibuf, 0, strlen(notation),
+                              scm_from_locale_symbol("face"),
+                              scm_from_int(face));
+        }
+    }
+
+    if (command_name) free((char *)command_name);
+    scm_c_define("blink-cursor-mode", SCM_BOOL_T);
+}

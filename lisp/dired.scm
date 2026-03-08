@@ -99,7 +99,7 @@
 
 ;;; Internal: ls helpers
 
-(define (dired--run-ls quoted-dir switches)
+(defun dired--run-ls (quoted-dir switches)
   "Run ls SWITCHES -- QUOTED-DIR and return output as a string."
   (let* ((flags (if dired-use-ls-dired
                     (string-append switches " --dired")
@@ -113,7 +113,7 @@
     (close-pipe port)
     out))
 
-(define (dired--ignored-name? name)
+(defun dired--ignored-name? (name)
   "Return #t if NAME should use the dired-ignored face."
   (or (string-suffix? ".o"   name)
       (string-suffix? ".a"   name)
@@ -122,7 +122,7 @@
       (string-suffix? "~"    name)
       (string-suffix? ".elc" name)))
 
-(define (dired--skip-fields str n)
+(defun dired--skip-fields (str n)
   "Skip N whitespace-separated fields in STR.
 Returns the character index where field N begins, or #f."
   (let ((len (string-length str)))
@@ -140,7 +140,7 @@ Returns the character index where field N begins, or #f."
 
 ;;; Internal: buffer insertion
 
-(define (dired--insert-listing dir switches)
+(defun dired--insert-listing (dir switches)
   "Insert an ls listing for DIR (with trailing /) using SWITCHES."
   (let* ((quoted (string-append "\"" dir "\""))
          (output (dired--run-ls quoted switches))
@@ -192,7 +192,7 @@ Returns the character index where field N begins, or #f."
 
 ;;; Internal: point / file queries
 
-(define (dired--current-line-filename)
+(defun dired--current-line-filename ()
   "Return the bare filename on the current line, or #f."
   (let* ((bol  (line-beginning-position))
          (eol  (line-end-position))
@@ -201,7 +201,7 @@ Returns the character index where field N begins, or #f."
          (let ((col (dired--skip-fields line 8)))
            (and col (substring line col))))))
 
-(define (dired--current-file-full-path)
+(defun dired--current-file-full-path ()
   "Return the absolute path of the file on the current line, or #f."
   (let ((fname (dired--current-line-filename))
         (dir   (buffer-local-value 'dired-directory)))
@@ -215,7 +215,7 @@ Returns the character index where field N begins, or #f."
 
 ;;; Internal: move point to first real entry
 
-(define (dired--goto-first-entry)
+(defun dired--goto-first-entry ()
   "Move point to the filename column of the first non-dot entry."
   (goto-char 0)
   (next-line 1)
@@ -235,7 +235,7 @@ Returns the character index where field N begins, or #f."
 
 ;;; Internal: mark character helpers
 
-(define (dired--set-mark-char ch face-name)
+(defun dired--set-mark-char (ch face-name)
   "Replace the first character of the current line with CH."
   (let ((bol (line-beginning-position)))
     (goto-char bol)
@@ -248,7 +248,7 @@ Returns the character index where field N begins, or #f."
 
 ;;; Internal: target file list
 
-(define (dired--get-target-files)
+(defun dired--get-target-files ()
   "Return marked files, or a singleton list of the file at point."
   (if (not (null? dired-marked-files))
       dired-marked-files
@@ -257,17 +257,17 @@ Returns the character index where field N begins, or #f."
 
 ;;; Navigation commands
 
-(define (dired-next-line n)
+(defun dired-next-line (n)
   (interactive "p")
   "Move N lines forward in the Dired listing."
   (next-line n))
 
-(define (dired-previous-line n)
+(defun dired-previous-line (n)
   (interactive "p")
   "Move N lines backward in the Dired listing."
   (previous-line n))
 
-(define (dired-up-directory)
+(defun dired-up-directory ()
   (interactive "")
   "Navigate to the parent directory."
   (let* ((dir     (buffer-local-value 'dired-directory))
@@ -279,7 +279,7 @@ Returns the character index where field N begins, or #f."
 
 ;;; Visit commands
 
-(define (dired-find-file)
+(defun dired-find-file ()
   (interactive "")
   "Visit the file or directory on the current line."
   (let ((path (dired--current-file-full-path)))
@@ -287,7 +287,7 @@ Returns the character index where field N begins, or #f."
         (find-file path)
         (message "No file on this line"))))
 
-(define (dired-find-file-other-window)
+(defun dired-find-file-other-window ()
   (interactive "")
   "Visit the file on the current line in the other window."
   (let ((path (dired--current-file-full-path)))
@@ -298,14 +298,14 @@ Returns the character index where field N begins, or #f."
           (other-window 1)
           (find-file path)))))
 
-(define (dired-jump)
+(defun dired-jump ()
   (interactive "")
   "Jump to Dired buffer for the current file's directory."
   (find-file default-directory))
 
 ;;; Mark / unmark commands
 
-(define (dired-mark)
+(defun dired-mark ()
   (interactive "")
   "Mark the file on the current line with `*'."
   (let ((path (dired--current-file-full-path)))
@@ -314,7 +314,7 @@ Returns the character index where field N begins, or #f."
       (dired--set-mark-char #\* "dired-mark")
       (next-line 1))))
 
-(define (dired-unmark)
+(defun dired-unmark ()
   (interactive "")
   "Unmark the file on the current line."
   (let ((path (dired--current-file-full-path)))
@@ -325,14 +325,14 @@ Returns the character index where field N begins, or #f."
       (dired--set-mark-char #\space #f)
       (next-line 1))))
 
-(define (dired-unmark-backward)
+(defun dired-unmark-backward ()
   (interactive "")
   "Move up one line and unmark it."
   (previous-line 1)
   (dired-unmark)
   (previous-line 1))
 
-(define (dired-flag-file-deletion)
+(defun dired-flag-file-deletion ()
   (interactive "")
   "Flag the file on the current line for deletion with `D'."
   (let ((path (dired--current-file-full-path)))
@@ -340,12 +340,12 @@ Returns the character index where field N begins, or #f."
       (dired--set-mark-char #\D "dired-flagged")
       (next-line 1))))
 
-(define (dired-unmark-all-marks)
+(defun dired-unmark-all-marks ()
   (interactive "")
   "Remove all marks by reverting the buffer."
   (dired-revert))
 
-(define (dired-toggle-marks)
+(defun dired-toggle-marks ()
   (interactive "")
   "Toggle marks: `*' becomes unmarked and unmarked becomes `*'."
   (beginning-of-buffer)
@@ -364,7 +364,7 @@ Returns the character index where field N begins, or #f."
 
 ;;; File operation commands
 
-(define (dired-do-delete)
+(defun dired-do-delete ()
   (interactive "")
   "Delete marked files, or the file at point if none are marked."
   (let ((files (dired--get-target-files)))
@@ -378,7 +378,7 @@ Returns the character index where field N begins, or #f."
           (setq dired-marked-files '())
           (dired-revert)))))
 
-(define (dired-do-copy)
+(defun dired-do-copy ()
   (interactive "")
   "Copy marked files (or file at point) to a destination."
   (let* ((files (dired--get-target-files))
@@ -393,7 +393,7 @@ Returns the character index where field N begins, or #f."
                 files)
       (dired-revert))))
 
-(define (dired-do-rename)
+(defun dired-do-rename ()
   (interactive "")
   "Rename/move marked files (or file at point) to a destination."
   (let* ((files (dired--get-target-files))
@@ -406,7 +406,7 @@ Returns the character index where field N begins, or #f."
       (setq dired-marked-files '())
       (dired-revert))))
 
-(define (dired-do-chmod)
+(defun dired-do-chmod ()
   (interactive "")
   "Change permissions of marked files (or file at point)."
   (let* ((files (dired--get-target-files))
@@ -417,7 +417,7 @@ Returns the character index where field N begins, or #f."
                 files)
       (dired-revert))))
 
-(define (dired-do-shell-command)
+(defun dired-do-shell-command ()
   (interactive "")
   "Run a shell command on marked files (or file at point)."
   (let* ((files (dired--get-target-files))
@@ -432,7 +432,7 @@ Returns the character index where field N begins, or #f."
         (system full-cmd)
         (message (string-append "Done: " cmd))))))
 
-(define (dired-do-compress)
+(defun dired-do-compress ()
   (interactive "")
   "Compress or decompress marked files (or file at point)."
   (let ((files (dired--get-target-files)))
@@ -449,7 +449,7 @@ Returns the character index where field N begins, or #f."
      files)
     (dired-revert)))
 
-(define (dired-create-directory)
+(defun dired-create-directory ()
   (interactive "")
   "Create a new directory inside the current Dired directory."
   (let* ((dir  (buffer-local-value 'dired-directory))
@@ -463,7 +463,7 @@ Returns the character index where field N begins, or #f."
 
 ;;; View / display commands
 
-(define (dired-revert)
+(defun dired-revert ()
   (interactive "")
   "Revert the current Dired buffer, discarding all marks."
   (let ((dir (buffer-local-value 'dired-directory)))
@@ -475,7 +475,7 @@ Returns the character index where field N begins, or #f."
       (dired--insert-listing dir dired-listing-switches)
       (dired--goto-first-entry))))
 
-(define (dired-sort-toggle)
+(defun dired-sort-toggle ()
   (interactive "")
   "Toggle between sorting by name and sorting by date (-t)."
   (if (string-contains dired-listing-switches "t")
@@ -487,13 +487,13 @@ Returns the character index where field N begins, or #f."
             (string-append dired-listing-switches "t")))
   (dired-revert))
 
-(define (dired-hide-details-toggle)
+(defun dired-hide-details-toggle ()
   (interactive "")
   "Toggle display of permission / owner / size columns."
   (setq dired-hide-details-mode (not dired-hide-details-mode))
   (message (if dired-hide-details-mode "Details hidden" "Details shown")))
 
-(define (dired-summary)
+(defun dired-summary ()
   (interactive "")
   "Show a one-line summary of the file at point in the echo area."
   (let ((path (dired--current-file-full-path)))
@@ -505,7 +505,7 @@ Returns the character index where field N begins, or #f."
           (close-pipe port)
           (message (if (eof-object? result) "No info available" result))))))
 
-(define (dired-goto-file filename)
+(defun dired-goto-file (filename)
   "Move point to FILENAME in the listing. Returns #t if found."
   (goto-char 0)
   (let loop ()
@@ -517,7 +517,7 @@ Returns the character index where field N begins, or #f."
 
 ;;; Window helper
 
-(define (quit-window)
+(defun quit-window ()
   (interactive "")
   "Quit the current window: delete it if others exist, else bury buffer."
   (if (> (length (window-list)) 1)
@@ -527,6 +527,11 @@ Returns the character index where field N begins, or #f."
 ;;; Keymap
 
 (define dired-mode-map (make-sparse-keymap))
+
+(define-key dired-mode-map "j"      dired-next-line)
+(define-key dired-mode-map "k"      dired-previous-line)
+(define-key dired-mode-map "l"      dired-find-file)
+(define-key dired-mode-map "h"      dired-up-directory)
 
 (define-key dired-mode-map "n"      dired-next-line)
 (define-key dired-mode-map "p"      dired-previous-line)
@@ -566,7 +571,7 @@ Returns the character index where field N begins, or #f."
 
 ;;; Entry point
 
-(define (dired dirname)
+(defun dired (dirname)
   "Open a Dired buffer for DIRNAME."
   (let* ((dir      (expand-file-name
                     (if (string-suffix? "/" dirname)
