@@ -200,7 +200,7 @@ static bool is_on_draggable_modeline(float x, float y, Window *win, Window **out
 
     // If it's a leaf window with a modeline
     if (is_leaf_window(win) && !win->is_minibuffer) {
-        Font *font = face_cache->faces[FACE_DEFAULT]->font;
+        Font *font = get_face_font(get_face(FACE_DEFAULT));
         float line_height = font->ascent + font->descent;
         float modeline_y = win->y;
 
@@ -435,7 +435,7 @@ void mouse_button_callback(int button, int action, int mods) {
             }
 
             // Get font for line height calculation
-            Font *font = face_cache->faces[FACE_DEFAULT]->font;
+            Font *font = get_face_font(get_face(FACE_DEFAULT));
             float line_height = font->ascent + font->descent;
 
             // Check if we clicked on minibuffer (bottom line of frame)
@@ -884,8 +884,8 @@ static void inner_main (void *data, int argc, char **argv) {
     printf("sw: %u, sh: %u\n", sw, sh);
 
     // Create the one and only frame (for now)
-    selected_frame = create_frame(0, 0, 800, 600);
     init_faces();
+    selected_frame = create_frame(0, 0, 800, 600);
     wm_init(&selected_frame->wm, scratch_buffer, minibuf, 0, 0, sw, sh, selected_frame->line_height);
 
     lisp_init(); // IMPORTANT After initializing the windowManager
@@ -917,7 +917,9 @@ static void inner_main (void *data, int argc, char **argv) {
         clear_background(face_cache->faces[FACE_DEFAULT]->bg);
         refresh_draw_config();   // once per frame — reads g_ul underline flags
 
-        fps(face_cache->faces[FACE_DEFAULT]->font, sw - 400, 200, face_cache->faces[FACE_ERROR]->fg);
+        /* fps(get_face_font(get_face(FACE_DEFAULT)), sw - 400, 200, face_cache->faces[FACE_ERROR]->fg); */
+        fps(get_face_font(get_face(FACE_DEFAULT)), sw - 400, 200, get_face(FACE_ERROR)->fg);
+
         wm_draw(&selected_frame->wm);
         endFrame();
 

@@ -133,6 +133,13 @@
 
 (define post-self-insert-hook '())
 
+(define wide-newline-cursor t)
+(set-var-doc! wide-newline-cursor
+"When non-nil the cursor will be as wide
+as the widest character on the line on
+newline position.")
+
+
 
 
 (define this-command)
@@ -943,9 +950,18 @@ INTERVAL-LENGTH specifies how many characters each face segment should be."
 (scheme-mode)
 
 
-(load-theme 'modus-vivendi)
+(set-face-attribute 'default nil
+                   :family "JetBrains Mono Nerd Font"
+                   :weight 'medium
+                   :height 170)
+
+(load-theme 'modus-vivendi-tritanopia)
+(setq frame-resize-pixelwise t)
 ;; (load-theme 'dark-one)
 ;; (rainbow-delimiters-mode)
+
+
+
 
 
 
@@ -953,6 +969,7 @@ INTERVAL-LENGTH specifies how many characters each face segment should be."
   "The largest integer that will be displayed as a character.
 This affects printing by `eval-expression' (via
 `eval-expression-print-format').")
+
 
 
 ;; IT WORKS!

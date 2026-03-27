@@ -183,7 +183,8 @@ static void reapply_all_themes(void) {
             face->extend               = false;
             face->inherit_from         = -1;
         }
-        face->font = get_font_variant(face->bold, face->italic);
+        /* face->font = get_font_variant(face->bold, face->italic); */
+        face->font = NULL;  // resolved lazily by get_face_font() on next render
     }
 
     // Step 2: Reverse enabled_themes so we apply oldest first
@@ -253,7 +254,8 @@ static void reapply_all_themes(void) {
                     if (spec->has_extend)
                         face->extend = spec->extend;
 
-                    face->font = get_font_variant(face->bold, face->italic);
+                    /* face->font = get_font_variant(face->bold, face->italic); */
+                    face->font = NULL;  // resolved lazily by get_face_font() on next render
                 }
                 spec = spec->next;
             }

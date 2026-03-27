@@ -1043,7 +1043,7 @@ void minibuffer_complete() {
             current_buffer              = completions_buf;
             current_buffer->pt          = completions_win->point;
 
-            Font *font          = face_cache->faces[FACE_DEFAULT]->font;
+            Font *font          = get_face_font(get_face(FACE_DEFAULT));
             float line_height   = font->ascent + font->descent;
             float usable_height = completions_win->height - line_height;
             float scroll_bottom = completions_win->scrolly + usable_height;

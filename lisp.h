@@ -51,3 +51,9 @@ void init_interactive_system(void);
 /// Faces
 
 SCM get_or_make_face_object(int face_id);
+
+
+/// Keymap
+
+SCM keymap_to_scm(KeyChordMap *map);
+KeyChordMap* scm_to_keymap(SCM obj);

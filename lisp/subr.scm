@@ -7,6 +7,9 @@
 
 ;;; Code:
 
+;; Allow :keywrods alongside #:keywords
+(read-set! keywords 'prefix)
+
 (define nil #f)
 (define t #t)
 
@@ -170,3 +173,16 @@ one will be removed."
       (let ((hook-val (variable-ref var)))
         (module-define! (current-module) hook
                        (delq function hook-val))))))
+
+
+;; (defvar ctl-x-map (make-sparse-keymap)
+;;   "Keymap for C-x prefix commands.")
+
+(defvar ctl-x-map (make-sparse-keymap)
+  "Keymap for C-x prefix commands.")
+
+(defvar ctl-x-4-map (make-sparse-keymap)
+  "Keymap for C-x 4 prefix commands.")
+
+(defvar ctl-x-5-map (make-sparse-keymap)
+  "Keymap for C-x 5 prefix commands.")

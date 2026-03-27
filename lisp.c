@@ -1559,12 +1559,10 @@ static char* get_scheme_proc_documentation(SCM proc) {
 }
 
 static SCM scm_keymap_global_set(SCM notation_scm, SCM action_scm) {
-    if (!scm_is_string(notation_scm)) {
+    if (!scm_is_string(notation_scm))
         scm_wrong_type_arg("keymap-global-set", 1, notation_scm);
-    }
-    if (!scm_is_true(scm_procedure_p(action_scm))) {
+    if (!scm_is_true(scm_procedure_p(action_scm)))
         scm_wrong_type_arg("keymap-global-set", 2, action_scm);
-    }
 
     char *notation = scm_to_locale_string(notation_scm);
     char *description = get_scheme_proc_documentation(action_scm);
@@ -1572,13 +1570,56 @@ static SCM scm_keymap_global_set(SCM notation_scm, SCM action_scm) {
     bool result = keychord_bind_scheme(&keymap, notation, action_scm,
                                        description, PRESS | REPEAT);
 
-    free(notation);
-    if (description) {
-        free(description);
+    // Mirror into sub-keymaps
+    const struct { const char *prefix; const char *map_var; } mirrors[] = {
+        { "C-x 4 ", "ctl-x-4-map" },
+        { "C-x 5 ", "ctl-x-5-map" },
+        { "C-x ",   "ctl-x-map"   },
+    };
+    for (size_t i = 0; i < sizeof(mirrors) / sizeof(mirrors[0]); i++) {
+        size_t plen = strlen(mirrors[i].prefix);
+        if (strncmp(notation, mirrors[i].prefix, plen) == 0) {
+            const char *suffix = notation + plen;
+            SCM map_var = scm_c_lookup(mirrors[i].map_var);
+            if (scm_is_true(map_var)) {
+                SCM map_val = scm_variable_ref(map_var);
+                if (!scm_is_false(map_val)) {
+                    KeyChordMap *map = scm_to_keymap(map_val);
+                    if (map)
+                        keychord_bind_scheme(map, suffix, action_scm,
+                                             description, PRESS | REPEAT);
+                }
+            }
+            break;
+        }
     }
 
+    free(notation);
+    if (description) free(description);
     return scm_from_bool(result);
 }
+
+/* static SCM scm_keymap_global_set(SCM notation_scm, SCM action_scm) { */
+/*     if (!scm_is_string(notation_scm)) { */
+/*         scm_wrong_type_arg("keymap-global-set", 1, notation_scm); */
+/*     } */
+/*     if (!scm_is_true(scm_procedure_p(action_scm))) { */
+/*         scm_wrong_type_arg("keymap-global-set", 2, action_scm); */
+/*     } */
+
+/*     char *notation = scm_to_locale_string(notation_scm); */
+/*     char *description = get_scheme_proc_documentation(action_scm); */
+
+/*     bool result = keychord_bind_scheme(&keymap, notation, action_scm, */
+/*                                        description, PRESS | REPEAT); */
+
+/*     free(notation); */
+/*     if (description) { */
+/*         free(description); */
+/*     } */
+
+/*     return scm_from_bool(result); */
+/* } */
 
 static SCM scm_keymap_global_unset(SCM notation_scm) {
     if (!scm_is_string(notation_scm)) {
@@ -2533,7 +2574,7 @@ static SCM keymap_to_scm_owned(KeyChordMap *map) {
     return obj;
 }
 
-static SCM keymap_to_scm(KeyChordMap *map) {
+SCM keymap_to_scm(KeyChordMap *map) {
     // For wrapping existing C keymaps (global map, buffer keymaps):
     // cached, no finalizer
     if (!map) return SCM_BOOL_F;
@@ -2549,7 +2590,7 @@ static SCM keymap_to_scm(KeyChordMap *map) {
     return obj;
 }
 
-static KeyChordMap* scm_to_keymap(SCM obj) {
+KeyChordMap* scm_to_keymap(SCM obj) {
     if (scm_is_false(obj)) return NULL;
     // Accept either type
     if (SCM_IS_A_P(obj, keymap_type)) {
@@ -3757,18 +3798,6 @@ void lisp_init(void) {
         "  (lambda (key . args)"
         "    (display \"Error loading subr.scm: \") (display key) (display \" \") (display args) (newline)))"
     );
-    /* scm_c_eval_string( */
-    /*     "(catch #t" */
-    /*     "  (lambda () (primitive-load \"./lisp/subr.scm\"))" */
-    /*     "  (lambda (key . args)" */
-    /*     "    (message \"Error loading subr.scm: ~s~@?\" key" */
-    /*     "      (if (and (pair? args) (pair? (cdr args)))" */
-    /*     "          (cadr args)" */
-    /*     "          \"\") " */
-    /*     "      (if (and (pair? args) (pair? (cdr args)) (pair? (cddr args)))" */
-    /*     "          (caddr args)" */
-    /*     "          '()))))" */
-    /* ); */
 
 
     // NOTE Preload everything BEFORE loading user init file

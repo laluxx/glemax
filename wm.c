@@ -914,7 +914,7 @@ static void draw_modeline(Window *win) {
     if (!win) return;
 
     // TODO Use cached selected_frame->line_height...
-    Font *font = face_cache->faces[FACE_DEFAULT]->font;
+    Font *font = get_face_font(get_face(FACE_DEFAULT));
     float line_height = font->ascent + font->descent;
     float modeline_height = line_height;
     float modeline_y = win->y;
@@ -1003,7 +1003,7 @@ void update_window_scroll(Window *win) {
     if (win->is_minibuffer) return;  // Don't scroll minibuffer
 
     Buffer *buffer = win->buffer;
-    Font *font = face_cache->faces[FACE_DEFAULT]->font;
+    Font *font = get_face_font(get_face(FACE_DEFAULT));
     float line_height = font->ascent + font->descent;
 
     // Get truncate-lines buffer-local variable
@@ -1142,7 +1142,7 @@ static void draw_window(Window *win) {
 
     if (is_leaf_window(win)) {
 
-        Font *font = face_cache->faces[FACE_DEFAULT]->font;
+        Font *font = get_face_font(get_face(FACE_DEFAULT));
 
         if (win->buffer) {
             draw_buffer(win->buffer, win, win->x + selected_frame->left_fringe_width,
@@ -1186,8 +1186,6 @@ void draw_window_dividers(WindowManager wm) {
     draw_dividers_recursive(wm.root);
 }
 
-// TODO if it contains a face with a box the height
-// should count the top and bottom edge width of the box
 float calculate_minibuffer_height() {
     // Static variable to track max height reached during this minibuffer session
     static float max_height_reached = 0.0f;
@@ -1235,30 +1233,6 @@ float calculate_minibuffer_height() {
     size_t visual_line_count = 1;  // At least one line
     float x = 0;
 
-    /* rope_iter_t iter; */
-    /* rope_iter_init(&iter, buf->rope, 0); */
-
-    /* uint32_t ch; */
-    /* while (rope_iter_next_char(&iter, &ch)) { */
-    /*     if (ch == '\n') { */
-    /*         visual_line_count++; */
-    /*         x = 0; */
-    /*     } else { */
-    /*         // Check if character would exceed line width */
-    /*         if (x + selected_frame->column_width > usable_width) { */
-    /*             visual_line_count++; */
-    /*             x = 0; */
-    /*         } */
-
-    /*         x += selected_frame->column_width; */
-    /*     } */
-    /* } */
-
-    /* rope_iter_destroy(&iter); */
-
-    /* // Calculate desired height based on content */
-    /* float desired_height = selected_frame->line_height * visual_line_count; */
-
     size_t buf_len = rope_char_length(buf->rope);
     float box_extra = 0.0f;  // extra pixels from box borders (top + bottom)
     size_t char_pos = 0;
@@ -1302,6 +1276,26 @@ float calculate_minibuffer_height() {
 
     // Calculate desired height based on content, adding box border space if needed
     float desired_height = selected_frame->line_height * visual_line_count + box_extra * 2;
+
+    // TODO calculate actual height of lines
+    /* float desired_height = 0; */
+    /* size_t line_start = 0; */
+    /* size_t line_end_pos = 0; */
+    /* // measure each visual line's actual max font height */
+    /* // we need to re-walk; simplest: measure logical lines (visual wrap is rare in minibuffer) */
+    /* { */
+    /*     size_t pos = 0; */
+    /*     size_t blen = rope_char_length(buf->rope); */
+    /*     while (pos <= blen) { */
+    /*         size_t lend = next_line_at_char(buf, pos); */
+    /*         float lh = measure_line_max_font_height(buf, pos, lend, selected_frame->line_height); */
+    /*         desired_height += lh; */
+    /*         if (lend >= blen) break; */
+    /*         pos = lend; */
+    /*     } */
+    /* } */
+    /* desired_height += box_extra * 2; */
+
 
 
     // Get max-mini-window-height constraint
@@ -1407,7 +1401,7 @@ int recenter_positions = 0;  // 0=middle, 1=top, 2=bottom
 void recenter() {
     if (is_minibuffer_window(selected_frame->wm.selected)) return;
 
-    Font *font = face_cache->faces[FACE_DEFAULT]->font;
+    Font *font = get_face_font(get_face(FACE_DEFAULT));
     float line_height = font->ascent + font->descent;
     float modeline_height = line_height;
     float usable_height = selected_frame->wm.selected->height - modeline_height;
@@ -1548,7 +1542,7 @@ void recenter_top_bottom() {
 void scroll_up_command() {
     if (is_minibuffer_window(selected_frame->wm.selected)) return;
 
-    Font *font = face_cache->faces[FACE_DEFAULT]->font;
+    Font *font = get_face_font(get_face(FACE_DEFAULT));
     float line_height = font->ascent + font->descent;
     float modeline_height = line_height;
     float usable_height = selected_frame->wm.selected->height - modeline_height;
@@ -1725,7 +1719,7 @@ void scroll_up_command() {
 void scroll_down_command() {
     if (is_minibuffer_window(selected_frame->wm.selected)) return;
 
-    Font *font = face_cache->faces[FACE_DEFAULT]->font;
+    Font *font = get_face_font(get_face(FACE_DEFAULT));
     float line_height = font->ascent + font->descent;
     float modeline_height = line_height;
     float usable_height = selected_frame->wm.selected->height - modeline_height;
@@ -1919,7 +1913,7 @@ void scroll_other_window_down() {
 void move_to_window_line() {
     if (is_minibuffer_window(selected_frame->wm.selected)) return;
 
-    Font *font = face_cache->faces[FACE_DEFAULT]->font;
+    Font *font = get_face_font(get_face(FACE_DEFAULT));
     float line_height = font->ascent + font->descent;
     float modeline_height = line_height;
     float usable_height = selected_frame->wm.selected->height - modeline_height;
@@ -2092,7 +2086,7 @@ size_t point_at_window_pos(Window *win, float click_x, float click_y) {
 
     // Get default face font
     Face *default_face = get_face(FACE_DEFAULT);
-    Font *default_font = default_face ? default_face->font : NULL;
+    Font *default_font = default_face ? get_face_font(default_face) : NULL;
     if (!default_font) return 0;
 
     float line_height = default_font->ascent + default_font->descent;

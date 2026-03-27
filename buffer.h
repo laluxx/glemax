@@ -153,6 +153,7 @@ void init_draw_cache(void);
 void refresh_draw_config(void);
 
 size_t find_start_position(Buffer *buffer, Window *win, float *out_start_y);
+float measure_line_max_font_height(Buffer *buffer, size_t line_start, size_t line_end, float default_lh);
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y);
 void draw_cursor(Buffer *buffer, Window *win, float start_x, float start_y);
 void reset_cursor_blink(Buffer *buffer);

@@ -1187,7 +1187,7 @@ size_t find_start_position(Buffer *buffer, Window *win, float *out_start_y) {
     if (!win || win->is_minibuffer) { *out_start_y = 0; return 0; }
 
     Face *default_face = get_face(FACE_DEFAULT);
-    Font *default_font = default_face ? default_face->font : NULL;
+    Font *default_font = default_face ? get_face_font(default_face) : NULL;
     if (!default_font) { *out_start_y = 0; return 0; }
 
     float line_height = default_font->ascent + default_font->descent;
@@ -1334,7 +1334,27 @@ static bool line_has_box_face_fast(Buffer *buffer, size_t pos, size_t line_end) 
     return false;
 }
 
-// TODO the prolem is that the top line of the box is outside of view, if i apply a box face on the first line of a bufer the top line of the box is up out of view it should be 1 pixel more down
+
+
+float measure_line_max_font_height(Buffer *buffer, size_t line_start,
+                                          size_t line_end, float default_lh) {
+    float max_h = default_lh;
+    size_t pos = line_start;
+    while (pos < line_end) {
+        size_t run_end;
+        int fid = get_face_id_and_next_change(buffer, pos, line_end, &run_end);
+        Face *f = get_face(fid);
+        Font *fn = f ? get_face_font(f) : NULL;
+        if (fn) {
+            float h = fn->ascent + fn->descent;
+            if (f->box) h += 2.0f;
+            if (h > max_h) max_h = h;
+        }
+        pos = run_end;
+    }
+    return max_h;
+}
+
 void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     Face *default_face = get_face(FACE_DEFAULT);
     Font *default_font = default_face ? get_face_font(default_face) : NULL;
@@ -1398,37 +1418,20 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     float scroll_offset_x = (win && !win->is_minibuffer && truncate_lines) ? win->scrollx : 0;
     float line_start_x    = start_x - scroll_offset_x;
     float x = line_start_x;
-    float y = start_y + (win && !win->is_minibuffer ? win->scrolly : 0) - scroll_offset_y;
-
-    // ── Box geometry ───────────────────────────────────────────────────────────
-    // T = box_line_thickness (1px).
-    //
-    // Every character on a line — before, at, and after any box-faced text —
-    // must be drawn at y-T so the top-border gap is uniform.  We therefore
-    // must know whether the line has a box face BEFORE drawing its first char.
-    //
-    // `current_line_end` = next_line_at_char(buf, any_pos_on_this_line),
-    // i.e. the char position of the first char of the NEXT logical line.
-    // We pass this as the upper bound to line_has_box_face_fast so it scans
-    // face runs only up to the '\n', never into the next line or the rest of
-    // the file.  Cost: O(face-runs on one line), typically 1-5 tree lookups,
-    // called once per logical line.  Wrap-continuation visual lines reuse the
-    // same `current_line_end` — no extra scan.
-    // ──────────────────────────────────────────────────────────────────────────
+    float y = start_y + (win && !win->is_minibuffer ? win->scrolly : 0) - scroll_offset_y
+        - default_font->descent;
 
     float box_line_thickness            = 1.0f;
     bool  current_line_has_box          = false;
     bool  previous_line_had_wrapped_box = false;
     float current_line_height           = line_height;
 
-    // current_line_end: first char of the next logical line after the one
-    // containing start_pos.  Kept in sync whenever we cross a '\n'.
     size_t current_line_end = next_line_at_char(buffer, start_pos);
 
-    // Eagerly apply box shift for the first rendered line.
-    // The box top border is drawn at y + font_height + T.  Shifting y down
-    // by T means the top border sits at y + font_height, exactly where a
-    // normal line's top would be — fully within the window.
+    // Pre-scan the first line's max font height for baseline alignment
+    float line_max_font_height = measure_line_max_font_height(buffer, start_pos,
+                                                               current_line_end, line_height);
+
     if (line_has_box_face_fast(buffer, start_pos, current_line_end)) {
         y                    -= box_line_thickness;
         current_line_has_box  = true;
@@ -1470,7 +1473,6 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
 
     while (rope_iter_next_char(&iter, &ch)) {
 
-        // ── Run cache refresh ─────────────────────────────────────────────────
         if (i >= next_run_end) {
             if (i >= face_run_end)
                 current_face_id = get_face_id_and_next_change(buffer, i, buf_len, &face_run_end);
@@ -1494,7 +1496,6 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
         if (effective_font_height > current_line_height)
             current_line_height = effective_font_height;
 
-        // ── Character width ───────────────────────────────────────────────────
         float      char_width;
         bool       is_control_char = (ch < 0x20 && ch != '\t' && ch != '\n') || ch == 0x7f;
         Character *cached_char_info = NULL;
@@ -1552,8 +1553,8 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 if (in_region && region_extend && region_face) {
                     float ext_width = max_x - x;
                     if (ext_width > 0)
-                        draw_background_span(x, y - char_font->descent * 2,
-                                             ext_width, font_height, region_face->bg);
+                        draw_background_span(x, y - current_line_height + (default_font->descent * 3.4f),
+                                             ext_width, current_line_height, region_face->bg);
                 } else {
                     draw_face_extension(x, y, max_x, face, char_font,
                                         face->bg, box_line_thickness, face->box);
@@ -1564,15 +1565,58 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                                box_span_color, box_line_thickness, box_span_no_left, false);
                 has_box_span = false;
             }
+
             if (at_cursor) {
+                bool wide_nl_cursor = scm_get_bool("wide-newline-cursor", false);
+                float nl_base_y = current_line_has_box ? y - box_line_thickness : y;
+                float default_font_height = default_font->ascent + default_font->descent;
+                float nl_draw_y = nl_base_y - (line_max_font_height - default_font_height)
+                    + (char_font->descent * 2 - default_font->descent);
                 cursor_x      = face->box ? x + box_line_thickness : x;
-                cursor_y      = y - char_font->descent * 2;
-                Character *sp = font_get_character(char_font, ' ');
-                cursor_width  = sp ? sp->ax : char_font->ascent;
-                cursor_height = font_height;
+                cursor_y      = nl_draw_y - char_font->descent * 2;
+
+                if (wide_nl_cursor) {
+                    // find line start by scanning back from i
+                    size_t line_start = i;
+                    while (line_start > 0) {
+                        uint32_t pc = rope_char_at(buffer->rope, line_start - 1);
+                        if (pc == '\n') break;
+                        line_start--;
+                    }
+                    float max_cw = 0;
+                    rope_iter_t si;
+                    rope_iter_init(&si, buffer->rope, line_start);
+                    size_t sp = line_start;
+                    uint32_t sc;
+                    while (rope_iter_next_char(&si, &sc) && sc != '\n' && sp < i) {
+                        size_t run_end;
+                        int sfid = get_face_id_and_next_change(buffer, sp, i, &run_end);
+                        Face *sf = get_face(sfid);
+                        Font *sfn = sf ? get_face_font(sf) : default_font;
+                        if (!sfn) sfn = default_font;
+                        Character *sci = font_get_character(sfn, sc);
+                        float scw = sci ? sci->ax : 0;
+                        if (scw > max_cw) max_cw = scw;
+                        sp++;
+                    }
+                    rope_iter_destroy(&si);
+                    Character *spc = font_get_character(char_font, ' ');
+                    cursor_width = max_cw > 0 ? max_cw : (spc ? spc->ax : char_font->ascent);
+                } else {
+                    Character *sp = font_get_character(char_font, ' ');
+                    cursor_width  = sp ? sp->ax : char_font->ascent;
+                }
+
+                cursor_height = line_max_font_height;
                 cursor_color  = get_face(FACE_CURSOR)->bg;
                 cursor_found  = true;
             }
+
+
+
+
+
+
             if (at_mark && y >= window_bottom && y <= window_top) {
                 float      mx = face->box ? x + box_line_thickness : x;
                 float      my = y - char_font->descent * 2;
@@ -1595,11 +1639,10 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             last_drawn_bg                 = base_bg;
             last_face_had_box             = false;
 
-            // i is the '\n'; i+1 is the first char of the next logical line.
-            // next_line_at_char gives the first char of the line after THAT,
-            // which is the tight upper bound for the box scan.
-            // O(1) index lookup + O(face-runs on next line) scan.
             current_line_end = next_line_at_char(buffer, i + 1);
+            // Pre-scan next line's max font height for baseline alignment
+            line_max_font_height = measure_line_max_font_height(buffer, i + 1,
+                                                                 current_line_end, line_height);
             if (line_has_box_face_fast(buffer, i + 1, current_line_end)) {
                 y -= box_line_thickness;
                 current_line_has_box = true;
@@ -1631,6 +1674,8 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                         last_drawn_bg                 = base_bg;
                         last_face_had_box             = false;
                         current_line_end = next_line_at_char(buffer, i + 1);
+                        line_max_font_height = measure_line_max_font_height(buffer, i + 1,
+                                                                             current_line_end, line_height);
                         if (line_has_box_face_fast(buffer, i + 1, current_line_end)) {
                             y -= box_line_thickness;
                             current_line_has_box = true;
@@ -1651,16 +1696,15 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     x = start_x;
                     y -= current_line_height;
                     current_line_height = line_height;
+                    // Re-scan remaining portion of this logical line for the new visual line
+                    line_max_font_height = measure_line_max_font_height(buffer, i,
+                                                                         current_line_end, line_height);
                     if (wcb) {
-                        // Wrapping on a box char: continuation is also a box line.
                         previous_line_had_wrapped_box = true;
                         current_line_has_box          = true;
                         y                            -= 2 * box_line_thickness;
                         box_span_no_left              = true;
                     } else {
-                        // Wrapping on a non-box char: check remainder of this
-                        // logical line (from i onward) using the already-known
-                        // current_line_end.  No extra scan — O(face-runs left).
                         previous_line_had_wrapped_box = false;
                         current_line_has_box          = false;
                         was_in_box                    = false;
@@ -1682,8 +1726,13 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             if (in_region && region_face) {
                 bg_color = region_face->bg; char_color = region_face->fg; needs_bg = true;
             }
+
             if (at_cursor) {
-                cursor_width  = (ch == '\t' && stretch_cursor) ? char_width : selected_frame->column_width;
+                Character *sp = font_get_character(char_font, ' ');
+                float face_space_width = sp ? sp->ax : char_font->ascent;
+                cursor_width  = (ch == '\t' && stretch_cursor) ? char_width
+                    : stretch_cursor                 ? acw
+                    :                                  face_space_width;
                 cursor_height = font_height;
                 cursor_color  = (crystal_point_mode && ch != '\n' && ch != ' ' && ch != '\t')
                                  ? (is_control_char ? get_face(FACE_ESCAPE_GLYPH)->fg : face->fg)
@@ -1697,7 +1746,13 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
             }
 
             float draw_x = x;
-            float draw_y = current_line_has_box ? y - box_line_thickness : y;
+            // Baseline-align: shift tall fonts down so all glyphs share the same baseline
+            // at the bottom of the line slot. line_max_font_height is pre-scanned so this
+            // is exact even for the first character on a line.
+            float base_y = current_line_has_box ? y - box_line_thickness : y;
+            float default_font_height = default_font->ascent + default_font->descent;
+            float draw_y = base_y - (line_max_font_height - default_font_height) + (char_font->descent*2 - default_font->descent);
+
 
             if (face->box) {
                 if (!was_in_box)
@@ -1720,6 +1775,8 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                 cursor_x = draw_x;
                 cursor_y = draw_y - char_font->descent * 2;
             }
+
+
             if (at_mark && !in_region && y >= window_bottom && y <= window_top) {
                 Character *sp = font_get_character(char_font, ' ');
                 float mw = sp ? sp->ax : char_font->ascent;
@@ -1739,6 +1796,14 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     } else {
                         bg_y = draw_y - char_font->descent * 2;
                         bg_h = font_height;
+                        bg_w = char_width;
+                    }
+                    // For region, always fill the full line height so the highlight
+                    // is uniform regardless of per-character font size (Emacs behavior)
+                    if (in_region) {
+                        bg_y = base_y - line_max_font_height + (default_font->descent * 3.4);
+                        bg_h = line_max_font_height;
+
                         bg_w = char_width;
                     }
                     if (has_bg_span && color_equals(bg_color, bg_span_color) &&
@@ -1903,11 +1968,15 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
     if (point >= buf_len) {
         int   fid      = get_text_property_face(buffer, point);
         Face *eob_face = get_face(fid);
-        Font *cf       = eob_face ? eob_face->font : default_font;
-        cursor_x = x; cursor_y = y - cf->descent * 2;
+        Font *cf       = eob_face ? get_face_font(eob_face) : default_font;
+        float eob_base_y = current_line_has_box ? y - box_line_thickness : y;
+        float default_font_height = default_font->ascent + default_font->descent;
+        float eob_draw_y = eob_base_y - (line_max_font_height - default_font_height)
+            + (cf->descent * 2 - default_font->descent);
+        cursor_x = x; cursor_y = eob_draw_y - cf->descent * 2;
         Character *sp = font_get_character(cf, ' ');
         cursor_width  = sp ? sp->ax : cf->ascent;
-        cursor_height = cf->ascent + cf->descent;
+        cursor_height = line_max_font_height;
         cursor_color  = get_face(FACE_CURSOR)->bg;
         cursor_found  = true;
     }

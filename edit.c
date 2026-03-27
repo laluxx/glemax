@@ -4015,6 +4015,8 @@ void end_of_defun() {
     }
 }
 
+
+
 bool g_capture_next_key = false;
 char g_captured_key_notation[256] = {0};
 bool g_key_was_captured = false;
