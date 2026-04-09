@@ -24,10 +24,17 @@ typedef struct {
     size_t  count;             // number of newlines
     size_t  capacity;
     bool    valid;
-    // Last-access hint for sequential access (like Emacs pt_byte cache)
     size_t  last_line;         // last line number returned
     size_t  last_pos;          // char pos associated with last_line
 } NewlineCache;
+
+typedef struct {
+    size_t *wrap_positions;    // char positions where visual wraps occur
+    size_t  count;
+    size_t  capacity;
+    bool    valid;
+    float   cached_window_width;
+} WrapCache;
 
 typedef struct Buffer {
     struct Buffer *next; // Next buffer in circular list
@@ -50,6 +57,7 @@ typedef struct Buffer {
     bool read_only;
     bool modified;
     NewlineCache newline_cache;
+    WrapCache wrap_cache;
 } Buffer;
 
 extern Buffer *all_buffers;
@@ -97,6 +105,9 @@ size_t    line_at_char(Buffer *buf, size_t pos);
 size_t    next_line_at_char(Buffer *buf, size_t pos);
 size_t    buffer_line_count(Buffer *buf);
 
+void   wrap_cache_invalidate(Buffer *buf);
+void   wrap_cache_ensure(Buffer *buf, float window_width, float max_x);
+size_t wrap_cache_visual_line_at(Buffer *buf, size_t char_pos);
 
 /// Buffer local variables
 

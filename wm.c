@@ -1017,48 +1017,34 @@ void update_window_scroll(Window *win) {
     /* float usable_width = win->width - 2 * fringe_width; */
     float usable_width = win->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width);
 
-    // Calculate cursor's line number and x position TODO Cache it
+    // Calculate cursor's line number and x position
+    float max_x = usable_width;
     size_t cursor_line = 0;
     float cursor_x = 0;
-    rope_iter_t iter;
-    rope_iter_init(&iter, buffer->rope, 0);
 
-    uint32_t ch;
-    size_t i = 0;
-    float x = 0;
-    float max_x = usable_width;
-
-    while (i < win->point && rope_iter_next_char(&iter, &ch)) {
-        if (ch == '\n') {
-            cursor_line++;
-            x = 0;
-        } else {
-            float char_width = character_width(font, ch);
-
-            if (truncate_lines) {
-                // With truncate-lines, lines don't wrap
-                Character *char_info = font_get_character(font, ch);
-                if (char_info) {
-                    x += char_info->ax;
-                }
-            } else {
-                // Without truncate-lines, handle wrapping
-                if (x + char_width > max_x) {
-                    cursor_line++;
-                    x = 0;
-                }
-
-                Character *char_info = font_get_character(font, ch);
-                if (char_info) {
-                    x += char_info->ax;
-                }
-            }
-        }
-        i++;
+    if (truncate_lines) {
+        cursor_line = (size_t)line_number_at_pos(buffer, win->point) - 1;
+    } else {
+        wrap_cache_ensure(buffer, max_x, max_x);
+        cursor_line = wrap_cache_visual_line_at(buffer, win->point);
     }
 
-    cursor_x = x;
+    size_t line_start = line_at_char(buffer, win->point);
+    float x = 0;
+    rope_iter_t iter;
+    rope_iter_init(&iter, buffer->rope, line_start);
+    uint32_t ch;
+    size_t i = line_start;
+    while (i < win->point && rope_iter_next_char(&iter, &ch)) {
+        Character *char_info = font_get_character(font, ch);
+        float cw = char_info ? char_info->ax : 0;
+        if (!truncate_lines && x + cw > max_x)
+            x = 0;
+        x += cw;
+        i++;
+    }
     rope_iter_destroy(&iter);
+    cursor_x = x;
 
     // Vertical scrolling
     float cursor_top_y = cursor_line * line_height;
@@ -1117,7 +1103,6 @@ void update_window_scroll(Window *win) {
     }
 }
 
-
 void update_windows_scroll() {
     Window *leaves[256];
     int count = 0;
@@ -1144,18 +1129,18 @@ static void draw_window(Window *win) {
 
         Font *font = get_face_font(get_face(FACE_DEFAULT));
 
+        // Left fringe background
+        quad2D((vec2){win->x, win->y},
+               (vec2){selected_frame->left_fringe_width, win->height}, face_cache->faces[FACE_FRINGE]->bg);
+
+        // Right fringe background
+        quad2D((vec2){win->x + win->width - selected_frame->right_fringe_width, win->y},
+               (vec2){selected_frame->right_fringe_width, win->height}, face_cache->faces[FACE_FRINGE]->bg);
+
         if (win->buffer) {
             draw_buffer(win->buffer, win, win->x + selected_frame->left_fringe_width,
                        win->y + win->height - font->ascent + font->descent);
         }
-
-        // Left fringe
-        quad2D((vec2){win->x, win->y},
-               (vec2){selected_frame->left_fringe_width, win->height}, face_cache->faces[FACE_FRINGE]->bg);
-
-        // Right fringe
-        quad2D((vec2){win->x + win->width - selected_frame->right_fringe_width, win->y},
-               (vec2){selected_frame->right_fringe_width, win->height}, face_cache->faces[FACE_FRINGE]->bg);
 
         if (!win->is_minibuffer) draw_modeline(win);
 

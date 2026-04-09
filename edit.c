@@ -422,6 +422,7 @@ size_t delete_impl(size_t pos, size_t count) {
     adjust_all_window_points_after_modification(pos, -(int)count);
     reset_cursor_blink(current_buffer);
     newline_cache_invalidate(current_buffer);
+    wrap_cache_invalidate(current_buffer);
     current_buffer->modified = true;
     if (current_buffer->undo_state)
         current_buffer->undo_state->boundary_needed = true;
@@ -776,6 +777,7 @@ void line_move() {
     }
 }
 
+
 void line_move_logical() {
     int arg = get_prefix_arg();
     if (arg == 0) return;
@@ -917,6 +919,9 @@ void line_move_visual() {
     float max_x = start_x + (win->width - (selected_frame->left_fringe_width + selected_frame->right_fringe_width));
     float window_width = max_x - start_x;
 
+    wrap_cache_ensure(current_buffer, window_width, max_x - start_x);
+    WrapCache *wcache = &current_buffer->wrap_cache;
+
     int direction = arg > 0 ? 1 : -1;
     int count = abs(arg);
 
@@ -933,76 +938,45 @@ void line_move_visual() {
                             scm_is_true(scm_integer_p(visual_goal_val));
 
     if (!have_visual_goal) {
-        // First move in a sequence — compute goal_x from current cursor position
         size_t pos = current_buffer->pt;
 
-        // Find start of current logical line
-        size_t logical_line_start = pos;
-        while (logical_line_start > 0 &&
-               rope_char_at(current_buffer->rope, logical_line_start - 1) != '\n') {
-            logical_line_start--;
-        }
-
-        // Find end of current logical line
-        size_t logical_line_end = pos;
-        while (logical_line_end < text_len &&
-               rope_char_at(current_buffer->rope, logical_line_end) != '\n') {
-            logical_line_end++;
-        }
-
-        // Build visual line starts for this logical line
-        size_t visual_starts[1024];
-        int num_visual_lines = 0;
-        visual_starts[num_visual_lines++] = logical_line_start;
-
-        float x = start_x;
-        size_t i = logical_line_start;
-        while (i < logical_line_end) {
-            uint32_t ch = rope_char_at(current_buffer->rope, i);
-            int face_id = get_text_property_face(current_buffer, i);
-            Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
-            if (!face) face = default_face;
-            Font *char_font = get_face_font(face);
-            if (!char_font) char_font = default_font;
-            float char_width = get_char_advance(current_buffer, i, ch, char_font, x, start_x);
-            if (x + char_width > max_x) {
-                if (num_visual_lines < 1024)
-                    visual_starts[num_visual_lines++] = i;
-                x = start_x;
+        // Find start of current visual line via wrap cache — O(log n)
+        size_t visual_line_start = pos;
+        if (wcache->count > 0) {
+            size_t lo = 0, hi = wcache->count;
+            while (lo < hi) {
+                size_t mid = lo + (hi - lo) / 2;
+                if (wcache->wrap_positions[mid] < pos) lo = mid + 1;
+                else hi = mid;
             }
-            x += char_width;
-            i++;
+            // lo = first wrap >= pos; the wrap before it (lo-1) is the start of our visual line
+            visual_line_start = (lo > 0) ? wcache->wrap_positions[lo - 1] : 0;
+            // but only if it's on the same logical line
+            size_t log_start = line_at_char(current_buffer, pos);
+            if (visual_line_start < log_start) visual_line_start = log_start;
+        } else {
+            visual_line_start = line_at_char(current_buffer, pos);
         }
 
-        // Find which visual line contains pos
-        int current_visual_line_idx = 0;
-        for (int j = 0; j < num_visual_lines; j++) {
-            if (visual_starts[j] <= pos)
-                current_visual_line_idx = j;
-            else
-                break;
-        }
-
-        // Walk from the start of the current visual line to pos to get pixel x
-        x = start_x;
-        i = visual_starts[current_visual_line_idx];
-        while (i < pos) {
-            uint32_t ch = rope_char_at(current_buffer->rope, i);
+        // Walk only from visual line start to pos — O(visual line width)
+        float x = start_x;
+        rope_iter_t rit;
+        rope_iter_init(&rit, current_buffer->rope, visual_line_start);
+        uint32_t ch;
+        size_t i = visual_line_start;
+        while (i < pos && rope_iter_next_char(&rit, &ch)) {
             int face_id = get_text_property_face(current_buffer, i);
             Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
             if (!face) face = default_face;
             Font *char_font = get_face_font(face);
             if (!char_font) char_font = default_font;
-            float char_width = get_char_advance(current_buffer, i, ch, char_font, x, start_x);
-            x += char_width;
+            x += get_char_advance(current_buffer, i, ch, char_font, x, start_x);
             i++;
         }
+        rope_iter_destroy(&rit);
         goal_x = x;
 
-        // Save it
         scm_setq_impl(visual_goal_sym, scm_from_double((double)goal_x));
-        /* set_buffer_local_value(visual_goal_sym, current_buffer, */
-        /*                        scm_from_double((double)goal_x)); */
     } else {
         goal_x = (float)scm_to_double(visual_goal_val);
     }
@@ -1010,94 +984,79 @@ void line_move_visual() {
     for (int iter = 0; iter < count; iter++) {
         size_t pos = current_buffer->pt;
 
-        // Find start of current logical line
-        size_t logical_line_start = pos;
-        while (logical_line_start > 0 &&
-               rope_char_at(current_buffer->rope, logical_line_start - 1) != '\n') {
-            logical_line_start--;
-        }
-
-        // Find end of current logical line
-        size_t logical_line_end = pos;
-        while (logical_line_end < text_len &&
-               rope_char_at(current_buffer->rope, logical_line_end) != '\n') {
-            logical_line_end++;
-        }
-
-        // Build visual line starts for this logical line
-        size_t visual_starts[1024];
-        int num_visual_lines = 0;
-        visual_starts[num_visual_lines++] = logical_line_start;
-
-        float x = start_x;
-        size_t i = logical_line_start;
-        while (i < logical_line_end) {
-            uint32_t ch = rope_char_at(current_buffer->rope, i);
-            int face_id = get_text_property_face(current_buffer, i);
-            Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
-            if (!face) face = default_face;
-            Font *char_font = get_face_font(face);
-            if (!char_font) char_font = default_font;
-            float char_width = get_char_advance(current_buffer, i, ch, char_font, x, start_x);
-            if (x + char_width > max_x) {
-                if (num_visual_lines < 1024)
-                    visual_starts[num_visual_lines++] = i;
-                x = start_x;
+        // Use wrap cache to find current visual line bounds — O(log n)
+        // Binary search for the largest wrap_position <= pos
+        size_t vis_line_start, vis_line_end;
+        {
+            size_t lo = 0, hi = wcache->count;
+            while (lo < hi) {
+                size_t mid = lo + (hi - lo) / 2;
+                if (wcache->wrap_positions[mid] <= pos) lo = mid + 1;
+                else hi = mid;
             }
-            x += char_width;
-            i++;
+            // lo-1 is index of last wrap <= pos (that's our visual line start)
+            // lo   is index of first wrap > pos (that's our visual line end)
+            size_t log_start = line_at_char(current_buffer, pos);
+            size_t log_end   = next_line_at_char(current_buffer, pos);
+            // log_end points past the '\n', we want the '\n' position
+            if (log_end > 0 && log_end <= text_len &&
+                rope_char_at(current_buffer->rope, log_end - 1) == '\n')
+                log_end--;
+
+            vis_line_start = (lo > 0 && wcache->wrap_positions[lo - 1] >= log_start)
+                             ? wcache->wrap_positions[lo - 1] : log_start;
+            vis_line_end   = (lo < wcache->count && wcache->wrap_positions[lo] <= log_end)
+                             ? wcache->wrap_positions[lo] : log_end;
         }
 
-        // Find which visual line contains pos
-        int current_visual_line_idx = 0;
-        for (int j = 0; j < num_visual_lines; j++) {
-            if (visual_starts[j] <= pos)
-                current_visual_line_idx = j;
-            else
-                break;
-        }
-
-        // Helper: find position at goal_x in a visual line segment [seg_start, seg_end)
-        // starting from pixel position line_start_pixel
-        #define FIND_POS_AT_GOAL_X(seg_start, seg_end, line_start_pixel, out_pos)     \
-        do {                                                                          \
-            float _x = (line_start_pixel);                                            \
-            size_t _p = (seg_start);                                                  \
-            while (_p < (seg_end)) {                                                  \
-                uint32_t _ch = rope_char_at(current_buffer->rope, _p);                \
-                int _fid = get_text_property_face(current_buffer, _p);                \
+        #define FIND_POS_AT_GOAL_X_ITER(seg_start, seg_end, out_pos)              \
+        do {                                                                       \
+            float _x = start_x;                                                    \
+            size_t _p = (seg_start);                                               \
+            rope_iter_t _rit;                                                      \
+            rope_iter_init(&_rit, current_buffer->rope, _p);                       \
+            uint32_t _ch;                                                          \
+            while (_p < (seg_end) && rope_iter_next_char(&_rit, &_ch)) {          \
+                int _fid = get_text_property_face(current_buffer, _p);             \
                 Face *_face = (_fid == FACE_DEFAULT) ? default_face : get_face(_fid); \
-                if (!_face) _face = default_face;                                     \
-                Font *_font = get_face_font(_face);                                   \
-                if (!_font) _font = default_font;                                     \
-                float _cw = get_char_advance(current_buffer, _p, _ch, _font,          \
-                                             _x, start_x);                            \
-                if (_x + _cw > max_x) break;                                          \
-                /* Stop when the midpoint of this char is at or past goal_x */        \
-                if (_x + _cw * 0.5f >= goal_x) break;                                 \
-                _x += _cw;                                                            \
-                _p++;                                                                 \
-            }                                                                         \
-            (out_pos) = _p;                                                           \
+                if (!_face) _face = default_face;                                  \
+                Font *_font = get_face_font(_face);                                \
+                if (!_font) _font = default_font;                                  \
+                float _cw = get_char_advance(current_buffer, _p, _ch, _font,      \
+                                             _x, start_x);                        \
+                if (_x + _cw * 0.5f >= goal_x) break;                             \
+                _x += _cw;                                                         \
+                _p++;                                                              \
+            }                                                                      \
+            rope_iter_destroy(&_rit);                                              \
+            (out_pos) = _p;                                                        \
         } while(0)
 
         if (direction > 0) {
-            int target_visual_line_idx = current_visual_line_idx + 1;
-
-            if (target_visual_line_idx < num_visual_lines) {
-                // Next visual line is in the same logical line
-                size_t seg_start = visual_starts[target_visual_line_idx];
-                size_t seg_end = (target_visual_line_idx + 1 < num_visual_lines)
-                    ? visual_starts[target_visual_line_idx + 1]
-                    : logical_line_end;
-
+            if (vis_line_end < text_len &&
+                rope_char_at(current_buffer->rope, vis_line_end) != '\n') {
+                // Next visual line is a wrap within the same logical line
+                size_t next_vis_start = vis_line_end;
+                // Find its end: next wrap after next_vis_start
+                size_t lo2 = 0, hi2 = wcache->count;
+                while (lo2 < hi2) {
+                    size_t mid = lo2 + (hi2 - lo2) / 2;
+                    if (wcache->wrap_positions[mid] <= next_vis_start) lo2 = mid + 1;
+                    else hi2 = mid;
+                }
+                size_t log_end2 = next_line_at_char(current_buffer, next_vis_start);
+                if (log_end2 > 0 && log_end2 <= text_len &&
+                    rope_char_at(current_buffer->rope, log_end2 - 1) == '\n')
+                    log_end2--;
+                size_t next_vis_end = (lo2 < wcache->count && wcache->wrap_positions[lo2] <= log_end2)
+                                      ? wcache->wrap_positions[lo2] : log_end2;
                 size_t target_pos;
-                FIND_POS_AT_GOAL_X(seg_start, seg_end, start_x, target_pos);
+                FIND_POS_AT_GOAL_X_ITER(next_vis_start, next_vis_end, target_pos);
                 set_point(target_pos);
-
             } else {
-                // Need next logical line
-                if (logical_line_end >= text_len) {
+                // Move to next logical line
+                size_t log_end = next_line_at_char(current_buffer, pos);
+                if (log_end >= text_len) {
                     bool add_newlines = scm_get_bool("next-line-add-newlines", false);
                     if (add_newlines) {
                         set_point(text_len);
@@ -1108,106 +1067,70 @@ void line_move_visual() {
                     }
                     return;
                 }
-
-                size_t next_logical_start = logical_line_end + 1;
-                size_t next_logical_end = next_logical_start;
-                while (next_logical_end < text_len &&
-                       rope_char_at(current_buffer->rope, next_logical_end) != '\n') {
-                    next_logical_end++;
+                // log_end is start of next logical line
+                // Find its first visual line end via wrap cache
+                size_t lo2 = 0, hi2 = wcache->count;
+                while (lo2 < hi2) {
+                    size_t mid = lo2 + (hi2 - lo2) / 2;
+                    if (wcache->wrap_positions[mid] <= log_end) lo2 = mid + 1;
+                    else hi2 = mid;
                 }
-
-                // Find first wrap in next logical line
-                x = start_x;
-                i = next_logical_start;
-                size_t first_wrap = next_logical_end;
-                while (i < next_logical_end) {
-                    uint32_t ch = rope_char_at(current_buffer->rope, i);
-                    int face_id = get_text_property_face(current_buffer, i);
-                    Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
-                    if (!face) face = default_face;
-                    Font *char_font = get_face_font(face);
-                    if (!char_font) char_font = default_font;
-                    float char_width = get_char_advance(current_buffer, i, ch, char_font, x, start_x);
-                    if (x + char_width > max_x) {
-                        first_wrap = i;
-                        break;
-                    }
-                    x += char_width;
-                    i++;
-                }
-
+                size_t next_log_end = next_line_at_char(current_buffer, log_end);
+                if (next_log_end > 0 && next_log_end <= text_len &&
+                    rope_char_at(current_buffer->rope, next_log_end - 1) == '\n')
+                    next_log_end--;
+                size_t first_vis_end = (lo2 < wcache->count && wcache->wrap_positions[lo2] <= next_log_end)
+                                       ? wcache->wrap_positions[lo2] : next_log_end;
                 size_t target_pos;
-                FIND_POS_AT_GOAL_X(next_logical_start, first_wrap, start_x, target_pos);
+                FIND_POS_AT_GOAL_X_ITER(log_end, first_vis_end, target_pos);
                 set_point(target_pos);
             }
-
         } else {
-            // Move up
             if (pos == 0) {
                 message("Beginning of buffer");
                 return;
             }
-
-            int target_visual_line_idx = current_visual_line_idx - 1;
-
-            if (target_visual_line_idx >= 0) {
-                // Previous visual line in same logical line
-                size_t seg_start = visual_starts[target_visual_line_idx];
-                size_t seg_end = (target_visual_line_idx + 1 < num_visual_lines)
-                    ? visual_starts[target_visual_line_idx + 1]
-                    : logical_line_end;
-
+            if (vis_line_start > line_at_char(current_buffer, pos)) {
+                // Previous visual line is a wrap within the same logical line
+                size_t prev_vis_end = vis_line_start;
+                // Find its start: largest wrap < prev_vis_end
+                size_t lo2 = 0, hi2 = wcache->count;
+                while (lo2 < hi2) {
+                    size_t mid = lo2 + (hi2 - lo2) / 2;
+                    if (wcache->wrap_positions[mid] < prev_vis_end) lo2 = mid + 1;
+                    else hi2 = mid;
+                }
+                size_t log_start2 = line_at_char(current_buffer, prev_vis_end);
+                size_t prev_vis_start = (lo2 > 0 && wcache->wrap_positions[lo2 - 1] >= log_start2)
+                                        ? wcache->wrap_positions[lo2 - 1] : log_start2;
                 size_t target_pos;
-                FIND_POS_AT_GOAL_X(seg_start, seg_end, start_x, target_pos);
+                FIND_POS_AT_GOAL_X_ITER(prev_vis_start, prev_vis_end, target_pos);
                 set_point(target_pos);
-
             } else {
-                // Need previous logical line
-                if (logical_line_start == 0) {
+                // Move to previous logical line
+                size_t log_start = line_at_char(current_buffer, pos);
+                if (log_start == 0) {
                     message("Beginning of buffer");
                     return;
                 }
-
-                size_t prev_logical_end = logical_line_start - 1;
-                size_t prev_logical_start = prev_logical_end;
-                while (prev_logical_start > 0 &&
-                       rope_char_at(current_buffer->rope, prev_logical_start - 1) != '\n') {
-                    prev_logical_start--;
+                size_t prev_log_end = log_start - 1; // the '\n'
+                size_t prev_log_start = line_at_char(current_buffer, prev_log_end);
+                // Find last visual line of previous logical line
+                size_t lo2 = 0, hi2 = wcache->count;
+                while (lo2 < hi2) {
+                    size_t mid = lo2 + (hi2 - lo2) / 2;
+                    if (wcache->wrap_positions[mid] < prev_log_end) lo2 = mid + 1;
+                    else hi2 = mid;
                 }
-
-                // Build visual lines for previous logical line
-                num_visual_lines = 0;
-                visual_starts[num_visual_lines++] = prev_logical_start;
-                x = start_x;
-                i = prev_logical_start;
-                while (i < prev_logical_end) {
-                    uint32_t ch = rope_char_at(current_buffer->rope, i);
-                    int face_id = get_text_property_face(current_buffer, i);
-                    Face *face = (face_id == FACE_DEFAULT) ? default_face : get_face(face_id);
-                    if (!face) face = default_face;
-                    Font *char_font = get_face_font(face);
-                    if (!char_font) char_font = default_font;
-                    float char_width = get_char_advance(current_buffer, i, ch, char_font, x, start_x);
-                    if (x + char_width > max_x) {
-                        if (num_visual_lines < 1024)
-                            visual_starts[num_visual_lines++] = i;
-                        x = start_x;
-                    }
-                    x += char_width;
-                    i++;
-                }
-
-                // Last visual line of previous logical line
-                size_t seg_start = visual_starts[num_visual_lines - 1];
-                size_t seg_end = prev_logical_end;
-
+                size_t last_vis_start = (lo2 > 0 && wcache->wrap_positions[lo2 - 1] >= prev_log_start)
+                                        ? wcache->wrap_positions[lo2 - 1] : prev_log_start;
                 size_t target_pos;
-                FIND_POS_AT_GOAL_X(seg_start, seg_end, start_x, target_pos);
+                FIND_POS_AT_GOAL_X_ITER(last_vis_start, prev_log_end, target_pos);
                 set_point(target_pos);
             }
         }
 
-        #undef FIND_POS_AT_GOAL_X
+        #undef FIND_POS_AT_GOAL_X_ITER
     }
 }
 
@@ -2127,6 +2050,7 @@ void yank() {
     update_goal_column();
     reset_cursor_blink(current_buffer);
     newline_cache_invalidate(current_buffer);
+    wrap_cache_invalidate(current_buffer);
     current_buffer->modified = true;
     if (current_buffer->undo_state)
         current_buffer->undo_state->boundary_needed = true;

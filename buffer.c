@@ -5,6 +5,7 @@
 #include "lisp.h"
 #include "faces.h"
 #include "undo.h"
+#include "fringe.h"
 #include <obsidian/window.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -53,6 +54,12 @@ Buffer* buffer_create(const char *name) {
     buffer->newline_cache.last_line = 0;
     buffer->newline_cache.last_pos  = 0;
 
+    buffer->wrap_cache.wrap_positions    = NULL;
+    buffer->wrap_cache.count             = 0;
+    buffer->wrap_cache.capacity          = 0;
+    buffer->wrap_cache.valid             = false;
+    buffer->wrap_cache.cached_window_width = 0.0f;
+
     undo_init(buffer);
 
     // Initialize buffer-local variables as empty alist
@@ -84,6 +91,8 @@ Buffer* buffer_create(const char *name) {
 
 
     // Initialize keymap as NULL (will use global keymap)
+    buffer->keymap = NULL;
+    buffer->filename = NULL;
     buffer->keymap = NULL;
     buffer->read_only = false;
     buffer->modified = false;
@@ -151,7 +160,9 @@ void buffer_destroy(Buffer *buffer) {
 
     undo_cleanup(buffer->undo_state);
     free(buffer->newline_cache.newline_positions);
+    free(buffer->wrap_cache.wrap_positions);
 
+    free(buffer->filename);
     free(buffer->name);
     rope_free(buffer->rope);
     clear_text_properties(buffer);
@@ -781,6 +792,81 @@ size_t buffer_line_count(Buffer *buf) {
     return buf->newline_cache.count + 1;
 }
 
+void wrap_cache_invalidate(Buffer *buf) {
+    buf->wrap_cache.valid = false;
+    buf->wrap_cache.count = 0;
+}
+
+void wrap_cache_ensure(Buffer *buf, float window_width, float max_x) {
+    if (buf->wrap_cache.valid &&
+        buf->wrap_cache.cached_window_width == window_width)
+        return;
+
+    Face *default_face = get_face(FACE_DEFAULT);
+    Font *default_font = default_face ? get_face_font(default_face) : NULL;
+    if (!default_font) return;
+
+    WrapCache *cache = &buf->wrap_cache;
+    cache->count = 0;
+
+    size_t buf_len = rope_char_length(buf->rope);
+    float x = 0;
+
+    rope_iter_t iter;
+    rope_iter_init(&iter, buf->rope, 0);
+    uint32_t ch;
+    size_t i = 0;
+
+    while (rope_iter_next_char(&iter, &ch)) {
+        if (ch == '\n') {
+            x = 0;
+        } else {
+            Character *ci = font_get_character(default_font, ch);
+            float char_width = ci ? ci->ax : 0;
+            if (x + char_width > max_x) {
+                if (cache->count >= cache->capacity) {
+                    cache->capacity = cache->capacity ? cache->capacity * 2 : 1024;
+                    cache->wrap_positions = realloc(cache->wrap_positions,
+                                                    cache->capacity * sizeof(size_t));
+                }
+                cache->wrap_positions[cache->count++] = i;
+                x = char_width;
+            } else {
+                x += char_width;
+            }
+        }
+        i++;
+    }
+    rope_iter_destroy(&iter);
+
+    cache->valid = true;
+    cache->cached_window_width = window_width;
+}
+
+// Returns the visual line number (0-based) at char_pos,
+// counting both logical newlines and visual wraps before it.
+size_t wrap_cache_visual_line_at(Buffer *buf, size_t char_pos) {
+    size_t logical = (size_t)line_number_at_pos(buf, char_pos) - 1;
+
+    WrapCache *cache = &buf->wrap_cache;
+    if (!cache->valid || cache->count == 0)
+        return logical;
+
+    // Binary search: count wrap_positions < char_pos that belong to lines <= logical line
+    // We need wraps that occur before char_pos AND after the start of logical line 0..logical-1
+    // Since wrap_positions are in order, just count those < char_pos
+    size_t lo = 0, hi = cache->count;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (cache->wrap_positions[mid] < char_pos)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    // lo = number of wraps before char_pos
+    return logical + lo;
+}
+
 /// ARG
 
 // TODO Activate universal-argument-map and bind 0..9 to digit-argument
@@ -1104,7 +1190,10 @@ typedef struct {
     // Property keywords for display specs
     SCM align_to;
     SCM width_kw;
+    // Fringe
+    SCM fringe_indicator_alist;
 } DrawSymbols;
+
 
 static DrawSymbols g_sym = {0};
 
@@ -1136,6 +1225,9 @@ void init_draw_cache(void) {
     scm_gc_protect_object(g_sym.tab_width);
     scm_gc_protect_object(g_sym.align_to);
     scm_gc_protect_object(g_sym.width_kw);
+
+    g_sym.fringe_indicator_alist = scm_from_utf8_symbol("fringe-indicator-alist");
+    scm_gc_protect_object(g_sym.fringe_indicator_alist);
 }
 
 // Call once per frame (very cheap — just reads Scheme variables).
@@ -1658,6 +1750,13 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     if (last_drawn_face && y >= window_bottom && y <= window_top)
                         draw_face_extension(x, y, max_x, last_drawn_face, last_drawn_font, last_drawn_bg, box_line_thickness, last_face_had_box);
                     if (has_box_span) { flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, box_span_color, box_line_thickness, box_span_no_left, false); has_box_span = false; }
+
+                    // Draw truncation arrow on the right fringe.
+                    if (y >= window_bottom && y <= window_top) {
+                        FringeIndicatorPair trunc = fringe_resolve_indicator(buffer, FRINGE_IND_TRUNCATION);
+                        fringe_draw_pair(trunc, false, true, win, y, current_line_height);
+                    }
+
                     while (rope_iter_next_char(&iter, &ch) && ch != '\n') i++;
                     if (ch == '\n') {
                         x = line_start_x;
@@ -1693,6 +1792,21 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
                     if (last_drawn_face && y >= window_bottom && y <= window_top)
                         draw_face_extension(x, y, max_x, last_drawn_face, last_drawn_font, last_drawn_bg, box_line_thickness, last_face_had_box);
                     if (has_box_span) { flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height, box_span_color, box_line_thickness, box_span_no_left, wcb); has_box_span = false; }
+
+                    // Right-curly goes on the line that just wrapped (current y, right fringe).
+                    // Left-curly  goes on the new visual line     (y after decrement, left fringe).
+                    if (y >= window_bottom && y <= window_top) {
+                        FringeIndicatorPair cont = fringe_resolve_indicator(buffer, FRINGE_IND_CONTINUATION);
+                        fringe_draw_pair(cont, false, true, win, y, current_line_height);
+                    }
+                    {
+                        float next_y = y - current_line_height;
+                        if (next_y >= window_bottom && next_y <= window_top) {
+                            FringeIndicatorPair cont = fringe_resolve_indicator(buffer, FRINGE_IND_CONTINUATION);
+                            fringe_draw_pair(cont, true, false, win, next_y, line_height);
+                        }
+                    }
+
                     x = start_x;
                     y -= current_line_height;
                     current_line_height = line_height;
@@ -1964,6 +2078,19 @@ void draw_buffer(Buffer *buffer, Window *win, float start_x, float start_y) {
         flush_box_span(box_span_start_x, box_span_y, box_span_width, box_span_height,
                        box_span_color, box_line_thickness, box_span_no_left, false);
     rope_iter_destroy(&iter);
+
+    // Emit empty-line fringe indicators for visual lines below the buffer end.
+    if (scm_get_bool("indicate-empty-lines", false)) {
+        FringeIndicatorPair empty = fringe_resolve_indicator(buffer, FRINGE_IND_EMPTY_LINE);
+        if (empty.left || empty.right) {
+            float ey = y;
+            while (ey >= window_bottom) {
+                if (ey <= window_top)
+                    fringe_draw_pair(empty, true, false, win, ey, line_height);
+                ey -= line_height;
+            }
+        }
+    }
 
     if (point >= buf_len) {
         int   fid      = get_text_property_face(buffer, point);

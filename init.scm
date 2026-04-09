@@ -196,6 +196,33 @@ See Info node `(elisp)Multiple Terminals'.")
 ;; C-M-t   - transpose-sexps
 ;; M-C-t   - transpose-sexps
 
+
+;;; Fringe indicators
+
+(defvar-local fringe-indicator-alist
+  '((continuation    left-curly-arrow  right-curly-arrow)
+    (truncation      left-arrow        right-arrow)
+    (empty-line      nil               nil)
+    (overlay-arrow   left-triangle     nil)
+    (top             up-arrow          nil)
+    (bottom          down-arrow        nil)
+    (up              up-arrow          nil)
+    (down            down-arrow        nil))
+  "Alist mapping logical fringe indicators to (left-bitmap right-bitmap).
+Each element has the form (INDICATOR LEFT-BITMAP RIGHT-BITMAP) where
+INDICATOR is one of: continuation, truncation, empty-line, overlay-arrow,
+top, bottom, up, down.  Each bitmap value is a symbol naming a fringe
+bitmap registered via `define-fringe-bitmap', or nil for no bitmap.")
+
+(defvar indicate-empty-lines nil
+  "Non-nil means show a fringe bitmap on lines past the end of the buffer.")
+
+(defvar indicate-buffer-boundaries nil
+  "Non-nil means show fringe indicators at the top and bottom of the window
+when the buffer extends beyond the visible portion.")
+
+
+
 ;;; Completion
 
 (defvar-local default-directory "~/"
@@ -243,6 +270,23 @@ To interactively change the default directory, use the command `cd'.")
         (string-append "~" (substring path (string-length home)))
         path)))
 
+(defvar completion-ignored-extensions
+  '(".o" "~" ".bin" ".lbin" ".so" ".a" ".ln" ".blg" ".bbl" ".elc" ".lof"
+    ".glo" ".idx" ".lot" ".svn/" ".hg/" ".git/" ".bzr/" "CVS/" "_darcs/"
+    "_MTN/" ".fmt" ".tfm" ".class" ".fas" ".lib" ".mem" ".x86f" ".sparcf"
+    ".dfsl" ".pfsl" ".d64fsl" ".p64fsl" ".lx64fsl" ".lx32fsl" ".dx64fsl"
+    ".dx32fsl" ".fx64fsl" ".fx32fsl" ".sx64fsl" ".sx32fsl" ".wx64fsl"
+    ".wx32fsl" ".fasl" ".ufsl" ".fsl" ".dxl" ".lo" ".la" ".gmo" ".mo"
+    ".toc" ".aux" ".cp" ".fn" ".ky" ".pg" ".tp" ".vr" ".cps" ".fns"
+    ".kys" ".pgs" ".tps" ".vrs" ".pyc" ".pyo")
+  "Completion ignores file names ending in any string in this list.
+It does not ignore them if all possible completions end in one of
+these strings or when displaying a list of completions.
+It ignores directory names if they match any string in this list which
+ends in a slash.")
+
+(use-modules (srfi srfi-1))
+
 (define (directory-files dir)
   "Return list of filenames in DIR including . and .."
   (let ((d (opendir dir)))
@@ -276,7 +320,10 @@ To interactively change the default directory, use the command `cd'.")
                                         e))
                                (is-dir (file-directory-p full))
                                (name   (if is-dir (string-append e "/") e)))
-                          (loop (cdr entries) (cons name acc))))))))
+                          (if (any (lambda (ext) (string-suffix? ext name))
+                                   completion-ignored-extensions)
+                              (loop (cdr entries) acc)
+                              (loop (cdr entries) (cons name acc)))))))))
            (matches
             (let loop ((entries display-names) (acc '()))
               (if (null? entries)
@@ -950,10 +997,12 @@ INTERVAL-LENGTH specifies how many characters each face segment should be."
 (scheme-mode)
 
 
+
+
 (set-face-attribute 'default nil
-                   :family "JetBrains Mono Nerd Font"
-                   :weight 'medium
-                   :height 170)
+                   :family "Maple Mono NF"
+                   :weight 'regular
+                   :height 200)
 
 (load-theme 'modus-vivendi-tritanopia)
 (setq frame-resize-pixelwise t)
@@ -969,6 +1018,8 @@ INTERVAL-LENGTH specifies how many characters each face segment should be."
   "The largest integer that will be displayed as a character.
 This affects printing by `eval-expression' (via
 `eval-expression-print-format').")
+
+
 
 
 

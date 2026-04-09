@@ -13,6 +13,7 @@
 #include "edit.h"
 #include "minibuf.h"
 #include "frame.h"
+#include "fringe.h"
 #include "glemax.h"
 
 #define ROPE_IMPLEMENTATION
@@ -888,7 +889,9 @@ static void inner_main (void *data, int argc, char **argv) {
     selected_frame = create_frame(0, 0, 800, 600);
     wm_init(&selected_frame->wm, scratch_buffer, minibuf, 0, 0, sw, sh, selected_frame->line_height);
 
-    lisp_init(); // IMPORTANT After initializing the windowManager
+    fringe_init();
+    init_fringe_bindings();
+    lisp_init();            // IMPORTANT After initializing the windowManager
 
     // Register the function that will be used to execute procedures bound to keys
     register_call_interactively(call_interactively);
